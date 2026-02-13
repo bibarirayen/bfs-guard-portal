@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "407124778158",
+    "project_id": "blackfabricsecurity-5fe46",
+    "storage_bucket": "blackfabricsecurity-5fe46.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:407124778158:android:c6803a193591f6bca0e13f",
+        "android_client_info": {
+          "package_name": "com.blackfabricsecurity.crossplatformblackfabric"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyATpaX87RImzoTQWJrYWAQwAtCG4FOjX40"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
