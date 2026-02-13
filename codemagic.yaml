@@ -1,0 +1,127 @@
+workflows:
+  ios-release:
+    name: iOS Release Build
+    max_build_duration: 60
+    instance_type: mac_mini_m1
+    integrations:
+      app_store_connect: codemagic
+    environment:
+      groups:
+        - app_store_credentials
+      vars:
+        BUNDLE_ID: "com.blackfabricsecurity.crossplatformblackfabric"
+        XCODE_WORKSPACE: "Runner.xcworkspace"
+        XCODE_SCHEME: "Runner"
+        APP_STORE_ID: 1234567890
+        
+      flutter: stable
+      xcode: latest
+      cocoapods: default
+      
+    scripts:
+      # 1. Set up keychain
+      - name: Set up keychain
+        script: |
+          keychain initialize
+          
+      # 2. Fetch signing files
+      - name: Fetch signing files
+        script: |
+          app-store-connect fetch-signing-files "$BUNDLE_ID" \
+            --type IOS_APP_STORE \
+            --create
+            
+      # 3. Add certificates
+      - name: Set up signing certificate
+        script: |
+          keychain add-certificates
+          
+      # 4. Set up code signing
+      - name: Set up code signing settings
+        script: |
+          xcode-project use-profiles
+          
+      # 5. Get Flutter packages
+      - name: Get Flutter packages
+        script: |
+          flutter packages pub get
+          
+      # 6. Clean previous builds (FIX FOR RIVE ISSUE)
+      - name: Clean build artifacts
+        script: |
+          flutter clean
+          cd ios
+          rm -rf Pods
+          rm -rf .symlinks
+          rm -rf Flutter/Flutter.framework
+          rm -rf Flutter/Flutter.podspec
+          cd ..
+          
+      # 7. Install pods with clean
+      - name: Install pods
+        script: |
+          cd ios
+          pod cache clean --all
+          pod deintegrate
+          pod install --repo-update
+          cd ..
+          
+      # 8. Build Flutter iOS app
+      - name: Flutter build ipa
+        script: |
+          flutter build ipa --release \
+            --export-options-plist=/Users/builder/export_options.plist
+            
+    artifacts:
+      - build/ios/ipa/*.ipa
+      - /tmp/xcodebuild_logs/*.log
+      - flutter_drive.log
+      
+    publishing:
+      email:
+        recipients:
+          - your-email@example.com
+        notify:
+          success: true
+          failure: true
+          
+      app_store_connect:
+        submit_to_testflight: true
+        submit_to_app_store: false
+
+  android-release:
+    name: Android Release Build
+    max_build_duration: 60
+    instance_type: linux_x2
+    environment:
+      groups:
+        - google_play_credentials
+      vars:
+        PACKAGE_NAME: "com.blackfabricsecurity.crossplatformblackfabric"
+      flutter: stable
+      
+    scripts:
+      - name: Get Flutter packages
+        script: |
+          flutter packages pub get
+          
+      - name: Build Android APK
+        script: |
+          flutter build apk --release
+          
+      - name: Build Android App Bundle
+        script: |
+          flutter build appbundle --release
+          
+    artifacts:
+      - build/app/outputs/**/*.apk
+      - build/app/outputs/**/*.aab
+      - build/app/outputs/**/mapping.txt
+      
+    publishing:
+      email:
+        recipients:
+          - your-email@example.com
+        notify:
+          success: true
+          failure: true
