@@ -64,6 +64,12 @@ class _CounselingUploadPageState extends State<CounselingUploadPage> {
     }
   }
   Future<bool> _requestPermissions(ImageSource source, {bool forVideo = false}) async {
+    // iOS: image_picker handles permissions automatically
+    if (Platform.isIOS) {
+      return true; // Let image_picker handle iOS permissions
+    }
+
+    // Android: Manual permission handling
     PermissionStatus status;
 
     if (source == ImageSource.camera) {
@@ -84,14 +90,10 @@ class _CounselingUploadPageState extends State<CounselingUploadPage> {
       }
     } else {
       // Gallery permission
-      if (Platform.isAndroid) {
-        if (await Permission.photos.isGranted || await Permission.storage.isGranted) {
-          return true;
-        }
-        status = await Permission.photos.request();
-      } else {
-        status = await Permission.photos.request();
+      if (await Permission.photos.isGranted || await Permission.storage.isGranted) {
+        return true;
       }
+      status = await Permission.photos.request();
     }
 
     if (!status.isGranted) {

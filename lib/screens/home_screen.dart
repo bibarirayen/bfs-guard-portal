@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:crossplatformblackfabric/screens/report_list_page.dart';
 import 'package:crossplatformblackfabric/screens/vacation_request_page.dart';
@@ -203,6 +204,8 @@ class _HomeScreenState extends State<HomeScreen> {
     _requestNotificationPermission();
 
     _liveLocationService = LiveLocationService(); // ✅ Initialize here
+    _requestAllPermissions();
+
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       await Future.delayed(const Duration(seconds: 1)); // 🔥 IMPORTANT
       await _restoreLiveTrackingIfNeeded();
@@ -542,6 +545,27 @@ class _HomeScreenState extends State<HomeScreen> {
       )
     );
   }
+  Future<void> _requestAllPermissions() async {
+    // Request camera permission
+    final cameraStatus = await Permission.camera.request();
+    if (!cameraStatus.isGranted) {
+      print('Camera permission denied');
+    }
+
+    // Request photo library permission
+    final photosStatus = await Permission.photos.request();
+    if (!photosStatus.isGranted) {
+      print('Photos permission denied');
+    }
+
+    // Request microphone permission (for video recording)
+    final micStatus = await Permission.microphone.request();
+    if (!micStatus.isGranted) {
+      print('Microphone permission denied');
+    }
+
+    // Notification permission is already requested in main.dart
+  }
   Future<void> _getCurrentPosition() async {
     try {
       Position position = await Geolocator.getCurrentPosition(
@@ -563,6 +587,7 @@ class _HomeScreenState extends State<HomeScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Please enable location services')),
       );
+      await Geolocator.openLocationSettings();
       return false;
     }
 
@@ -582,15 +607,39 @@ class _HomeScreenState extends State<HomeScreen> {
       return false;
     }
 
-    if (permission == LocationPermission.whileInUse) {
-      // 🔥 FORCE background permission for shift tracking
+    // On iOS, request "Always" permission for background tracking
+    if (Platform.isIOS && permission == LocationPermission.whileInUse) {
+      // Show explanation dialog first
+      final shouldRequest = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Location Access Required'),
+          content: const Text(
+            'BFS Guard Portal needs "Always Allow" location access to track your position during shifts, even when the app is in the background. This ensures your safety and accurate patrol tracking.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Cancel'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Continue'),
+            ),
+          ],
+        ),
+      );
+
+      if (shouldRequest != true) return false;
+
+      // On iOS, this will show the system dialog with "Change to Always Allow" option
       permission = await Geolocator.requestPermission();
     }
 
-    if (permission != LocationPermission.always) {
+    if (permission != LocationPermission.always && permission != LocationPermission.whileInUse) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Please allow location "Always" for shift tracking.'),
+          content: Text('Location access is required for shift tracking.'),
         ),
       );
       return false;

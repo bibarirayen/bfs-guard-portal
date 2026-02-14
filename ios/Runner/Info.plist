@@ -17,6 +17,13 @@
 	<key>NSLocationAlwaysUsageDescription</key>
 	<string>Location access is essential for tracking guard patrol routes and ensuring safety during security shifts.</string>
 
+	<!-- CRITICAL for iOS 14+ background location tracking -->
+	<key>NSLocationTemporaryUsageDescriptionDictionary</key>
+	<dict>
+		<key>ShiftTracking</key>
+		<string>Your location is needed to track your security patrol route during active shifts for safety and accountability.</string>
+	</dict>
+
 	<!-- ============================================ -->
 	<!-- CAMERA PERMISSION -->
 	<!-- ============================================ -->

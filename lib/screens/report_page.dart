@@ -22,6 +22,12 @@ class _ReportPageState extends State<ReportPage> {
   // --- Theme variables ---
   bool _isDarkMode = true;
   Future<bool> _requestPermissions(ImageSource source, {bool forVideo = false}) async {
+    // iOS: image_picker handles permissions automatically
+    if (Platform.isIOS) {
+      return true; // Let image_picker handle iOS permissions
+    }
+
+    // Android: Manual permission handling
     PermissionStatus status;
 
     if (source == ImageSource.camera) {
@@ -43,14 +49,10 @@ class _ReportPageState extends State<ReportPage> {
       }
     } else {
       // Gallery permission
-      if (Platform.isAndroid) {
-        if (await Permission.photos.isGranted || await Permission.storage.isGranted) {
-          return true;
-        }
-        status = await Permission.photos.request(); // Android 13+
-      } else {
-        status = await Permission.photos.request(); // iOS
+      if (await Permission.photos.isGranted || await Permission.storage.isGranted) {
+        return true;
       }
+      status = await Permission.photos.request(); // Android 13+
     }
 
     if (!status.isGranted) {
@@ -867,7 +869,7 @@ class _ReportPageState extends State<ReportPage> {
 
 
 
-        Widget _buildImageButton({required IconData icon, required String label, required VoidCallback onTap, required Color color}) {
+  Widget _buildImageButton({required IconData icon, required String label, required VoidCallback onTap, required Color color}) {
     return Expanded(
       child: Container(
         margin: EdgeInsets.symmetric(horizontal: 8),

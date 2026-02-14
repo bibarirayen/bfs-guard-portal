@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'package:geolocator/geolocator.dart';
 import 'package:stomp_dart_client/stomp.dart';
 import 'package:stomp_dart_client/stomp_config.dart';
@@ -48,9 +49,18 @@ class LiveLocationService {
   }
 
   void _startLocationStream(int userId, int assignmentId) {
-    const locationSettings = LocationSettings(
+    // iOS-optimized settings for background tracking
+    final locationSettings = Platform.isIOS
+        ? AppleSettings(
       accuracy: LocationAccuracy.bestForNavigation,
-      distanceFilter: 3, // movement sensitivity
+      activityType: ActivityType.otherNavigation,
+      distanceFilter: 3,
+      pauseLocationUpdatesAutomatically: false, // CRITICAL for iOS background
+      showBackgroundLocationIndicator: true, // Shows blue bar on iOS
+    )
+        : const LocationSettings(
+      accuracy: LocationAccuracy.bestForNavigation,
+      distanceFilter: 3,
     );
 
     _positionSubscription =
