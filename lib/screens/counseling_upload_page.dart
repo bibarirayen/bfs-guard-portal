@@ -325,7 +325,10 @@ class _CounselingUploadPageState extends State<CounselingUploadPage> {
                       ),
                       onPressed: pickFiles,
                       icon: const Icon(Icons.upload),
-                      label: Text("Pick Images (${_files.length})"),
+                      label: Text("Pick Images (${_files.length})", style: TextStyle(
+                        color: _textColor,
+                        fontWeight: FontWeight.bold,
+                      ),),
                     ),
 
                     if (_files.isNotEmpty) ...[

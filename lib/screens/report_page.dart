@@ -173,35 +173,80 @@ class _ReportPageState extends State<ReportPage> {
 
 
   Future<void> _pickVideo(ImageSource source) async {
-    // --- Request basic permissions ---
-    bool granted = await _requestPermissions(source);
-    if (!granted) return;
-
-    // --- Extra: request microphone if recording from camera ---
-    if (source == ImageSource.camera) {
+    // ============================================
+    // iOS-SPECIFIC PERMISSION HANDLING
+    // ============================================
+    if (Platform.isIOS && source == ImageSource.camera) {
+      // Request microphone permission explicitly for iOS
       PermissionStatus micStatus = await Permission.microphone.request();
+
       if (!micStatus.isGranted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text("Microphone permission is required to record video with sound"),
+            content: Text("Microphone permission is required to record video with audio"),
             backgroundColor: Colors.redAccent,
           ),
         );
+
         if (micStatus.isPermanentlyDenied) {
+          openAppSettings();
+        }
+        return;
+      }
+
+      // Also ensure camera permission for iOS
+      PermissionStatus cameraStatus = await Permission.camera.request();
+      if (!cameraStatus.isGranted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text("Camera permission is required to record video"),
+            backgroundColor: Colors.redAccent,
+          ),
+        );
+
+        if (cameraStatus.isPermanentlyDenied) {
           openAppSettings();
         }
         return;
       }
     }
 
-    // --- Check permanent denial for camera/gallery ---
-    if ((source == ImageSource.camera && await Permission.camera.isPermanentlyDenied) ||
-        (source == ImageSource.gallery &&
-            (await Permission.photos.isPermanentlyDenied || await Permission.storage.isPermanentlyDenied))) {
-      openAppSettings();
-      return;
+    // ============================================
+    // ANDROID-SPECIFIC PERMISSION HANDLING
+    // ============================================
+    if (Platform.isAndroid) {
+      // Request basic permissions (camera or gallery)
+      bool granted = await _requestPermissions(source, forVideo: true);
+      if (!granted) return;
+
+      // Check for microphone permanent denial
+      if (source == ImageSource.camera) {
+        PermissionStatus micStatus = await Permission.microphone.status;
+        if (micStatus.isPermanentlyDenied) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text("Microphone permission is permanently denied. Please enable it in settings."),
+              backgroundColor: Colors.redAccent,
+            ),
+          );
+          openAppSettings();
+          return;
+        }
+      }
+
+      // Check camera/gallery permanent denial
+      if ((source == ImageSource.camera && await Permission.camera.isPermanentlyDenied) ||
+          (source == ImageSource.gallery &&
+              (await Permission.photos.isPermanentlyDenied ||
+                  await Permission.storage.isPermanentlyDenied))) {
+        openAppSettings();
+        return;
+      }
     }
 
+    // ============================================
+    // PICK THE VIDEO
+    // ============================================
     try {
       final XFile? pickedFile = await _picker.pickVideo(source: source);
       if (pickedFile == null) return;
@@ -212,8 +257,15 @@ class _ReportPageState extends State<ReportPage> {
       });
     } catch (e) {
       debugPrint("Video pick error: $e");
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text("Error picking video: $e"),
+          backgroundColor: Colors.redAccent,
+        ),
+      );
     }
   }
+
 
 
 

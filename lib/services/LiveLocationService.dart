@@ -1,3 +1,5 @@
+// lib/services/LiveLocationService.dart - ENHANCED VERSION
+
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -37,10 +39,14 @@ class LiveLocationService {
         url: 'wss://api.blackfabricsecurity.com/ws',
         reconnectDelay: const Duration(seconds: 5),
         onConnect: (_) {
+          print('✅ WebSocket connected');
           _startLocationStream(userId, assignmentId);
         },
         onWebSocketError: (error) {
           print("❌ WebSocket error: $error");
+        },
+        onDisconnect: (_) {
+          print('⚠️ WebSocket disconnected');
         },
       ),
     );
@@ -49,48 +55,76 @@ class LiveLocationService {
   }
 
   void _startLocationStream(int userId, int assignmentId) {
-    // iOS-optimized settings for background tracking
+    // ============================================
+    // iOS-OPTIMIZED SETTINGS FOR BACKGROUND TRACKING
+    // ============================================
     final locationSettings = Platform.isIOS
         ? AppleSettings(
       accuracy: LocationAccuracy.bestForNavigation,
       activityType: ActivityType.otherNavigation,
-      distanceFilter: 3,
-      pauseLocationUpdatesAutomatically: false, // CRITICAL for iOS background
+      distanceFilter: 3, // Update every 3 meters
+      pauseLocationUpdatesAutomatically: false, // CRITICAL - never pause
       showBackgroundLocationIndicator: true, // Shows blue bar on iOS
+      // iOS 14+ specific - explicitly enable background updates
+      allowBackgroundLocationUpdates: true,
     )
         : const LocationSettings(
       accuracy: LocationAccuracy.bestForNavigation,
       distanceFilter: 3,
     );
 
+    // ============================================
+    // START LOCATION STREAM WITH ERROR HANDLING
+    // ============================================
     _positionSubscription =
         Geolocator.getPositionStream(locationSettings: locationSettings)
-            .listen((Position pos) {
-          _lastPosition = pos;
+            .listen(
+              (Position pos) {
+            _lastPosition = pos;
 
-          if (!_isTracking) return;
+            if (!_isTracking) return;
 
-          final now = DateTime.now();
+            final now = DateTime.now();
 
-          final bool isMoving =
-              (pos.speed) > movementSpeedThreshold;
+            final bool isMoving = (pos.speed) > movementSpeedThreshold;
 
-          final int requiredInterval =
-          isMoving ? movingIntervalSeconds : idleIntervalSeconds;
+            final int requiredInterval =
+            isMoving ? movingIntervalSeconds : idleIntervalSeconds;
 
-          if (_lastSentTime == null ||
-              now.difference(_lastSentTime!).inSeconds >= requiredInterval) {
-            _sendLocation(userId, assignmentId);
-          }
-        });
+            if (_lastSentTime == null ||
+                now.difference(_lastSentTime!).inSeconds >= requiredInterval) {
+              _sendLocation(userId, assignmentId);
+            }
+          },
+          onError: (error) {
+            print("❌ Location stream error: $error");
 
-    // ❤️ Safety heartbeat (ensures update even if speed detection fails)
+            // Attempt to restart stream after error
+            Future.delayed(const Duration(seconds: 5), () {
+              if (_isTracking) {
+                print('🔄 Attempting to restart location stream...');
+                _positionSubscription?.cancel();
+                _startLocationStream(userId, assignmentId);
+              }
+            });
+          },
+          cancelOnError: false, // Don't cancel on error, keep trying
+        );
+
+    // ============================================
+    // SAFETY HEARTBEAT
+    // ============================================
+    // Ensures update even if speed detection fails or location updates pause
     _heartbeatTimer =
         Timer.periodic(const Duration(seconds: idleIntervalSeconds), (_) {
           if (_isTracking && _lastPosition != null) {
             _sendLocation(userId, assignmentId);
+          } else if (_isTracking && _lastPosition == null) {
+            print('⚠️ Heartbeat: No location available');
           }
         });
+
+    print('📍 Location tracking started for user $userId, assignment $assignmentId');
   }
 
   void _sendLocation(int userId, int assignmentId) {
@@ -98,26 +132,35 @@ class LiveLocationService {
         stompClient == null ||
         !stompClient!.connected ||
         _lastPosition == null) {
+      if (_isTracking && _lastPosition != null && stompClient?.connected != true) {
+        print('⚠️ Cannot send location: WebSocket not connected');
+      }
       return;
     }
 
     _lastSentTime = DateTime.now();
 
+    final locationData = {
+      "userId": userId,
+      "shiftId": assignmentId,
+      "lat": _lastPosition!.latitude,
+      "lng": _lastPosition!.longitude,
+      "speed": _lastPosition!.speed,
+      "accuracy": _lastPosition!.accuracy,
+      "timestamp": DateTime.now().toIso8601String(),
+      "platform": Platform.isIOS ? "iOS" : "Android",
+    };
+
     stompClient!.send(
       destination: '/app/location',
-      body: jsonEncode({
-        "userId": userId,
-        "shiftId": assignmentId,
-        "lat": _lastPosition!.latitude,
-        "lng": _lastPosition!.longitude,
-        "speed": _lastPosition!.speed,
-        "accuracy": _lastPosition!.accuracy,
-        "timestamp": DateTime.now().toIso8601String(),
-      }),
+      body: jsonEncode(locationData),
     );
 
     print(
-        "📍 Sent ${_lastPosition!.latitude}, ${_lastPosition!.longitude} | speed: ${_lastPosition!.speed}");
+        "📍 Sent location: ${_lastPosition!.latitude.toStringAsFixed(6)}, "
+            "${_lastPosition!.longitude.toStringAsFixed(6)} | "
+            "speed: ${_lastPosition!.speed.toStringAsFixed(2)} m/s | "
+            "accuracy: ${_lastPosition!.accuracy.toStringAsFixed(1)}m");
   }
 
   void stopTracking() {
@@ -134,5 +177,12 @@ class LiveLocationService {
 
     _lastPosition = null;
     _lastSentTime = null;
+
+    print('🛑 Location tracking stopped');
   }
+
+  // Getters for current state
+  bool get isTracking => _isTracking;
+  Position? get lastPosition => _lastPosition;
+  bool get isConnected => stompClient?.connected ?? false;
 }

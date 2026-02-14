@@ -13,6 +13,7 @@ import '../config/ApiService.dart';
 import '../services/HeartbeatService.dart';
 import '../services/LiveLocationService.dart';
 import '../services/dashboard_service.dart';
+import '../services/permission_helper.dart';
 import '../widgets/navbar.dart';
 import 'chat_screen.dart';
 import 'report_page.dart';
@@ -650,7 +651,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
 
   Future<void> _startShift() async {
-    bool hasPermission = await _handleLocationPermission();
+    bool hasPermission = await PermissionHelper.requestAlwaysLocationPermission(context);
     if (!hasPermission) return;
     await _getCurrentPosition();
     if (_currentPosition == null) {
