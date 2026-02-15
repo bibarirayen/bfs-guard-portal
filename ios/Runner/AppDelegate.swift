@@ -9,10 +9,12 @@ import Flutter
   ) -> Bool {
     GeneratedPluginRegistrant.register(with: self)
 
-    // Enable background location updates
-    if #available(iOS 9.0, *) {
-      application.registerForRemoteNotifications()
+    // Register for remote notifications
+    if #available(iOS 10.0, *) {
+      UNUserNotificationCenter.current().delegate = self as UNUserNotificationCenterDelegate
     }
+
+    application.registerForRemoteNotifications()
 
     return super.application(application, didFinishLaunchingWithOptions: launchOptions)
   }
@@ -20,7 +22,6 @@ import Flutter
   // Handle background location updates
   override func applicationDidEnterBackground(_ application: UIApplication) {
     // Keep location updates running in background
-    // The actual location tracking is handled by geolocator plugin
   }
 
   // Handle app returning to foreground

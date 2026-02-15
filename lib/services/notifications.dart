@@ -7,7 +7,15 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
 FlutterLocalNotificationsPlugin();
 
+// Background message handler (MUST be top-level function)
+@pragma('vm:entry-point')
+Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
+  print('📩 Background message: ${message.notification?.title}');
+}
+
 Future<void> setupFlutterNotifications() async {
+  print('🔧 Setting up notifications...');
+
   // ============================================
   // ANDROID SETUP
   // ============================================
@@ -43,33 +51,50 @@ Future<void> setupFlutterNotifications() async {
   await flutterLocalNotificationsPlugin.initialize(
     initializationSettings,
     onDidReceiveNotificationResponse: (NotificationResponse response) {
-      // Handle notification tap
-      print('Notification tapped: ${response.payload}');
+      print('📱 Notification tapped: ${response.payload}');
     },
   );
 
   // ============================================
-  // iOS: ALLOW FOREGROUND NOTIFICATIONS
+  // iOS: REQUEST PERMISSIONS EXPLICITLY
   // ============================================
   if (Platform.isIOS) {
+    print('📱 Requesting iOS notification permissions...');
+
+    // Request local notification permissions
+    final bool? localResult = await flutterLocalNotificationsPlugin
+        .resolvePlatformSpecificImplementation<IOSFlutterLocalNotificationsPlugin>()
+        ?.requestPermissions(
+      alert: true,
+      badge: true,
+      sound: true,
+    );
+    print('📱 iOS Local Notification Permission: $localResult');
+
+    // Set foreground notification options
     await FirebaseMessaging.instance.setForegroundNotificationPresentationOptions(
       alert: true,
       badge: true,
       sound: true,
     );
+    print('✅ iOS foreground notification options set');
   }
+
+  // ============================================
+  // BACKGROUND MESSAGE HANDLER
+  // ============================================
+  FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
 
   // ============================================
   // LISTEN TO FOREGROUND MESSAGES
   // ============================================
   FirebaseMessaging.onMessage.listen((RemoteMessage message) {
-    print('Foreground message received: ${message.notification?.title}');
+    print('📬 Foreground message received: ${message.notification?.title}');
 
     RemoteNotification? notification = message.notification;
 
     if (notification != null) {
       if (Platform.isAndroid) {
-        // Android notification
         flutterLocalNotificationsPlugin.show(
           notification.hashCode,
           notification.title,
@@ -85,7 +110,6 @@ Future<void> setupFlutterNotifications() async {
           payload: message.data.toString(),
         );
       } else if (Platform.isIOS) {
-        // iOS notification
         flutterLocalNotificationsPlugin.show(
           notification.hashCode,
           notification.title,
@@ -104,8 +128,37 @@ Future<void> setupFlutterNotifications() async {
   });
 
   // ============================================
-  // GET FCM TOKEN (for debugging)
+  // HANDLE NOTIFICATION TAPS
   // ============================================
-  String? token = await FirebaseMessaging.instance.getToken();
-  print('📱 FCM Token: $token');
+  FirebaseMessaging.onMessageOpenedApp.listen((RemoteMessage message) {
+    print('📱 Notification opened app: ${message.notification?.title}');
+  });
+
+  // Check if app was opened from notification
+  RemoteMessage? initialMessage = await FirebaseMessaging.instance.getInitialMessage();
+  if (initialMessage != null) {
+    print('📱 App opened from notification: ${initialMessage.notification?.title}');
+  }
+
+  // ============================================
+  // GET FCM TOKEN
+  // ============================================
+  try {
+    String? token = await FirebaseMessaging.instance.getToken();
+    print('📱 FCM Token: $token');
+
+    if (token == null) {
+      print('❌ ERROR: FCM Token is null!');
+      print('❌ This means APNs is not properly configured!');
+    }
+  } catch (e) {
+    print('❌ ERROR getting FCM token: $e');
+  }
+
+  // Listen for token refresh
+  FirebaseMessaging.instance.onTokenRefresh.listen((newToken) {
+    print('📱 FCM Token refreshed: $newToken');
+  });
+
+  print('✅ Notification setup complete');
 }
