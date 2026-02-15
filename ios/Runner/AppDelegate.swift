@@ -70,6 +70,34 @@ import FirebaseMessaging
     UIApplication.shared.applicationIconBadgeNumber = 0
     print("📍 App entering foreground")
   }
+
+  // MARK: - Handle notification when app is in foreground
+  override func userNotificationCenter(_ center: UNUserNotificationCenter,
+                             willPresent notification: UNNotification,
+                             withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
+    let userInfo = notification.request.content.userInfo
+    print("📬 Foreground notification received: \(userInfo)")
+
+    // Show notification even when app is in foreground
+    if #available(iOS 14.0, *) {
+      completionHandler([[.banner, .sound, .badge]])
+    } else {
+      completionHandler([[.alert, .sound, .badge]])
+    }
+  }
+
+  // MARK: - Handle notification tap
+  override func userNotificationCenter(_ center: UNUserNotificationCenter,
+                             didReceive response: UNNotificationResponse,
+                             withCompletionHandler completionHandler: @escaping () -> Void) {
+    let userInfo = response.notification.request.content.userInfo
+    print("📱 Notification tapped: \(userInfo)")
+
+    // Handle notification action here
+    // You can navigate to specific screens based on notification data
+
+    completionHandler()
+  }
 }
 
 // MARK: - Firebase Messaging Delegate
@@ -84,36 +112,5 @@ extension AppDelegate: MessagingDelegate {
       object: nil,
       userInfo: dataDict
     )
-  }
-}
-
-// MARK: - UNUserNotificationCenterDelegate
-extension AppDelegate: UNUserNotificationCenterDelegate {
-  // Handle notification when app is in foreground
-  func userNotificationCenter(_ center: UNUserNotificationCenter,
-                             willPresent notification: UNNotification,
-                             withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
-    let userInfo = notification.request.content.userInfo
-    print("📬 Foreground notification received: \(userInfo)")
-
-    // Show notification even when app is in foreground
-    if #available(iOS 14.0, *) {
-      completionHandler([[.banner, .sound, .badge]])
-    } else {
-      completionHandler([[.alert, .sound, .badge]])
-    }
-  }
-
-  // Handle notification tap
-  func userNotificationCenter(_ center: UNUserNotificationCenter,
-                             didReceive response: UNNotificationResponse,
-                             withCompletionHandler completionHandler: @escaping () -> Void) {
-    let userInfo = response.notification.request.content.userInfo
-    print("📱 Notification tapped: \(userInfo)")
-
-    // Handle notification action here
-    // You can navigate to specific screens based on notification data
-
-    completionHandler()
   }
 }
