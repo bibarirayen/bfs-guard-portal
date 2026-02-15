@@ -23,8 +23,9 @@ workflows:
         script: |
           keychain initialize
 
-      - name: Fetch signing files
+      - name: Fetch signing files (with Push Notifications)
         script: |
+          echo "🔑 Fetching signing files with Push Notifications capability..."
           app-store-connect fetch-signing-files "$BUNDLE_ID" \
             --type IOS_APP_STORE \
             --create
@@ -33,84 +34,144 @@ workflows:
         script: |
           keychain add-certificates
 
-      - name: Enable Push Notifications Capability
+      - name: Configure Push Notifications in Xcode Project
         script: |
           cd ios
           
-          echo "🔧 Installing xcodeproj gem..."
+          echo "📦 Installing xcodeproj Ruby gem..."
           gem install xcodeproj
           
-          echo "🔧 Configuring Push Notifications capability..."
-          cat > enable_push.rb << 'RUBYEOF'
+          echo "🔧 Creating script to configure Push Notifications..."
+          cat > configure_push.rb << 'RUBY_SCRIPT'
           require 'xcodeproj'
           
           project_path = 'Runner.xcodeproj'
           project = Xcodeproj::Project.open(project_path)
-          target = project.targets.first
           
-          # Set entitlements file path
+          # Get the Runner target
+          target = project.targets.first
+          puts "🎯 Configuring target: #{target.name}"
+          
+          # Set entitlements file for ALL configurations
           target.build_configurations.each do |config|
+            puts "⚙️  Setting entitlements for #{config.name} configuration"
             config.build_settings['CODE_SIGN_ENTITLEMENTS'] = 'Runner/Runner.entitlements'
+          
+            # Ensure proper iOS deployment target
+            config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '13.0'
+          
+            # Enable push notifications
+            config.build_settings['ENABLE_BITCODE'] = 'NO'
           end
           
+          # Save the project
           project.save
-          puts "✅ Push Notifications capability enabled"
-          RUBYEOF
+          puts "✅ Xcode project configured successfully"
+          RUBY_SCRIPT
           
-          ruby enable_push.rb
+          echo "🚀 Running configuration script..."
+          ruby configure_push.rb
           
-          echo "✅ Verifying entitlements file..."
-          if [ -f "Runner/Runner.entitlements" ]; then
-            cat Runner/Runner.entitlements
-          else
-            echo "❌ ERROR: Entitlements file missing!"
-            exit 1
-          fi
+          echo "📋 Verifying entitlements file exists..."
+          if [ ! -f "Runner/Runner.entitlements" ]; then
+            echo "❌ ERROR: Entitlements file not found!"
+            echo "Creating it now..."
           
-          cd ..
+            cat > Runner/Runner.entitlements << 'ENTITLEMENTS'
+  <?xml version="1.0" encoding="UTF-8"?>
+  <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+  <plist version="1.0">
+  <dict>
+  <key>aps-environment</key>
+  <string>development</string>
+  </dict>
+  </plist>
+  ENTITLEMENTS
+  echo "✅ Entitlements file created"
+  fi
+  
+  echo "📄 Entitlements file contents:"
+  cat Runner/Runner.entitlements
+  
+  echo "🔍 Verifying Xcode project settings..."
+grep -A 2 "CODE_SIGN_ENTITLEMENTS" Runner.xcodeproj/project.pbxproj || echo "⚠️  Warning: Entitlements not found in project"
+  
+  cd ..
 
-      - name: Set up code signing
-        script: |
-          xcode-project use-profiles
+- name: Set up code signing
+  script: |
+    xcode-project use-profiles
 
-      - name: Get Flutter packages
-        script: |
-          flutter packages pub get
+- name: Get Flutter packages
+  script: |
+    flutter packages pub get
 
-      - name: Clean build artifacts
-        script: |
-          flutter clean
-          cd ios
-          rm -rf Pods
-          rm -rf .symlinks
-          rm -rf Flutter/Flutter.framework
-          rm -rf Flutter/Flutter.podspec
-          cd ..
+- name: Clean build artifacts
+  script: |
+    flutter clean
+    cd ios
+    rm -rf Pods
+    rm -rf Podfile.lock
+    rm -rf .symlinks
+    rm -rf Flutter/Flutter.framework
+    rm -rf Flutter/Flutter.podspec
+    cd ..
 
-      - name: Install CocoaPods
-        script: |
-          cd ios
-          pod cache clean --all
-          pod deintegrate || true
-          pod install --repo-update
-          cd ..
+- name: Install CocoaPods
+  script: |
+    cd ios
+    pod cache clean --all
+    pod deintegrate || true
+    pod install --repo-update
+    cd ..
 
-      - name: Build iOS app
-        script: |
-          flutter build ipa --release \
-            --export-options-plist=/Users/builder/export_options.plist
+- name: Verify Configuration Before Build
+  script: |
+    echo "🔍 Final verification before build..."
+    
+    echo "1️⃣ Checking entitlements file:"
+    cat ios/Runner/Runner.entitlements
+    
+    echo ""
+    echo "2️⃣ Checking Xcode project for entitlements:"
+    grep "CODE_SIGN_ENTITLEMENTS" ios/Runner.xcodeproj/project.pbxproj | head -5
+    
+    echo ""
+    echo "3️⃣ Checking GoogleService-Info.plist:"
+    if [ -f "ios/Runner/GoogleService-Info.plist" ]; then
+      echo "✅ GoogleService-Info.plist exists"
+    else
+      echo "❌ GoogleService-Info.plist MISSING!"
+    fi
+    
+    echo ""
+    echo "4️⃣ Checking AppDelegate.swift:"
+    if grep -q "UNUserNotificationCenter" ios/Runner/AppDelegate.swift; then
+      echo "✅ AppDelegate has notification setup"
+    else
+      echo "❌ AppDelegate missing notification setup!"
+    fi
 
-    artifacts:
-      - build/ios/ipa/*.ipa
-      - /tmp/xcodebuild_logs/*.log
+- name: Build iOS app
+  script: |
+    echo "🏗️  Building iOS app..."
+    flutter build ipa --release \
+      --export-options-plist=/Users/builder/export_options.plist
+    
+    echo "✅ Build completed!"
 
-    publishing:
-      email:
-        recipients:
-          - your-email@example.com
-        notify:
-          success: true
-          failure: true
+artifacts:
+  - build/ios/ipa/*.ipa
+  - /tmp/xcodebuild_logs/*.log
+  - flutter_drive.log
 
-      app_store_connect:
-        submit_to_testflight: true
+publishing:
+  email:
+    recipients:
+      - your-email@example.com
+    notify:
+      success: true
+      failure: true
+
+  app_store_connect:
+    submit_to_testflight: true
