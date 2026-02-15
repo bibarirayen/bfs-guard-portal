@@ -9,22 +9,35 @@ import Flutter
   ) -> Bool {
     GeneratedPluginRegistrant.register(with: self)
 
-    // Register for remote notifications
+    // Set up notification center delegate - THIS IS CRITICAL
     if #available(iOS 10.0, *) {
       UNUserNotificationCenter.current().delegate = self as UNUserNotificationCenterDelegate
     }
 
+    // Register for remote notifications
     application.registerForRemoteNotifications()
 
     return super.application(application, didFinishLaunchingWithOptions: launchOptions)
   }
 
-  // Handle background location updates
+  // Handle successful APNs registration
+  override func application(_ application: UIApplication,
+                           didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
+    let tokenParts = deviceToken.map { data in String(format: "%02.2hhx", data) }
+    let token = tokenParts.joined()
+    print("✅ APNs Device Token: \(token)")
+  }
+
+  // Handle APNs registration failure
+  override func application(_ application: UIApplication,
+                           didFailToRegisterForRemoteNotificationsWithError error: Error) {
+    print("❌ Failed to register for remote notifications: \(error.localizedDescription)")
+  }
+
   override func applicationDidEnterBackground(_ application: UIApplication) {
     // Keep location updates running in background
   }
 
-  // Handle app returning to foreground
   override func applicationWillEnterForeground(_ application: UIApplication) {
     // Location tracking continues automatically
   }

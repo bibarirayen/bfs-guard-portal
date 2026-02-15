@@ -13,40 +13,70 @@ workflows:
         XCODE_WORKSPACE: "Runner.xcworkspace"
         XCODE_SCHEME: "Runner"
         APP_STORE_ID: 1234567890
-        
+
       flutter: stable
       xcode: latest
       cocoapods: default
-      
+
     scripts:
-      # 1. Set up keychain
       - name: Set up keychain
         script: |
           keychain initialize
-          
-      # 2. Fetch signing files
+
       - name: Fetch signing files
         script: |
           app-store-connect fetch-signing-files "$BUNDLE_ID" \
             --type IOS_APP_STORE \
             --create
-            
-      # 3. Add certificates
-      - name: Set up signing certificate
+
+      - name: Add certificates
         script: |
           keychain add-certificates
+
+      - name: Enable Push Notifications Capability
+        script: |
+          cd ios
           
-      # 4. Set up code signing
-      - name: Set up code signing settings
+          echo "🔧 Installing xcodeproj gem..."
+          gem install xcodeproj
+          
+          echo "🔧 Configuring Push Notifications capability..."
+          cat > enable_push.rb << 'RUBYEOF'
+          require 'xcodeproj'
+          
+          project_path = 'Runner.xcodeproj'
+          project = Xcodeproj::Project.open(project_path)
+          target = project.targets.first
+          
+          # Set entitlements file path
+          target.build_configurations.each do |config|
+            config.build_settings['CODE_SIGN_ENTITLEMENTS'] = 'Runner/Runner.entitlements'
+          end
+          
+          project.save
+          puts "✅ Push Notifications capability enabled"
+          RUBYEOF
+          
+          ruby enable_push.rb
+          
+          echo "✅ Verifying entitlements file..."
+          if [ -f "Runner/Runner.entitlements" ]; then
+            cat Runner/Runner.entitlements
+          else
+            echo "❌ ERROR: Entitlements file missing!"
+            exit 1
+          fi
+          
+          cd ..
+
+      - name: Set up code signing
         script: |
           xcode-project use-profiles
-          
-      # 5. Get Flutter packages
+
       - name: Get Flutter packages
         script: |
           flutter packages pub get
-          
-      # 6. Clean previous builds (FIX FOR RIVE ISSUE)
+
       - name: Clean build artifacts
         script: |
           flutter clean
@@ -56,27 +86,24 @@ workflows:
           rm -rf Flutter/Flutter.framework
           rm -rf Flutter/Flutter.podspec
           cd ..
-          
-      # 7. Install pods with clean
-      - name: Install pods
+
+      - name: Install CocoaPods
         script: |
           cd ios
           pod cache clean --all
-          pod deintegrate
+          pod deintegrate || true
           pod install --repo-update
           cd ..
-          
-      # 8. Build Flutter iOS app
-      - name: Flutter build ipa
+
+      - name: Build iOS app
         script: |
           flutter build ipa --release \
             --export-options-plist=/Users/builder/export_options.plist
-            
+
     artifacts:
       - build/ios/ipa/*.ipa
       - /tmp/xcodebuild_logs/*.log
-      - flutter_drive.log
-      
+
     publishing:
       email:
         recipients:
@@ -84,44 +111,6 @@ workflows:
         notify:
           success: true
           failure: true
-          
+
       app_store_connect:
         submit_to_testflight: true
-        submit_to_app_store: false
-
-  android-release:
-    name: Android Release Build
-    max_build_duration: 60
-    instance_type: linux_x2
-    environment:
-      groups:
-        - google_play_credentials
-      vars:
-        PACKAGE_NAME: "com.blackfabricsecurity.crossplatformblackfabric"
-      flutter: stable
-      
-    scripts:
-      - name: Get Flutter packages
-        script: |
-          flutter packages pub get
-          
-      - name: Build Android APK
-        script: |
-          flutter build apk --release
-          
-      - name: Build Android App Bundle
-        script: |
-          flutter build appbundle --release
-          
-    artifacts:
-      - build/app/outputs/**/*.apk
-      - build/app/outputs/**/*.aab
-      - build/app/outputs/**/mapping.txt
-      
-    publishing:
-      email:
-        recipients:
-          - your-email@example.com
-        notify:
-          success: true
-          failure: true

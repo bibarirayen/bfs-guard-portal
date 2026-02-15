@@ -1,5 +1,3 @@
-// lib/services/notifications.dart
-
 import 'dart:io';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
@@ -7,18 +5,16 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
 FlutterLocalNotificationsPlugin();
 
-// Background message handler (MUST be top-level function)
+// Background message handler
 @pragma('vm:entry-point')
 Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   print('📩 Background message: ${message.notification?.title}');
 }
 
 Future<void> setupFlutterNotifications() async {
-  print('🔧 Setting up notifications...');
+  print('🔧 [NOTIFICATIONS] Starting setup...');
 
-  // ============================================
-  // ANDROID SETUP
-  // ============================================
+  // Android setup
   const AndroidNotificationChannel channel = AndroidNotificationChannel(
     'high_importance_channel',
     'High Importance Notifications',
@@ -30,9 +26,7 @@ Future<void> setupFlutterNotifications() async {
       .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>()
       ?.createNotificationChannel(channel);
 
-  // ============================================
-  // iOS SETUP
-  // ============================================
+  // iOS setup
   const DarwinInitializationSettings initializationSettingsDarwin =
   DarwinInitializationSettings(
     requestAlertPermission: true,
@@ -40,9 +34,7 @@ Future<void> setupFlutterNotifications() async {
     requestSoundPermission: true,
   );
 
-  // ============================================
-  // INITIALIZE PLUGIN
-  // ============================================
+  // Initialize plugin
   const InitializationSettings initializationSettings = InitializationSettings(
     android: AndroidInitializationSettings('@mipmap/ic_launcher'),
     iOS: initializationSettingsDarwin,
@@ -51,25 +43,24 @@ Future<void> setupFlutterNotifications() async {
   await flutterLocalNotificationsPlugin.initialize(
     initializationSettings,
     onDidReceiveNotificationResponse: (NotificationResponse response) {
-      print('📱 Notification tapped: ${response.payload}');
+      print('📱 [NOTIFICATIONS] Tapped: ${response.payload}');
     },
   );
 
-  // ============================================
-  // iOS: REQUEST PERMISSIONS EXPLICITLY
-  // ============================================
+  // iOS specific setup
   if (Platform.isIOS) {
-    print('📱 Requesting iOS notification permissions...');
+    print('📱 [NOTIFICATIONS] iOS detected - requesting permissions...');
 
     // Request local notification permissions
-    final bool? localResult = await flutterLocalNotificationsPlugin
+    final bool? result = await flutterLocalNotificationsPlugin
         .resolvePlatformSpecificImplementation<IOSFlutterLocalNotificationsPlugin>()
         ?.requestPermissions(
       alert: true,
       badge: true,
       sound: true,
     );
-    print('📱 iOS Local Notification Permission: $localResult');
+
+    print('📱 [NOTIFICATIONS] iOS Local Permission Result: $result');
 
     // Set foreground notification options
     await FirebaseMessaging.instance.setForegroundNotificationPresentationOptions(
@@ -77,22 +68,18 @@ Future<void> setupFlutterNotifications() async {
       badge: true,
       sound: true,
     );
-    print('✅ iOS foreground notification options set');
+
+    print('✅ [NOTIFICATIONS] iOS foreground options set');
   }
 
-  // ============================================
-  // BACKGROUND MESSAGE HANDLER
-  // ============================================
+  // Background message handler
   FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
 
-  // ============================================
-  // LISTEN TO FOREGROUND MESSAGES
-  // ============================================
+  // Foreground messages
   FirebaseMessaging.onMessage.listen((RemoteMessage message) {
-    print('📬 Foreground message received: ${message.notification?.title}');
+    print('📬 [NOTIFICATIONS] Foreground message: ${message.notification?.title}');
 
     RemoteNotification? notification = message.notification;
-
     if (notification != null) {
       if (Platform.isAndroid) {
         flutterLocalNotificationsPlugin.show(
@@ -127,38 +114,43 @@ Future<void> setupFlutterNotifications() async {
     }
   });
 
-  // ============================================
-  // HANDLE NOTIFICATION TAPS
-  // ============================================
+  // Handle notification taps
   FirebaseMessaging.onMessageOpenedApp.listen((RemoteMessage message) {
-    print('📱 Notification opened app: ${message.notification?.title}');
+    print('📱 [NOTIFICATIONS] App opened from notification');
   });
 
-  // Check if app was opened from notification
   RemoteMessage? initialMessage = await FirebaseMessaging.instance.getInitialMessage();
   if (initialMessage != null) {
-    print('📱 App opened from notification: ${initialMessage.notification?.title}');
+    print('📱 [NOTIFICATIONS] App launched from notification');
   }
 
-  // ============================================
-  // GET FCM TOKEN
-  // ============================================
+  // Get FCM token - THIS IS THE CRITICAL PART
+  print('🔑 [NOTIFICATIONS] Attempting to get FCM token...');
   try {
     String? token = await FirebaseMessaging.instance.getToken();
-    print('📱 FCM Token: $token');
 
-    if (token == null) {
-      print('❌ ERROR: FCM Token is null!');
-      print('❌ This means APNs is not properly configured!');
+    if (token != null) {
+      print('✅ [NOTIFICATIONS] FCM Token obtained successfully!');
+      print('📱 [NOTIFICATIONS] Token: $token');
+      print('📱 [NOTIFICATIONS] Token length: ${token.length}');
+    } else {
+      print('❌ [NOTIFICATIONS] FCM Token is NULL!');
+      print('❌ [NOTIFICATIONS] Possible causes:');
+      print('   1. APNs key not uploaded to Firebase Console');
+      print('   2. Entitlements file missing or wrong');
+      print('   3. App not registered for remote notifications');
+      print('   4. Network connection issue');
     }
-  } catch (e) {
-    print('❌ ERROR getting FCM token: $e');
+  } catch (e, stackTrace) {
+    print('❌ [NOTIFICATIONS] ERROR getting FCM token: $e');
+    print('❌ [NOTIFICATIONS] Stack trace: $stackTrace');
   }
 
   // Listen for token refresh
   FirebaseMessaging.instance.onTokenRefresh.listen((newToken) {
-    print('📱 FCM Token refreshed: $newToken');
+    print('🔄 [NOTIFICATIONS] FCM Token refreshed!');
+    print('📱 [NOTIFICATIONS] New token: $newToken');
   });
 
-  print('✅ Notification setup complete');
+  print('✅ [NOTIFICATIONS] Setup complete');
 }
