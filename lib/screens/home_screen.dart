@@ -62,6 +62,10 @@ class _HomeScreenState extends State<HomeScreen> {
 
   late LiveLocationService _liveLocationService;
 
+  // ⭐ Timers for periodic updates
+  Timer? _dashboardRefreshTimer;
+  Timer? _shiftButtonUpdateTimer;
+
   bool _canStartShift = false;
   bool _canStopShift = false;
   bool _shiftStarted = false;
@@ -227,20 +231,63 @@ class _HomeScreenState extends State<HomeScreen> {
     ];
 
 
-    Timer.periodic(const Duration(minutes: 1), (_) {
+    // ⭐ Refresh dashboard every 10 seconds to check shift status
+    _dashboardRefreshTimer = Timer.periodic(const Duration(seconds: 10), (_) {
+      print('🔄 Auto-refreshing dashboard...');
+      _loadDashboard();
+    });
+
+    // ⭐ Update shift buttons every minute
+    _shiftButtonUpdateTimer = Timer.periodic(const Duration(minutes: 1), (_) {
       _updateShiftButtons();
     });
 
   }
+
+  @override
+  void dispose() {
+    // ⭐ Clean up timers to prevent memory leaks
+    _dashboardRefreshTimer?.cancel();
+    _shiftButtonUpdateTimer?.cancel();
+    print('🧹 Timers cleaned up');
+    super.dispose();
+  }
+
   Future<void> _loadDashboard() async {
     try {
       final dashboardService = DashboardService();
       final data = await dashboardService.getDashboardMobile();
+
       // ✅ Extract data BEFORE setState
       final guardName = data["GuardName"] ?? "Unknown Guard";
       final bool assignmentActive = data["Active"] == true;
+
+      // ⭐ CRITICAL: Stop GPS tracking if shift is not active in database
       if (!assignmentActive) {
+        print('🛑 Database shows shift not active - stopping GPS tracking');
         _liveLocationService.stopTracking();
+
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.remove('shift_active');
+        await prefs.remove('active_assignment_id');
+        await prefs.remove('active_guard_id');
+
+        // Show notification to user
+        if (_assignmentActive && mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Row(
+                children: [
+                  Icon(Icons.info_outline, color: Colors.white),
+                  SizedBox(width: 8),
+                  Text('Shift ended - GPS tracking stopped'),
+                ],
+              ),
+              backgroundColor: Colors.blue,
+              duration: Duration(seconds: 3),
+            ),
+          );
+        }
       }
 
       final guardRole = data["GuardRole"] ?? "Guard";
@@ -248,6 +295,8 @@ class _HomeScreenState extends State<HomeScreen> {
 
       bool hasShiftToday = data["hasShiftToday"] == true;
       String shiftTime = "No shift today";
+
+      // ⭐ If no shift today, stop everything
       if (!hasShiftToday) {
         print("🚫 No shift today — stopping tracking");
 
@@ -273,64 +322,64 @@ class _HomeScreenState extends State<HomeScreen> {
       await prefs.remove('assignmentId');
 
       if (hasShiftToday && data["shift"] != null) {
-          final start = data["shift"]["startTime"];
-          final end = data["shift"]["endTime"];
-          final site = data["site"];
-          if (site != null) {
-            _siteLat = site["latitude"];
-            _siteLng = site["longitude"];
-            _siteName = site["name"] ?? "Site";
-            _supervisorName = site["supervisorname"];
-            _supervisorEmail = site["supervisoremail"];
-            _supervisorPhone = site["supervisornumber"];
-          }
-          final shiftDateStr = data["date"]; // "2026-02-08"
-          final shiftDate = DateTime.parse(shiftDateStr); // parses YYYY-MM-DD
+        final start = data["shift"]["startTime"];
+        final end = data["shift"]["endTime"];
+        final site = data["site"];
+        if (site != null) {
+          _siteLat = site["latitude"];
+          _siteLng = site["longitude"];
+          _siteName = site["name"] ?? "Site";
+          _supervisorName = site["supervisorname"];
+          _supervisorEmail = site["supervisoremail"];
+          _supervisorPhone = site["supervisornumber"];
+        }
+        final shiftDateStr = data["date"]; // "2026-02-08"
+        final shiftDate = DateTime.parse(shiftDateStr); // parses YYYY-MM-DD
 
-          final startParts = start.split(":");
-          final endParts = end.split(":");
-
-
-          startDateTime = DateTime.utc(
-            shiftDate.year,
-            shiftDate.month,
-            shiftDate.day,
-            int.parse(startParts[0]),
-            int.parse(startParts[1]),
-          );
-
-          endDateTime = DateTime.utc(
-            shiftDate.year,
-            shiftDate.month,
-            shiftDate.day,
-            int.parse(endParts[0]),
-            int.parse(endParts[1]),
-          );
-
-          _shiftStartDateTime = startDateTime;
-          _shiftEndDateTime = endDateTime;
+        final startParts = start.split(":");
+        final endParts = end.split(":");
 
 
-          shiftTime = "$start - $end";
+        startDateTime = DateTime.utc(
+          shiftDate.year,
+          shiftDate.month,
+          shiftDate.day,
+          int.parse(startParts[0]),
+          int.parse(startParts[1]),
+        );
 
-          Duration shiftDuration = endDateTime!.difference(startDateTime!);
+        endDateTime = DateTime.utc(
+          shiftDate.year,
+          shiftDate.month,
+          shiftDate.day,
+          int.parse(endParts[0]),
+          int.parse(endParts[1]),
+        );
 
-  // hours in decimal (ex: 0.92h)
-          double hours = shiftDuration.inMinutes / 60;
+        _shiftStartDateTime = startDateTime;
+        _shiftEndDateTime = endDateTime;
 
-  // format nicely
-          formattedHours= hours >= 1
-              ? "${hours.toStringAsFixed(1)}h"
-              : "${shiftDuration.inMinutes} min";
 
-          await prefs.setInt('assignmentId', data["assignmentId"]);
-          _hasAssignment = prefs.getInt('assignmentId') != null;
-          await prefs.setInt('active_assignment_id', data["assignmentId"]);
-          await prefs.setInt('active_guard_id', prefs.getInt('userId')!); // guardId
-          await prefs.setBool('shift_active', data["Active"] == true); // if shift active
+        shiftTime = "$start - $end";
 
-  // now restore tracking
-          await _restoreLiveTrackingIfNeeded();
+        Duration shiftDuration = endDateTime!.difference(startDateTime!);
+
+        // hours in decimal (ex: 0.92h)
+        double hours = shiftDuration.inMinutes / 60;
+
+        // format nicely
+        formattedHours= hours >= 1
+            ? "${hours.toStringAsFixed(1)}h"
+            : "${shiftDuration.inMinutes} min";
+
+        await prefs.setInt('assignmentId', data["assignmentId"]);
+        _hasAssignment = prefs.getInt('assignmentId') != null;
+        await prefs.setInt('active_assignment_id', data["assignmentId"]);
+        await prefs.setInt('active_guard_id', prefs.getInt('userId')!); // guardId
+        await prefs.setBool('shift_active', data["Active"] == true); // if shift active
+
+        // now restore tracking
+        await _restoreLiveTrackingIfNeeded();
 
       }
 
@@ -528,22 +577,22 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: _backgroundColor,
-      appBar: CustomAppBar(
-        title: _titles[_selectedIndex],  // <-- dynamic title now
-        isDarkMode: _isDarkMode,
-        onThemeChanged: (value) {
-          setState(() {
-            _isDarkMode = value;   // toggle dark/light mode
-          });
-        },
-      ),
+        backgroundColor: _backgroundColor,
+        appBar: CustomAppBar(
+          title: _titles[_selectedIndex],  // <-- dynamic title now
+          isDarkMode: _isDarkMode,
+          onThemeChanged: (value) {
+            setState(() {
+              _isDarkMode = value;   // toggle dark/light mode
+            });
+          },
+        ),
 
         body: _screens[_selectedIndex](),
-      bottomNavigationBar: CustomNavbar(
-        onItemTapped: _onItemTapped,
-        selectedIndex: _selectedIndex,
-      )
+        bottomNavigationBar: CustomNavbar(
+          onItemTapped: _onItemTapped,
+          selectedIndex: _selectedIndex,
+        )
     );
   }
   Future<void> _requestAllPermissions() async {
@@ -651,15 +700,124 @@ class _HomeScreenState extends State<HomeScreen> {
 
 
   Future<void> _startShift() async {
+    // ⭐ CRITICAL: Block shift start until "Always" permission is granted
+    LocationPermission permission = await Geolocator.checkPermission();
+
+    // iOS MUST have "Always" permission for background tracking
+    if (Platform.isIOS && permission != LocationPermission.always) {
+      // Show blocking dialog - user CANNOT start shift without "Always" permission
+      bool? shouldProceed = await showDialog<bool>(
+        context: context,
+        barrierDismissible: false, // Cannot dismiss by tapping outside
+        builder: (context) => AlertDialog(
+          title: Row(
+            children: [
+              Icon(Icons.location_on, color: Colors.red),
+              SizedBox(width: 8),
+              Text('Permission Required'),
+            ],
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'You MUST allow location access "Always" to start your shift.',
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
+              SizedBox(height: 16),
+              Text('Why "Always" is required:'),
+              SizedBox(height: 8),
+              Text('✓ Track your patrol route during the entire shift'),
+              Text('✓ Ensure your safety even when app is in background'),
+              Text('✓ Automatic checkpoint verification'),
+              Text('✓ Real-time location monitoring'),
+              SizedBox(height: 16),
+              Container(
+                padding: EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.blue.shade50,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.blue.shade200),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'How to enable "Always" permission:',
+                      style: TextStyle(fontWeight: FontWeight.bold, color: Colors.blue.shade900),
+                    ),
+                    SizedBox(height: 8),
+                    Text('1. Tap "Open Settings" below', style: TextStyle(fontSize: 13)),
+                    Text('2. Tap "Location"', style: TextStyle(fontSize: 13)),
+                    Text('3. Select "Always"', style: TextStyle(fontSize: 13)),
+                    Text('4. Return to the app', style: TextStyle(fontSize: 13)),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: Text('Cancel'),
+            ),
+            ElevatedButton.icon(
+              onPressed: () {
+                openAppSettings();
+                Navigator.pop(context, true);
+              },
+              icon: Icon(Icons.settings),
+              label: Text('Open Settings'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.blue,
+                foregroundColor: Colors.white,
+              ),
+            ),
+          ],
+        ),
+      );
+
+      if (shouldProceed != true) {
+        // User cancelled - don't start shift
+        return;
+      }
+
+      // User went to settings - wait a bit then re-check permission
+      await Future.delayed(Duration(seconds: 1));
+      permission = await Geolocator.checkPermission();
+
+      if (permission != LocationPermission.always) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('⚠️ "Always" permission required to start shift'),
+            backgroundColor: Colors.orange,
+            duration: Duration(seconds: 5),
+          ),
+        );
+        return;
+      }
+    }
+
+    // Android or iOS with "Always" permission - request if needed
     bool hasPermission = await PermissionHelper.requestAlwaysLocationPermission(context);
-    if (!hasPermission) return;
+    if (!hasPermission) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('❌ Location permission denied - cannot start shift'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
     await _getCurrentPosition();
     if (_currentPosition == null) {
       ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text("GPS location not available"))
       );
-        return;
-      }
+      return;
+    }
 
 
     try {
@@ -727,7 +885,16 @@ class _HomeScreenState extends State<HomeScreen> {
 
 
   Future<void> _stopShift() async {
-    LiveLocationService().stopTracking();
+    // ⭐ Immediately stop location tracking
+    print('🛑 Stopping location tracking...');
+    _liveLocationService.stopTracking();
+
+    // Verify tracking stopped
+    if (!_liveLocationService.isTracking) {
+      print('✅ Location tracking stopped successfully');
+    } else {
+      print('⚠️ Warning: Location tracking may still be active');
+    }
 
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove('shift_active');
@@ -738,6 +905,21 @@ class _HomeScreenState extends State<HomeScreen> {
       _assignmentActive = false;
       _shiftEnded = true;
     });
+
+    // Show confirmation to user
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Row(
+          children: [
+            Icon(Icons.check_circle, color: Colors.white),
+            SizedBox(width: 8),
+            Text('Shift ended - GPS tracking stopped'),
+          ],
+        ),
+        backgroundColor: Colors.green,
+        duration: Duration(seconds: 3),
+      ),
+    );
   }
 
   void _showSupervisorModal() {
@@ -788,335 +970,335 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Widget _buildDashboard() {
     return SafeArea(
-        child: RefreshIndicator(
-          onRefresh: _loadDashboard, // this calls your existing async function
-          color: Colors.white, // indicator color
-          backgroundColor: Color(0xFF4F46E5), // optional background
-          child: SingleChildScrollView(
-            physics: const AlwaysScrollableScrollPhysics(), // important!
-            padding: EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // --- Header ---
-                Container(
-                  width: double.infinity,
-                  padding: EdgeInsets.all(20),
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(20),
-                    color: _cardColor,
-                    border: Border.all(color: _borderColor, width: 1),
-                  ),
-                  child: Row(
-                    children: [
-                      CircleAvatar(
-                        radius: 35,
-                        backgroundColor: Color(0xFF4F46E5).withOpacity(0.1),
-                        child: Icon(Icons.person, size: 40, color: Color(0xFF4F46E5)),
-                      ),
-                      SizedBox(width: 15),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              _guardName.isEmpty ? "Loading..." : _guardName + " || "+ _guardRole,
-                              style: TextStyle(
-                                color: _textColor,
-                                fontSize: 18,
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                            SizedBox(height: 8),
-
-                            Container(
-                              padding: EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                              decoration: BoxDecoration(
-                                color: Color(0xFF4F46E5).withOpacity(0.1),
-                                borderRadius: BorderRadius.circular(10),
-                              ),
-                              child: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Icon(Icons.access_time, size: 14, color: Color(0xFF4F46E5)),
-                                  SizedBox(width: 6),
-                                  Text(
-                                    _shiftTime,
-                                    style: TextStyle(
-                                      color: _textColor,
-                                      fontSize: 13,
-                                      fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
+      child: RefreshIndicator(
+        onRefresh: _loadDashboard, // this calls your existing async function
+        color: Colors.white, // indicator color
+        backgroundColor: Color(0xFF4F46E5), // optional background
+        child: SingleChildScrollView(
+          physics: const AlwaysScrollableScrollPhysics(), // important!
+          padding: EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // --- Header ---
+              Container(
+                width: double.infinity,
+                padding: EdgeInsets.all(20),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(20),
+                  color: _cardColor,
+                  border: Border.all(color: _borderColor, width: 1),
+                ),
+                child: Row(
+                  children: [
+                    CircleAvatar(
+                      radius: 35,
+                      backgroundColor: Color(0xFF4F46E5).withOpacity(0.1),
+                      child: Icon(Icons.person, size: 40, color: Color(0xFF4F46E5)),
                     ),
+                    SizedBox(width: 15),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            _guardName.isEmpty ? "Loading..." : _guardName + " || "+ _guardRole,
+                            style: TextStyle(
+                              color: _textColor,
+                              fontSize: 18,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          SizedBox(height: 8),
+
+                          Container(
+                            padding: EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                            decoration: BoxDecoration(
+                              color: Color(0xFF4F46E5).withOpacity(0.1),
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(Icons.access_time, size: 14, color: Color(0xFF4F46E5)),
+                                SizedBox(width: 6),
+                                Text(
+                                  _shiftTime,
+                                  style: TextStyle(
+                                    color: _textColor,
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+
+              SizedBox(height: 20),
+
+              // --- Stats Cards ---
+              Row(
+                children: [
+                  Expanded(
+                    child: _buildSimpleStatCard(
+                      _hoursToday,
+                      "Hours Today",
+                      Icons.timer,
+                      Color(0xFF10B981),
+                    ),
+                  ),
+                  SizedBox(width: 12),
+                  Expanded(
+                    child: _buildSimpleStatCard(
+                      "",
+                      "Supervisor",
+                      Icons.person_outline,
+                      Color(0xFF3B82F6),
+                      onTap: (_hasShiftToday && _supervisorName != null)
+                          ? _showSupervisorModal
+                          : null,
+                    ),
+                  ),
+                  SizedBox(width: 12),
+                  Expanded(
+                    child: _buildSimpleStatCard(
+                      "",
+                      "Open Site Map",
+                      Icons.map,
+                      Color(0xFF10B981),
+                      onTap: _hasAssignment ? _openSiteOnMap : null, // ✅ disabled if no assignment
+                    ),
+
                   ),
                 ],
               ),
-            ),
 
-            SizedBox(height: 20),
+              SizedBox(height: 20),
 
-            // --- Stats Cards ---
-            Row(
-              children: [
-                Expanded(
-                  child: _buildSimpleStatCard(
-                    _hoursToday,
-                    "Hours Today",
-                    Icons.timer,
-                    Color(0xFF10B981),
-                  ),
-                ),
-                SizedBox(width: 12),
-                Expanded(
-                  child: _buildSimpleStatCard(
-                    "",
-                    "Supervisor",
-                    Icons.person_outline,
-                    Color(0xFF3B82F6),
-                    onTap: (_hasShiftToday && _supervisorName != null)
-                        ? _showSupervisorModal
-                        : null,
-                  ),
-                ),
-                SizedBox(width: 12),
-                Expanded(
-                  child: _buildSimpleStatCard(
-                    "",
-                    "Open Site Map",
-                    Icons.map,
-                    Color(0xFF10B981),
-                    onTap: _hasAssignment ? _openSiteOnMap : null, // ✅ disabled if no assignment
-                  ),
-
-                ),
-              ],
-            ),
-
-            SizedBox(height: 20),
-
-            // --- Emergency Button ---
-            GestureDetector(
-              onTap: (_shiftStarted && !_shiftEnded) ? _toggleEmergency : null,
-              child: Opacity(
-                opacity: (_shiftStarted && !_shiftEnded) ? 1.0 : 0.4,
-                child: Container(
-                  width: double.infinity,
-                  padding: EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(20),
-                    color: _hasShiftToday
-                        ? (_isEmergencyActive ? Colors.redAccent : Colors.red)
-                        : Colors.grey,
-                    boxShadow: _hasShiftToday
-                        ? [
-                      BoxShadow(
-                        color: Colors.red.withOpacity(0.3),
-                        blurRadius: 10,
-                        offset: Offset(0, 4),
-                      ),
-                    ]
-                        : [],
-                  ),
-                  child: Row(
-                    children: [
-                      Icon(Icons.warning, size: 28, color: Colors.white),
-                      SizedBox(width: 12),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              !_hasShiftToday
-                                  ? "NO ACTIVE SHIFT"
-                                  : (_isEmergencyActive
-                                  ? "EMERGENCY ACTIVE"
-                                  : "EMERGENCY ALERT"),
-                              style: TextStyle(
-                                fontSize: 16,
-                                fontWeight: FontWeight.w700,
-                                color: Colors.white,
-                              ),
-                            ),
-                            SizedBox(height: 4),
-                            Text(
-                              !_hasShiftToday
-                                  ? "Emergency disabled outside shift"
-                                  : (_isEmergencyActive
-                                  ? "Assistance is on the way"
-                                  : "Press for emergency"),
-                              style: TextStyle(
-                                fontSize: 12,
-                                color: Colors.white.withOpacity(0.9),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      Icon(Icons.arrow_forward, color: Colors.white),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-            SizedBox(height: 16), // ✅ ADD THIS
-
-            if (_hasShiftToday && !_shiftEnded)
+              // --- Emergency Button ---
               GestureDetector(
-                onTap: _canStartShift
-                    ? _startShift
-                    : _canStopShift
-                    ? _stopShift
-                    : null,
+                onTap: (_shiftStarted && !_shiftEnded) ? _toggleEmergency : null,
                 child: Opacity(
-                  opacity: (_canStartShift || _canStopShift) ? 1.0 : 0.4,
+                  opacity: (_shiftStarted && !_shiftEnded) ? 1.0 : 0.4,
                   child: Container(
                     width: double.infinity,
                     padding: EdgeInsets.all(16),
                     decoration: BoxDecoration(
                       borderRadius: BorderRadius.circular(20),
-                      color: _shiftStarted ? Colors.redAccent : Colors.green,
+                      color: _hasShiftToday
+                          ? (_isEmergencyActive ? Colors.redAccent : Colors.red)
+                          : Colors.grey,
+                      boxShadow: _hasShiftToday
+                          ? [
+                        BoxShadow(
+                          color: Colors.red.withOpacity(0.3),
+                          blurRadius: 10,
+                          offset: Offset(0, 4),
+                        ),
+                      ]
+                          : [],
                     ),
                     child: Row(
                       children: [
-                        Icon(
-                          _shiftStarted ? Icons.stop : Icons.play_arrow,
-                          color: Colors.white,
-                          size: 28,
-                        ),
+                        Icon(Icons.warning, size: 28, color: Colors.white),
                         SizedBox(width: 12),
                         Expanded(
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Text(
-                                _shiftStarted ? "STOP SHIFT" : "START SHIFT",
+                                !_hasShiftToday
+                                    ? "NO ACTIVE SHIFT"
+                                    : (_isEmergencyActive
+                                    ? "EMERGENCY ACTIVE"
+                                    : "EMERGENCY ALERT"),
                                 style: TextStyle(
-                                  color: Colors.white,
                                   fontSize: 16,
                                   fontWeight: FontWeight.w700,
+                                  color: Colors.white,
                                 ),
                               ),
+                              SizedBox(height: 4),
                               Text(
-                                _shiftStarted
-                                    ? "Available at shift end"
-                                    : "Available 20 minutes before start",
+                                !_hasShiftToday
+                                    ? "Emergency disabled outside shift"
+                                    : (_isEmergencyActive
+                                    ? "Assistance is on the way"
+                                    : "Press for emergency"),
                                 style: TextStyle(
-                                  color: Colors.white.withOpacity(0.9),
                                   fontSize: 12,
+                                  color: Colors.white.withOpacity(0.9),
                                 ),
                               ),
                             ],
                           ),
                         ),
+                        Icon(Icons.arrow_forward, color: Colors.white),
                       ],
                     ),
                   ),
                 ),
               ),
+              SizedBox(height: 16), // ✅ ADD THIS
 
-
-            SizedBox(height: 25),
-
-            // --- Quick Actions Title ---
-            Padding(
-              padding: EdgeInsets.only(left: 4),
-              child: Text(
-                "Quick Actions",
-                style: TextStyle(
-                  color: _textColor,
-                  fontSize: 18,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-            ),
-
-            SizedBox(height: 12),
-
-            // --- Grid View - SIMPLE FIX: Use Column with Rows ---
-            Column(
-              children: [
-                // Row 1
-                Row(
-                  children: [
-                    Expanded(
-                      child: _buildSimpleActionButton(
-                        Icons.beach_access,
-                        "Vacation\nRequest",
-                        Color(0xFF3B82F6),
+              if (_hasShiftToday && !_shiftEnded)
+                GestureDetector(
+                  onTap: _canStartShift
+                      ? _startShift
+                      : _canStopShift
+                      ? _stopShift
+                      : null,
+                  child: Opacity(
+                    opacity: (_canStartShift || _canStopShift) ? 1.0 : 0.4,
+                    child: Container(
+                      width: double.infinity,
+                      padding: EdgeInsets.all(16),
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(20),
+                        color: _shiftStarted ? Colors.redAccent : Colors.green,
                       ),
-                    ),
-                    SizedBox(width: 12),
-                    Expanded(
-                      child: _buildSimpleActionButton(
-                        Icons.access_time_filled,
-                        "Available\nShifts",
-                        Color(0xFF10B981),
-                      ),
-                    ),
-                  ],
-                ),
-                SizedBox(height: 12),
-                // Row 2
-                if (_isSupervisor)
-                  Column(
-                    children: [
-                      Row(
+                      child: Row(
                         children: [
-                          Expanded(
-                            child: _buildSimpleActionButton(
-                              Icons.message_outlined,
-                              "Counseling\nStatements",
-                              Color(0xFFF59E0B),
-                            ),
+                          Icon(
+                            _shiftStarted ? Icons.stop : Icons.play_arrow,
+                            color: Colors.white,
+                            size: 28,
                           ),
                           SizedBox(width: 12),
                           Expanded(
-                            child: _buildSimpleActionButton(
-                              Icons.report,
-                              "New Counseling\nReport",
-                              Color(0xFFEF4444),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  _shiftStarted ? "STOP SHIFT" : "START SHIFT",
+                                  style: TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                                Text(
+                                  _shiftStarted
+                                      ? "Available at shift end"
+                                      : "Available 20 minutes before start",
+                                  style: TextStyle(
+                                    color: Colors.white.withOpacity(0.9),
+                                    fontSize: 12,
+                                  ),
+                                ),
+                              ],
                             ),
                           ),
                         ],
                       ),
-                      SizedBox(height: 12),
+                    ),
+                  ),
+                ),
+
+
+              SizedBox(height: 25),
+
+              // --- Quick Actions Title ---
+              Padding(
+                padding: EdgeInsets.only(left: 4),
+                child: Text(
+                  "Quick Actions",
+                  style: TextStyle(
+                    color: _textColor,
+                    fontSize: 18,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+
+              SizedBox(height: 12),
+
+              // --- Grid View - SIMPLE FIX: Use Column with Rows ---
+              Column(
+                children: [
+                  // Row 1
+                  Row(
+                    children: [
+                      Expanded(
+                        child: _buildSimpleActionButton(
+                          Icons.beach_access,
+                          "Vacation\nRequest",
+                          Color(0xFF3B82F6),
+                        ),
+                      ),
+                      SizedBox(width: 12),
+                      Expanded(
+                        child: _buildSimpleActionButton(
+                          Icons.access_time_filled,
+                          "Available\nShifts",
+                          Color(0xFF10B981),
+                        ),
+                      ),
                     ],
                   ),
-
-                SizedBox(height: 12),
-                // Row 3
-                Row(
-                  children: [
-                    Expanded(
-                      child: _buildSimpleActionButton(
-                        Icons.support_agent,
-                        "Dispatch\nContacts",
-                        Color(0xFF8B5CF6),
-                      ),
+                  SizedBox(height: 12),
+                  // Row 2
+                  if (_isSupervisor)
+                    Column(
+                      children: [
+                        Row(
+                          children: [
+                            Expanded(
+                              child: _buildSimpleActionButton(
+                                Icons.message_outlined,
+                                "Counseling\nStatements",
+                                Color(0xFFF59E0B),
+                              ),
+                            ),
+                            SizedBox(width: 12),
+                            Expanded(
+                              child: _buildSimpleActionButton(
+                                Icons.report,
+                                "New Counseling\nReport",
+                                Color(0xFFEF4444),
+                              ),
+                            ),
+                          ],
+                        ),
+                        SizedBox(height: 12),
+                      ],
                     ),
-                    SizedBox(width: 12),
-                    Expanded(
-                      child: _buildSimpleActionButton(
-                        Icons.settings_outlined,
-                        "Settings\n& Profile",
-                        Color(0xFF6B7280),
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            ),
 
-            SizedBox(height: 90), // Padding for bottom nav
-          ],
+                  SizedBox(height: 12),
+                  // Row 3
+                  Row(
+                    children: [
+                      Expanded(
+                        child: _buildSimpleActionButton(
+                          Icons.support_agent,
+                          "Dispatch\nContacts",
+                          Color(0xFF8B5CF6),
+                        ),
+                      ),
+                      SizedBox(width: 12),
+                      Expanded(
+                        child: _buildSimpleActionButton(
+                          Icons.settings_outlined,
+                          "Settings\n& Profile",
+                          Color(0xFF6B7280),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+
+              SizedBox(height: 90), // Padding for bottom nav
+            ],
+          ),
         ),
       ),
-    ),
     );
   }
 // Update the stat card to work with Expanded
@@ -1242,4 +1424,4 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
     );
   }
-  }
+}

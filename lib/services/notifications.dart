@@ -81,6 +81,8 @@ Future<void> setupFlutterNotifications() async {
 
     RemoteNotification? notification = message.notification;
     if (notification != null) {
+      // Only manually show notifications on Android
+      // iOS handles this automatically via setForegroundNotificationPresentationOptions
       if (Platform.isAndroid) {
         flutterLocalNotificationsPlugin.show(
           notification.hashCode,
@@ -96,21 +98,9 @@ Future<void> setupFlutterNotifications() async {
           ),
           payload: message.data.toString(),
         );
-      } else if (Platform.isIOS) {
-        flutterLocalNotificationsPlugin.show(
-          notification.hashCode,
-          notification.title,
-          notification.body,
-          const NotificationDetails(
-            iOS: DarwinNotificationDetails(
-              presentAlert: true,
-              presentBadge: true,
-              presentSound: true,
-            ),
-          ),
-          payload: message.data.toString(),
-        );
       }
+      // iOS: Do NOT manually show - Firebase handles it automatically
+      // because we set setForegroundNotificationPresentationOptions above
     }
   });
 

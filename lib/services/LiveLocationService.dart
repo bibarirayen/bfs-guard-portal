@@ -26,9 +26,8 @@ class LiveLocationService {
   DateTime? _lastSentTime;
 
   /// CONFIGURATION (you can tune these)
-  static const int movingIntervalSeconds = 10;   // while moving
-  static const int idleIntervalSeconds = 40;     // heartbeat while idle
-  static const double movementSpeedThreshold = 1.0; // m/s (~3.6 km/h)
+  static const int updateIntervalSeconds = 10;   // Fixed 10-second updates as requested
+  static const double movementSpeedThreshold = 1.0; // m/s (~3.6 km/h) - kept for logging
 
   void startTracking(int userId, int assignmentId) {
     stopTracking(); // clean restart
@@ -86,13 +85,9 @@ class LiveLocationService {
 
             final now = DateTime.now();
 
-            final bool isMoving = (pos.speed) > movementSpeedThreshold;
-
-            final int requiredInterval =
-            isMoving ? movingIntervalSeconds : idleIntervalSeconds;
-
+            // Send location every 10 seconds (fixed interval)
             if (_lastSentTime == null ||
-                now.difference(_lastSentTime!).inSeconds >= requiredInterval) {
+                now.difference(_lastSentTime!).inSeconds >= updateIntervalSeconds) {
               _sendLocation(userId, assignmentId);
             }
           },
@@ -112,11 +107,11 @@ class LiveLocationService {
         );
 
     // ============================================
-    // SAFETY HEARTBEAT
+    // SAFETY HEARTBEAT (every 10 seconds)
     // ============================================
-    // Ensures update even if speed detection fails or location updates pause
+    // Ensures update even if location stream pauses or fails
     _heartbeatTimer =
-        Timer.periodic(const Duration(seconds: idleIntervalSeconds), (_) {
+        Timer.periodic(const Duration(seconds: updateIntervalSeconds), (_) {
           if (_isTracking && _lastPosition != null) {
             _sendLocation(userId, assignmentId);
           } else if (_isTracking && _lastPosition == null) {
