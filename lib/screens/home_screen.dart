@@ -71,26 +71,133 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _shiftStarted = false;
   bool _shiftEnded = false;
 
-
   late final List<Widget Function()> _screens;
   bool _isDarkMode = true;
   final List<String> _titles = [
-    "Dashboard",          // 0
-    "Reports",            // 1
-    "New Report",         // 2
-    "Patrols",            // 4
+    "Dashboard",
+    "Reports",
+    "New Report",
+    "Patrols",
     "Profile",
-    "Vacation Requests",  // 3
+    "Vacation Requests",
     "Shifts",
     "Dispatch Contacts",
     "Counseling List",
     "New Counseling Report"
-
   ];
+
   // GPS tracking variables
   Position? _currentPosition;
   bool _tracking = false;
   bool _isEmergencyActive = false;
+  bool _assignmentActive = false;
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Theme helpers
+  // ─────────────────────────────────────────────────────────────────────────
+  Color get _backgroundColor =>
+      _isDarkMode ? const Color(0xFF0F172A) : const Color(0xFFF8FAFC);
+  Color get _textColor =>
+      _isDarkMode ? Colors.white : const Color(0xFF1E293B);
+  Color get _cardColor =>
+      _isDarkMode ? const Color(0xFF1E293B) : Colors.white;
+  Color get _borderColor =>
+      _isDarkMode ? const Color(0xFF334155) : const Color(0xFFE2E8F0);
+  Color get _secondaryTextColor =>
+      _isDarkMode ? Colors.grey[400]! : Colors.grey[600]!;
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Lifecycle
+  // ─────────────────────────────────────────────────────────────────────────
+
+  @override
+  void initState() {
+    super.initState();
+
+    Future<void> _requestNotificationPermission() async {
+      if (await Permission.notification.isDenied) {
+        await Permission.notification.request();
+      }
+    }
+
+    _requestNotificationPermission();
+
+    // ── FIX 1: initialise service and register remote-end callback ──────────
+    _liveLocationService = LiveLocationService();
+
+    _liveLocationService.onShiftEndedRemotely = () {
+      if (!mounted) return;
+      setState(() {
+        _shiftStarted = false;
+        _shiftEnded = true;
+        _assignmentActive = false;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Row(
+            children: [
+              Icon(Icons.info_outline, color: Colors.white),
+              SizedBox(width: 8),
+              Text('Shift ended — GPS tracking stopped'),
+            ],
+          ),
+          backgroundColor: Colors.blue,
+          duration: Duration(seconds: 4),
+        ),
+      );
+    };
+    // ────────────────────────────────────────────────────────────────────────
+
+    _requestAllPermissions();
+
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      await Future.delayed(const Duration(seconds: 1));
+      await _restoreLiveTrackingIfNeeded();
+    });
+
+    _loadDashboard();
+
+    _screens = [
+          () => _buildDashboard(),
+          () => const ReportListPage(),
+          () => const ReportPage(),
+          () => TrajectListPage(),
+          () => const ProfileScreen(),
+          () => const VacationRequestPage(),
+          () => const ShiftsPage(),
+          () => const DispatchContactsPage(),
+          () => const CounselingListPage(),
+          () => const CounselingUploadPage(),
+    ];
+
+    // Refresh dashboard every 30 s to detect remote shift-end while foreground
+    _dashboardRefreshTimer =
+        Timer.periodic(const Duration(seconds: 30), (_) {
+          print('🔄 Auto-refreshing dashboard...');
+          _loadDashboard();
+        });
+
+    _shiftButtonUpdateTimer =
+        Timer.periodic(const Duration(minutes: 1), (_) {
+          _updateShiftButtons();
+        });
+  }
+
+  @override
+  void dispose() {
+    _dashboardRefreshTimer?.cancel();
+    _shiftButtonUpdateTimer?.cancel();
+    // ── FIX 3: clear callback to prevent memory leak ──────────────────────
+    _liveLocationService.onShiftEndedRemotely = null;
+    // ─────────────────────────────────────────────────────────────────────
+    print('🧹 Timers cleaned up');
+    super.dispose();
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Restore tracking on app resume / hot-restart
+  // ─────────────────────────────────────────────────────────────────────────
+
   Future<void> _restoreLiveTrackingIfNeeded() async {
     final prefs = await SharedPreferences.getInstance();
 
@@ -103,11 +210,13 @@ class _HomeScreenState extends State<HomeScreen> {
     print("assignmentId = $assignmentId");
     print("guardId = $guardId");
 
-    if (!isShiftActive || !_hasShiftToday || assignmentId == null || guardId == null) {
+    if (!isShiftActive ||
+        !_hasShiftToday ||
+        assignmentId == null ||
+        guardId == null) {
       print("❌ Restore aborted (no active shift)");
       return;
     }
-
 
     final hasPermission = await _handleLocationPermission();
     if (!hasPermission) {
@@ -124,163 +233,41 @@ class _HomeScreenState extends State<HomeScreen> {
       _shiftEnded = false;
     });
   }
-  DateTime getHawaiiTime() {
-    // Current UTC time
-    final nowUtc = DateTime.now().toUtc();
 
-    // Hawaii is UTC-10
-    return nowUtc.subtract(Duration(hours: 10));
-  }
-  DateTime parseHawaiiTime(String timeStr) {
-    final parts = timeStr.split(":");
-    final now = DateTime.now(); // local date
-    // create Hawaii time as a local DateTime
-    return DateTime(
-      now.year,
-      now.month,
-      now.day,
-      int.parse(parts[0]),
-      int.parse(parts[1]),
-    );
-  }
-
-
-  Future<void> _sendEmergencyAlert() async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      final guardId = prefs.getInt('userId');
-      if (guardId == null) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Guard ID not found")),
-        );
-        return;
-      }
-
-      final apiService = ApiService(); // your existing ApiService
-
-      final response = await apiService.post(
-        "emergency/trigger/$guardId",
-        {}, // no body required
-      );
-
-      if (response.statusCode == 200) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text("Emergency alert sent successfully!"),
-            backgroundColor: Colors.redAccent,
-          ),
-        );
-      } else {
-        final data = jsonDecode(response.body);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(data['error'] ?? "Failed to send emergency alert"),
-          ),
-        );
-      }
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text("Error sending emergency alert: $e"),
-        ),
-      );
-    }
-  }
-
-
-
-  // Theme colors
-  Color get _backgroundColor => _isDarkMode ? Color(0xFF0F172A) : Color(0xFFF8FAFC);
-  Color get _textColor => _isDarkMode ? Colors.white : Color(0xFF1E293B);
-  Color get _cardColor => _isDarkMode ? Color(0xFF1E293B) : Colors.white;
-  Color get _borderColor => _isDarkMode ? Color(0xFF334155) : Color(0xFFE2E8F0);
-  Color get _secondaryTextColor => _isDarkMode ? Colors.grey[400]! : Colors.grey[600]!;
-  bool _assignmentActive = false;
-
-  @override
-  void initState() {
-    super.initState();
-    Future<void> _requestNotificationPermission() async {
-      if (await Permission.notification.isDenied) {
-        await Permission.notification.request();
-      }
-    }
-
-    _requestNotificationPermission();
-
-    _liveLocationService = LiveLocationService(); // ✅ Initialize here
-    _requestAllPermissions();
-
-    WidgetsBinding.instance.addPostFrameCallback((_) async {
-      await Future.delayed(const Duration(seconds: 1)); // 🔥 IMPORTANT
-      await _restoreLiveTrackingIfNeeded();
-    });
-
-    _loadDashboard();
-    _screens = [
-          () => _buildDashboard(), // 🔥 dynamic
-          () => const ReportListPage(),
-          () => const ReportPage(),
-          () => TrajectListPage(),
-          () => const ProfileScreen(),
-          () => const VacationRequestPage(),
-          () => const ShiftsPage(),
-          () => const DispatchContactsPage(), // ✅ NEW (index 7)
-          () => const CounselingListPage(),   // 8 ✅ NEW
-          () => const CounselingUploadPage(), // 9 ✅ NEW
-    ];
-
-
-    // ⭐ Refresh dashboard every 10 seconds to check shift status
-    _dashboardRefreshTimer = Timer.periodic(const Duration(seconds: 10), (_) {
-      print('🔄 Auto-refreshing dashboard...');
-      _loadDashboard();
-    });
-
-    // ⭐ Update shift buttons every minute
-    _shiftButtonUpdateTimer = Timer.periodic(const Duration(minutes: 1), (_) {
-      _updateShiftButtons();
-    });
-
-  }
-
-  @override
-  void dispose() {
-    // ⭐ Clean up timers to prevent memory leaks
-    _dashboardRefreshTimer?.cancel();
-    _shiftButtonUpdateTimer?.cancel();
-    print('🧹 Timers cleaned up');
-    super.dispose();
-  }
+  // ─────────────────────────────────────────────────────────────────────────
+  // Dashboard load — FIX 2: uncommented GPS-stop block
+  // ─────────────────────────────────────────────────────────────────────────
 
   Future<void> _loadDashboard() async {
     try {
       final dashboardService = DashboardService();
       final data = await dashboardService.getDashboardMobile();
 
-      // ✅ Extract data BEFORE setState
       final guardName = data["GuardName"] ?? "Unknown Guard";
       final bool assignmentActive = data["Active"] == true;
 
-      // ⭐ CRITICAL: Stop GPS tracking if shift is not active in database
-      if (!assignmentActive) {
-        print('🛑 Database shows shift not active - stopping GPS tracking');
+      // ── FIX 2: Stop GPS when server says shift is no longer active ────────
+      if (!assignmentActive && _liveLocationService.isTracking) {
+        print('🛑 Dashboard: shift not active → stopping GPS tracking');
         _liveLocationService.stopTracking();
 
         final prefs = await SharedPreferences.getInstance();
-        await prefs.remove('shift_active');
+        await prefs.setBool('shift_active', false);
         await prefs.remove('active_assignment_id');
         await prefs.remove('active_guard_id');
 
-        // Show notification to user
-        if (_assignmentActive && mounted) {
+        if (mounted) {
+          setState(() {
+            _shiftStarted = false;
+            _shiftEnded = true;
+          });
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
+            const SnackBar(
               content: Row(
                 children: [
                   Icon(Icons.info_outline, color: Colors.white),
                   SizedBox(width: 8),
-                  Text('Shift ended - GPS tracking stopped'),
+                  Text('Shift ended — GPS tracking stopped'),
                 ],
               ),
               backgroundColor: Colors.blue,
@@ -289,30 +276,13 @@ class _HomeScreenState extends State<HomeScreen> {
           );
         }
       }
+      // ─────────────────────────────────────────────────────────────────────
 
       final guardRole = data["GuardRole"] ?? "Guard";
       final isSupervisor = guardRole.toLowerCase() == "supervisor";
 
       bool hasShiftToday = data["hasShiftToday"] == true;
       String shiftTime = "No shift today";
-
-      // ⭐ If no shift today, stop everything
-      if (!hasShiftToday) {
-        print("🚫 No shift today — stopping tracking");
-
-        _liveLocationService.stopTracking();
-
-        final prefs = await SharedPreferences.getInstance();
-        await prefs.remove('shift_active');
-        await prefs.remove('active_assignment_id');
-        await prefs.remove('active_guard_id');
-
-        setState(() {
-          _assignmentActive = false;
-          _shiftStarted = false;
-          _shiftEnded = false;
-        });
-      }
 
       DateTime? startDateTime;
       DateTime? endDateTime;
@@ -333,12 +303,12 @@ class _HomeScreenState extends State<HomeScreen> {
           _supervisorEmail = site["supervisoremail"];
           _supervisorPhone = site["supervisornumber"];
         }
-        final shiftDateStr = data["date"]; // "2026-02-08"
-        final shiftDate = DateTime.parse(shiftDateStr); // parses YYYY-MM-DD
+
+        final shiftDateStr = data["date"];
+        final shiftDate = DateTime.parse(shiftDateStr);
 
         final startParts = start.split(":");
         final endParts = end.split(":");
-
 
         startDateTime = DateTime.utc(
           shiftDate.year,
@@ -359,31 +329,23 @@ class _HomeScreenState extends State<HomeScreen> {
         _shiftStartDateTime = startDateTime;
         _shiftEndDateTime = endDateTime;
 
-
         shiftTime = "$start - $end";
 
         Duration shiftDuration = endDateTime!.difference(startDateTime!);
-
-        // hours in decimal (ex: 0.92h)
         double hours = shiftDuration.inMinutes / 60;
-
-        // format nicely
-        formattedHours= hours >= 1
+        formattedHours = hours >= 1
             ? "${hours.toStringAsFixed(1)}h"
             : "${shiftDuration.inMinutes} min";
 
         await prefs.setInt('assignmentId', data["assignmentId"]);
         _hasAssignment = prefs.getInt('assignmentId') != null;
         await prefs.setInt('active_assignment_id', data["assignmentId"]);
-        await prefs.setInt('active_guard_id', prefs.getInt('userId')!); // guardId
-        await prefs.setBool('shift_active', data["Active"] == true); // if shift active
+        await prefs.setInt('active_guard_id', prefs.getInt('userId')!);
+        await prefs.setBool('shift_active', data["Active"] == true);
 
-        // now restore tracking
         await _restoreLiveTrackingIfNeeded();
-
       }
 
-      // ✅ ONLY sync code inside setState
       setState(() {
         _guardName = guardName;
         _hasShiftToday = hasShiftToday;
@@ -394,16 +356,13 @@ class _HomeScreenState extends State<HomeScreen> {
         _shiftStarted = assignmentActive;
         _guardRole = guardRole;
         _isSupervisor = isSupervisor;
-        _hoursToday = formattedHours; // ✅ ADD THIS
-        _hasAssignment = prefs.getInt('assignmentId') != null; // ✅
-
+        _hoursToday = formattedHours;
+        _hasAssignment = prefs.getInt('assignmentId') != null;
       });
 
       _updateShiftButtons();
-
     } catch (e) {
       debugPrint("Dashboard error: $e");
-
       setState(() {
         _guardName = "Unknown Guard";
         _shiftTime = "No shift today";
@@ -411,6 +370,494 @@ class _HomeScreenState extends State<HomeScreen> {
       });
     }
   }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Time helpers
+  // ─────────────────────────────────────────────────────────────────────────
+
+  DateTime getHawaiiTime() {
+    final nowUtc = DateTime.now().toUtc();
+    return nowUtc.subtract(const Duration(hours: 10));
+  }
+
+  DateTime parseHawaiiTime(String timeStr) {
+    final parts = timeStr.split(":");
+    final now = DateTime.now();
+    return DateTime(
+      now.year,
+      now.month,
+      now.day,
+      int.parse(parts[0]),
+      int.parse(parts[1]),
+    );
+  }
+
+  DateTime parseServerTime(String serverTimeStr) {
+    String cleaned = serverTimeStr.split('[')[0];
+    return DateTime.parse(cleaned);
+  }
+
+  DateTime parseServerTimeHawaii(String serverTimeStr) {
+    final utcTime = DateTime.parse(serverTimeStr.split('[')[0]);
+    return utcTime.subtract(const Duration(hours: 10));
+  }
+
+  Future<DateTime?> _fetchServerTime() async {
+    try {
+      final apiService = ApiService();
+      final response = await apiService.get("auth/server-time");
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        final serverTimeStr = data["now"];
+        return parseServerTime(serverTimeStr);
+      } else {
+        debugPrint("Failed to fetch server time: ${response.statusCode}");
+        return null;
+      }
+    } catch (e) {
+      debugPrint("Error fetching server time: $e");
+      return null;
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Shift button logic
+  // ─────────────────────────────────────────────────────────────────────────
+
+  Future<void> _updateShiftButtons() async {
+    if (_shiftStartDateTime == null || _shiftEndDateTime == null) {
+      debugPrint("Shift times not loaded yet");
+      return;
+    }
+    DateTime now =
+    DateTime.now().toUtc().subtract(const Duration(hours: 10));
+
+    final serverTime = await _fetchServerTime();
+    if (serverTime != null) {
+      now = serverTime.subtract(const Duration(hours: 10));
+    }
+
+    debugPrint("NOW: $now");
+
+    final startWindow =
+    _shiftStartDateTime!.subtract(const Duration(minutes: 15));
+    debugPrint("SHIFT START: $_shiftStartDateTime");
+    debugPrint("SHIFT END: $_shiftEndDateTime");
+    debugPrint("START WINDOW: $startWindow");
+    debugPrint("ASSIGNMENT ACTIVE: $_assignmentActive");
+
+    setState(() {
+      _canStartShift = !_assignmentActive &&
+          now.isAfter(startWindow) &&
+          now.isBefore(
+              _shiftEndDateTime!.add(const Duration(minutes: 5)));
+
+      _canStopShift = _assignmentActive &&
+          (now.isAfter(_shiftEndDateTime!) ||
+              now.isAtSameMomentAs(_shiftEndDateTime!));
+    });
+
+    debugPrint("CAN START SHIFT: $_canStartShift");
+    debugPrint("CAN STOP SHIFT: $_canStopShift");
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Emergency
+  // ─────────────────────────────────────────────────────────────────────────
+
+  Future<void> _sendEmergencyAlert() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final guardId = prefs.getInt('userId');
+      if (guardId == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Guard ID not found")),
+        );
+        return;
+      }
+
+      final apiService = ApiService();
+      final response =
+      await apiService.post("emergency/trigger/$guardId", {});
+
+      if (response.statusCode == 200) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text("Emergency alert sent successfully!"),
+            backgroundColor: Colors.redAccent,
+          ),
+        );
+      } else {
+        final data = jsonDecode(response.body);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content:
+            Text(data['error'] ?? "Failed to send emergency alert"),
+          ),
+        );
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("Error sending emergency alert: $e")),
+      );
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Start / Stop shift
+  // ─────────────────────────────────────────────────────────────────────────
+
+  Future<void> _startShift() async {
+    LocationPermission permission = await Geolocator.checkPermission();
+
+    if (Platform.isIOS && permission != LocationPermission.always) {
+      bool? shouldProceed = await showDialog<bool>(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) => AlertDialog(
+          title: const Row(
+            children: [
+              Icon(Icons.location_on, color: Colors.red),
+              SizedBox(width: 8),
+              Text('Permission Required'),
+            ],
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'You MUST allow location access "Always" to start your shift.',
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 16),
+              const Text('Why "Always" is required:'),
+              const SizedBox(height: 8),
+              const Text('✓ Track your patrol route during the entire shift'),
+              const Text(
+                  '✓ Ensure your safety even when app is in background'),
+              const Text('✓ Automatic checkpoint verification'),
+              const Text('✓ Real-time location monitoring'),
+              const SizedBox(height: 16),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.blue.shade50,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.blue.shade200),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'How to enable "Always" permission:',
+                      style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          color: Colors.blue.shade900),
+                    ),
+                    const SizedBox(height: 8),
+                    const Text('1. Tap "Open Settings" below',
+                        style: TextStyle(fontSize: 13)),
+                    const Text('2. Tap "Location"',
+                        style: TextStyle(fontSize: 13)),
+                    const Text('3. Select "Always"',
+                        style: TextStyle(fontSize: 13)),
+                    const Text('4. Return to the app',
+                        style: TextStyle(fontSize: 13)),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton.icon(
+              onPressed: () {
+                openAppSettings();
+                Navigator.pop(context, true);
+              },
+              icon: const Icon(Icons.settings),
+              label: const Text('Open Settings'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.blue,
+                foregroundColor: Colors.white,
+              ),
+            ),
+          ],
+        ),
+      );
+
+      if (shouldProceed != true) return;
+
+      await Future.delayed(const Duration(seconds: 1));
+      permission = await Geolocator.checkPermission();
+
+      if (permission != LocationPermission.always) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('⚠️ "Always" permission required to start shift'),
+            backgroundColor: Colors.orange,
+            duration: Duration(seconds: 5),
+          ),
+        );
+        return;
+      }
+    }
+
+    bool hasPermission =
+    await PermissionHelper.requestAlwaysLocationPermission(context);
+    if (!hasPermission) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content:
+          Text('❌ Location permission denied - cannot start shift'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
+    await _getCurrentPosition();
+    if (_currentPosition == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("GPS location not available")),
+      );
+      return;
+    }
+
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final assignmentId = prefs.getInt('assignmentId');
+      final guardId = prefs.getInt('userId');
+
+      if (assignmentId == null || guardId == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+              content: Text("Assignment or Guard ID not found")),
+        );
+        return;
+      }
+
+      final apiService = ApiService();
+      final response = await apiService.put(
+        "assignments/Start/$assignmentId/$guardId",
+        {
+          "latitude": _currentPosition!.latitude,
+          "longitude": _currentPosition!.longitude,
+        },
+      );
+
+      print("📍 LAT: ${_currentPosition!.latitude}");
+      print("📍 LON: ${_currentPosition!.longitude}");
+      print("🎯 ACCURACY (m): ${_currentPosition!.accuracy}");
+
+      if (response.statusCode == 200) {
+        setState(() {
+          _assignmentActive = true;
+          _shiftStarted = true;
+          _canStartShift = false;
+          _canStopShift = false;
+        });
+
+        ShiftService().startAssignment(assignmentId);
+        _liveLocationService.startTracking(guardId, assignmentId);
+
+        await prefs.setBool('shift_active', true);
+        await prefs.setInt('active_assignment_id', assignmentId);
+        await prefs.setInt('active_guard_id', guardId);
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Shift started successfully!")),
+        );
+      } else {
+        final data = jsonDecode(response.body);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+              content:
+              Text(data['error'] ?? "Failed to start shift")),
+        );
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("Error starting shift: $e")),
+      );
+    }
+  }
+
+  Future<void> _stopShift() async {
+    print('🛑 Stopping location tracking...');
+    _liveLocationService.stopTracking();
+
+    if (!_liveLocationService.isTracking) {
+      print('✅ Location tracking stopped successfully');
+    } else {
+      print('⚠️ Warning: Location tracking may still be active');
+    }
+
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('shift_active', false);
+    await prefs.remove('shift_active');
+    await prefs.remove('active_assignment_id');
+    await prefs.remove('active_guard_id');
+
+    setState(() {
+      _assignmentActive = false;
+      _shiftEnded = true;
+      _shiftStarted = false;
+    });
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Row(
+          children: [
+            Icon(Icons.check_circle, color: Colors.white),
+            SizedBox(width: 8),
+            Text('Shift ended - GPS tracking stopped'),
+          ],
+        ),
+        backgroundColor: Colors.green,
+        duration: Duration(seconds: 3),
+      ),
+    );
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Permissions & position
+  // ─────────────────────────────────────────────────────────────────────────
+
+  Future<void> _requestAllPermissions() async {
+    final cameraStatus = await Permission.camera.request();
+    if (!cameraStatus.isGranted) print('Camera permission denied');
+
+    final photosStatus = await Permission.photos.request();
+    if (!photosStatus.isGranted) print('Photos permission denied');
+
+    final micStatus = await Permission.microphone.request();
+    if (!micStatus.isGranted) print('Microphone permission denied');
+  }
+
+  Future<void> _getCurrentPosition() async {
+    try {
+      Position position = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.medium,
+        timeLimit: const Duration(seconds: 20),
+      );
+      _currentPosition = position;
+    } on TimeoutException {
+      _currentPosition = await Geolocator.getLastKnownPosition();
+    } catch (e) {
+      debugPrint("Error getting current position: $e");
+    }
+  }
+
+  Future<bool> _handleLocationPermission() async {
+    bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
+    if (!serviceEnabled) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+            content: Text('Please enable location services')),
+      );
+      await Geolocator.openLocationSettings();
+      return false;
+    }
+
+    LocationPermission permission = await Geolocator.checkPermission();
+
+    if (permission == LocationPermission.denied) {
+      permission = await Geolocator.requestPermission();
+    }
+
+    if (permission == LocationPermission.deniedForever) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+              'Location permanently denied. Please enable it in settings.'),
+        ),
+      );
+      await Geolocator.openAppSettings();
+      return false;
+    }
+
+    if (Platform.isIOS && permission == LocationPermission.whileInUse) {
+      final shouldRequest = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Location Access Required'),
+          content: const Text(
+            'BFS Guard Portal needs "Always Allow" location access to track your position during shifts, even when the app is in the background.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Cancel'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Continue'),
+            ),
+          ],
+        ),
+      );
+
+      if (shouldRequest != true) return false;
+      permission = await Geolocator.requestPermission();
+    }
+
+    if (permission != LocationPermission.always &&
+        permission != LocationPermission.whileInUse) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content:
+          Text('Location access is required for shift tracking.'),
+        ),
+      );
+      return false;
+    }
+
+    return true;
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Navigation
+  // ─────────────────────────────────────────────────────────────────────────
+
+  void _onItemTapped(int index) {
+    setState(() {
+      _selectedIndex = index;
+    });
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Build
+  // ─────────────────────────────────────────────────────────────────────────
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: _backgroundColor,
+      appBar: CustomAppBar(
+        title: _titles[_selectedIndex],
+        isDarkMode: _isDarkMode,
+        onThemeChanged: (value) {
+          setState(() {
+            _isDarkMode = value;
+          });
+        },
+      ),
+      body: _screens[_selectedIndex](),
+      bottomNavigationBar: CustomNavbar(
+        onItemTapped: _onItemTapped,
+        selectedIndex: _selectedIndex,
+      ),
+    );
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Map & supervisor modals
+  // ─────────────────────────────────────────────────────────────────────────
 
   Future<void> _openSiteOnMap() async {
     if (_siteLat == null || _siteLng == null) {
@@ -432,495 +879,6 @@ class _HomeScreenState extends State<HomeScreen> {
       );
     }
   }
-  DateTime parseServerTime(String serverTimeStr) {
-    // Remove any [TimeZone] if present
-    String cleaned = serverTimeStr.split('[')[0];
-    return DateTime.parse(cleaned);
-  }
-  DateTime parseServerTimeHawaii(String serverTimeStr) {
-    final utcTime = DateTime.parse(serverTimeStr.split('[')[0]);
-    return utcTime.subtract(const Duration(hours: 10)); // Hawaii UTC-10
-  }
-
-
-  Future<DateTime?> _fetchServerTime() async {
-    try {
-      final apiService = ApiService();
-      final response = await apiService.get("auth/server-time"); // matches your /server-time endpoint
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-        final serverTimeStr = data["now"];
-        return parseServerTime(serverTimeStr);
-      } else {
-        debugPrint("Failed to fetch server time: ${response.statusCode}");
-        return null;
-      }
-    } catch (e) {
-      debugPrint("Error fetching server time: $e");
-      return null;
-    }
-  }
-
-  Future<void> _updateShiftButtons() async {
-
-
-    if (_shiftStartDateTime == null || _shiftEndDateTime == null) {
-      debugPrint("Shift times not loaded yet");
-      return;
-    }
-    DateTime now = DateTime.now().toUtc().subtract(const Duration(hours: 10)); // fallback
-
-    final serverTime = await _fetchServerTime();
-    if (serverTime != null) {
-      now = serverTime.subtract(const Duration(hours: 10)); // convert UTC -> Hawaii
-    }
-
-// Then convert it back to UTC for comparison
-    debugPrint("NOW: $now");
-
-    final startWindow = _shiftStartDateTime!.subtract(const Duration(minutes: 15));    debugPrint("SHIFT START: $_shiftStartDateTime");
-    debugPrint("SHIFT END: $_shiftEndDateTime");
-    debugPrint("START WINDOW: $startWindow");
-    debugPrint("ASSIGNMENT ACTIVE: $_assignmentActive");
-    debugPrint("CAN START SHIFT: $_canStartShift");
-    setState(() {
-      // START SHIFT (only if NOT active)
-      _canStartShift =
-          !_assignmentActive &&
-              now.isAfter(startWindow) &&
-              now.isBefore(_shiftEndDateTime!.add(const Duration(minutes: 5)));
-
-      // STOP SHIFT (only if active AND end time reached)
-      _canStopShift =
-          _assignmentActive &&
-              (now.isAfter(_shiftEndDateTime!) ||
-                  now.isAtSameMomentAs(_shiftEndDateTime!));
-    });
-    debugPrint("CAN START SHIFT: $_canStartShift");
-    debugPrint("CAN STOP SHIFT: $_canStopShift");
-  }
-
-
-  void _onItemTapped(int index) {
-    setState(() {
-      _selectedIndex = index;
-    });
-  }
-
-
-  void _toggleEmergency() {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: _cardColor,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(25),
-          side: BorderSide(color: Colors.red.withOpacity(0.3), width: 1),
-        ),
-        title: Row(
-          children: [
-            Icon(Icons.warning_amber_rounded, color: Colors.redAccent, size: 28),
-            SizedBox(width: 12),
-            Text(
-              "Emergency Alert",
-              style: TextStyle(
-                color: _textColor,
-                fontSize: 20,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-          ],
-        ),
-        content: Text(
-          "Emergency signal will be sent to security control center. Are you sure you want to proceed?",
-          style: TextStyle(
-            color: _secondaryTextColor,
-            fontSize: 16,
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: Text(
-              "Cancel",
-              style: TextStyle(color: _secondaryTextColor, fontSize: 16),
-            ),
-          ),
-          ElevatedButton(
-            onPressed: () async {
-              Navigator.pop(context); // close dialog first
-              await _sendEmergencyAlert(); // call backend
-              setState(() {
-                _isEmergencyActive = true;
-              });
-            },
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.redAccent,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
-              padding: EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-            ),
-            child: Text(
-              "Confirm",
-              style: TextStyle(
-                color: Colors.white,
-                fontSize: 16,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-        backgroundColor: _backgroundColor,
-        appBar: CustomAppBar(
-          title: _titles[_selectedIndex],  // <-- dynamic title now
-          isDarkMode: _isDarkMode,
-          onThemeChanged: (value) {
-            setState(() {
-              _isDarkMode = value;   // toggle dark/light mode
-            });
-          },
-        ),
-
-        body: _screens[_selectedIndex](),
-        bottomNavigationBar: CustomNavbar(
-          onItemTapped: _onItemTapped,
-          selectedIndex: _selectedIndex,
-        )
-    );
-  }
-  Future<void> _requestAllPermissions() async {
-    // Request camera permission
-    final cameraStatus = await Permission.camera.request();
-    if (!cameraStatus.isGranted) {
-      print('Camera permission denied');
-    }
-
-    // Request photo library permission
-    final photosStatus = await Permission.photos.request();
-    if (!photosStatus.isGranted) {
-      print('Photos permission denied');
-    }
-
-    // Request microphone permission (for video recording)
-    final micStatus = await Permission.microphone.request();
-    if (!micStatus.isGranted) {
-      print('Microphone permission denied');
-    }
-
-    // Notification permission is already requested in main.dart
-  }
-  Future<void> _getCurrentPosition() async {
-    try {
-      Position position = await Geolocator.getCurrentPosition(
-        desiredAccuracy: LocationAccuracy.medium, // ✅ CHANGE THIS
-        timeLimit: const Duration(seconds: 20),    // ✅ INCREASE
-      );
-      _currentPosition = position;
-    } on TimeoutException {
-      // ✅ fallback
-      _currentPosition = await Geolocator.getLastKnownPosition();
-    } catch (e) {
-      debugPrint("Error getting current position: $e");
-    }
-  }
-
-  Future<bool> _handleLocationPermission() async {
-    bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
-    if (!serviceEnabled) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please enable location services')),
-      );
-      await Geolocator.openLocationSettings();
-      return false;
-    }
-
-    LocationPermission permission = await Geolocator.checkPermission();
-
-    if (permission == LocationPermission.denied) {
-      permission = await Geolocator.requestPermission();
-    }
-
-    if (permission == LocationPermission.deniedForever) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Location permanently denied. Please enable it in settings.'),
-        ),
-      );
-      await Geolocator.openAppSettings();
-      return false;
-    }
-
-    // On iOS, request "Always" permission for background tracking
-    if (Platform.isIOS && permission == LocationPermission.whileInUse) {
-      // Show explanation dialog first
-      final shouldRequest = await showDialog<bool>(
-        context: context,
-        builder: (context) => AlertDialog(
-          title: const Text('Location Access Required'),
-          content: const Text(
-            'BFS Guard Portal needs "Always Allow" location access to track your position during shifts, even when the app is in the background. This ensures your safety and accurate patrol tracking.',
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text('Cancel'),
-            ),
-            TextButton(
-              onPressed: () => Navigator.pop(context, true),
-              child: const Text('Continue'),
-            ),
-          ],
-        ),
-      );
-
-      if (shouldRequest != true) return false;
-
-      // On iOS, this will show the system dialog with "Change to Always Allow" option
-      permission = await Geolocator.requestPermission();
-    }
-
-    if (permission != LocationPermission.always && permission != LocationPermission.whileInUse) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Location access is required for shift tracking.'),
-        ),
-      );
-      return false;
-    }
-
-    return true;
-  }
-
-
-  Future<void> _startShift() async {
-    // ⭐ CRITICAL: Block shift start until "Always" permission is granted
-    LocationPermission permission = await Geolocator.checkPermission();
-
-    // iOS MUST have "Always" permission for background tracking
-    if (Platform.isIOS && permission != LocationPermission.always) {
-      // Show blocking dialog - user CANNOT start shift without "Always" permission
-      bool? shouldProceed = await showDialog<bool>(
-        context: context,
-        barrierDismissible: false, // Cannot dismiss by tapping outside
-        builder: (context) => AlertDialog(
-          title: Row(
-            children: [
-              Icon(Icons.location_on, color: Colors.red),
-              SizedBox(width: 8),
-              Text('Permission Required'),
-            ],
-          ),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'You MUST allow location access "Always" to start your shift.',
-                style: TextStyle(fontWeight: FontWeight.bold),
-              ),
-              SizedBox(height: 16),
-              Text('Why "Always" is required:'),
-              SizedBox(height: 8),
-              Text('✓ Track your patrol route during the entire shift'),
-              Text('✓ Ensure your safety even when app is in background'),
-              Text('✓ Automatic checkpoint verification'),
-              Text('✓ Real-time location monitoring'),
-              SizedBox(height: 16),
-              Container(
-                padding: EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: Colors.blue.shade50,
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: Colors.blue.shade200),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'How to enable "Always" permission:',
-                      style: TextStyle(fontWeight: FontWeight.bold, color: Colors.blue.shade900),
-                    ),
-                    SizedBox(height: 8),
-                    Text('1. Tap "Open Settings" below', style: TextStyle(fontSize: 13)),
-                    Text('2. Tap "Location"', style: TextStyle(fontSize: 13)),
-                    Text('3. Select "Always"', style: TextStyle(fontSize: 13)),
-                    Text('4. Return to the app', style: TextStyle(fontSize: 13)),
-                  ],
-                ),
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: Text('Cancel'),
-            ),
-            ElevatedButton.icon(
-              onPressed: () {
-                openAppSettings();
-                Navigator.pop(context, true);
-              },
-              icon: Icon(Icons.settings),
-              label: Text('Open Settings'),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.blue,
-                foregroundColor: Colors.white,
-              ),
-            ),
-          ],
-        ),
-      );
-
-      if (shouldProceed != true) {
-        // User cancelled - don't start shift
-        return;
-      }
-
-      // User went to settings - wait a bit then re-check permission
-      await Future.delayed(Duration(seconds: 1));
-      permission = await Geolocator.checkPermission();
-
-      if (permission != LocationPermission.always) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('⚠️ "Always" permission required to start shift'),
-            backgroundColor: Colors.orange,
-            duration: Duration(seconds: 5),
-          ),
-        );
-        return;
-      }
-    }
-
-    // Android or iOS with "Always" permission - request if needed
-    bool hasPermission = await PermissionHelper.requestAlwaysLocationPermission(context);
-    if (!hasPermission) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('❌ Location permission denied - cannot start shift'),
-          backgroundColor: Colors.red,
-        ),
-      );
-      return;
-    }
-
-    await _getCurrentPosition();
-    if (_currentPosition == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text("GPS location not available"))
-      );
-      return;
-    }
-
-
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      final assignmentId = prefs.getInt('assignmentId');
-      final guardId = prefs.getInt('userId'); // make sure you save guardId in prefs earlier
-
-      if (assignmentId == null || guardId == null) {
-        ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text("Assignment or Guard ID not found"))
-        );
-        return;
-      }
-
-      final apiService = ApiService();
-
-      final response = await apiService.put(
-        "assignments/Start/$assignmentId/$guardId",
-        {
-          "latitude": _currentPosition!.latitude,
-          "longitude": _currentPosition!.longitude,
-        },
-      );
-      print("--------------------------------");
-      print(_currentPosition!.latitude);
-      print(_currentPosition!.longitude);
-      print("--------------------------------");
-      print("📍 LAT: ${_currentPosition!.latitude}");
-      print("📍 LON: ${_currentPosition!.longitude}");
-      print("🎯 ACCURACY (m): ${_currentPosition!.accuracy}");
-
-      if (response.statusCode == 200) {
-        setState(() {
-          _assignmentActive = true;
-          _shiftStarted = true;
-          _canStartShift = false;
-          _canStopShift = false; // recalculated by timer
-        });
-        final prefs = await SharedPreferences.getInstance();
-        final assignmentId = prefs.getInt('assignmentId')!;
-        final guardId = prefs.getInt('userId')!; // make sure guardId is saved
-        final response = ShiftService().startAssignment(assignmentId);
-        _liveLocationService.startTracking(guardId, assignmentId);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text("Shift started successfully!")),
-        );
-        await prefs.setBool('shift_active', true);
-        await prefs.setInt('active_assignment_id', assignmentId);
-        await prefs.setInt('active_guard_id', guardId);
-
-      }
-
-      else {
-        final data = jsonDecode(response.body);
-        ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text(data['error'] ?? "Failed to start shift"))
-        );
-      }
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text("Error starting shift: $e"))
-      );
-    }
-  }
-
-
-  Future<void> _stopShift() async {
-    // ⭐ Immediately stop location tracking
-    print('🛑 Stopping location tracking...');
-    _liveLocationService.stopTracking();
-
-    // Verify tracking stopped
-    if (!_liveLocationService.isTracking) {
-      print('✅ Location tracking stopped successfully');
-    } else {
-      print('⚠️ Warning: Location tracking may still be active');
-    }
-
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.remove('shift_active');
-    await prefs.remove('active_assignment_id');
-    await prefs.remove('active_guard_id');
-
-    setState(() {
-      _assignmentActive = false;
-      _shiftEnded = true;
-    });
-
-    // Show confirmation to user
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Row(
-          children: [
-            Icon(Icons.check_circle, color: Colors.white),
-            SizedBox(width: 8),
-            Text('Shift ended - GPS tracking stopped'),
-          ],
-        ),
-        backgroundColor: Colors.green,
-        duration: Duration(seconds: 3),
-      ),
-    );
-  }
 
   void _showSupervisorModal() {
     showDialog(
@@ -933,8 +891,8 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
         title: Row(
           children: [
-            Icon(Icons.person, color: Color(0xFF3B82F6)),
-            SizedBox(width: 10),
+            const Icon(Icons.person, color: Color(0xFF3B82F6)),
+            const SizedBox(width: 10),
             Text(
               "Supervisor Info",
               style: TextStyle(
@@ -950,10 +908,10 @@ class _HomeScreenState extends State<HomeScreen> {
           children: [
             Text("Name: ${_supervisorName ?? "N/A"}",
                 style: TextStyle(color: _textColor)),
-            SizedBox(height: 8),
+            const SizedBox(height: 8),
             Text("Email: ${_supervisorEmail ?? "N/A"}",
                 style: TextStyle(color: _textColor)),
-            SizedBox(height: 8),
+            const SizedBox(height: 8),
             Text("Phone: ${_supervisorPhone ?? "N/A"}",
                 style: TextStyle(color: _textColor)),
           ],
@@ -968,22 +926,92 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  void _toggleEmergency() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: _cardColor,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(25),
+          side: BorderSide(color: Colors.red.withOpacity(0.3), width: 1),
+        ),
+        title: Row(
+          children: [
+            const Icon(Icons.warning_amber_rounded,
+                color: Colors.redAccent, size: 28),
+            const SizedBox(width: 12),
+            Text(
+              "Emergency Alert",
+              style: TextStyle(
+                color: _textColor,
+                fontSize: 20,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ],
+        ),
+        content: Text(
+          "Emergency signal will be sent to security control center. Are you sure you want to proceed?",
+          style: TextStyle(color: _secondaryTextColor, fontSize: 16),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text(
+              "Cancel",
+              style:
+              TextStyle(color: _secondaryTextColor, fontSize: 16),
+            ),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              Navigator.pop(context);
+              await _sendEmergencyAlert();
+              setState(() {
+                _isEmergencyActive = true;
+              });
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.redAccent,
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(15)),
+              padding: const EdgeInsets.symmetric(
+                  horizontal: 24, vertical: 12),
+            ),
+            child: const Text(
+              "Confirm",
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 16,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Dashboard UI
+  // ─────────────────────────────────────────────────────────────────────────
+
   Widget _buildDashboard() {
     return SafeArea(
       child: RefreshIndicator(
-        onRefresh: _loadDashboard, // this calls your existing async function
-        color: Colors.white, // indicator color
-        backgroundColor: Color(0xFF4F46E5), // optional background
+        onRefresh: _loadDashboard,
+        color: Colors.white,
+        backgroundColor: const Color(0xFF4F46E5),
         child: SingleChildScrollView(
-          physics: const AlwaysScrollableScrollPhysics(), // important!
-          padding: EdgeInsets.all(16),
+          physics: const AlwaysScrollableScrollPhysics(),
+          padding: const EdgeInsets.all(16),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // --- Header ---
+              // Header card
               Container(
                 width: double.infinity,
-                padding: EdgeInsets.all(20),
+                padding: const EdgeInsets.all(20),
                 decoration: BoxDecoration(
                   borderRadius: BorderRadius.circular(20),
                   color: _cardColor,
@@ -993,35 +1021,73 @@ class _HomeScreenState extends State<HomeScreen> {
                   children: [
                     CircleAvatar(
                       radius: 35,
-                      backgroundColor: Color(0xFF4F46E5).withOpacity(0.1),
-                      child: Icon(Icons.person, size: 40, color: Color(0xFF4F46E5)),
+                      backgroundColor:
+                      const Color(0xFF4F46E5).withOpacity(0.1),
+                      child: const Icon(Icons.person,
+                          size: 40, color: Color(0xFF4F46E5)),
                     ),
-                    SizedBox(width: 15),
+                    const SizedBox(width: 15),
                     Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            _guardName.isEmpty ? "Loading..." : _guardName + " || "+ _guardRole,
+                            _guardName.isEmpty
+                                ? "Loading..."
+                                : _guardName,
                             style: TextStyle(
                               color: _textColor,
                               fontSize: 18,
                               fontWeight: FontWeight.w700,
                             ),
                           ),
-                          SizedBox(height: 8),
-
+                          const SizedBox(height: 8),
                           Container(
-                            padding: EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 12, vertical: 6),
                             decoration: BoxDecoration(
-                              color: Color(0xFF4F46E5).withOpacity(0.1),
+                              color: const Color(0xFF10B981)
+                                  .withOpacity(0.1),
                               borderRadius: BorderRadius.circular(10),
                             ),
                             child: Row(
                               mainAxisSize: MainAxisSize.min,
                               children: [
-                                Icon(Icons.access_time, size: 14, color: Color(0xFF4F46E5)),
-                                SizedBox(width: 6),
+                                Icon(
+                                  _isSupervisor
+                                      ? Icons.admin_panel_settings
+                                      : Icons.security,
+                                  size: 14,
+                                  color: const Color(0xFF10B981),
+                                ),
+                                const SizedBox(width: 6),
+                                Text(
+                                  _guardRole,
+                                  style: TextStyle(
+                                    color: _textColor,
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 12, vertical: 6),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF4F46E5)
+                                  .withOpacity(0.1),
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                const Icon(Icons.access_time,
+                                    size: 14,
+                                    color: Color(0xFF4F46E5)),
+                                const SizedBox(width: 6),
                                 Text(
                                   _shiftTime,
                                   style: TextStyle(
@@ -1040,9 +1106,9 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
               ),
 
-              SizedBox(height: 20),
+              const SizedBox(height: 20),
 
-              // --- Stats Cards ---
+              // Stats row
               Row(
                 children: [
                   Expanded(
@@ -1050,67 +1116,74 @@ class _HomeScreenState extends State<HomeScreen> {
                       _hoursToday,
                       "Hours Today",
                       Icons.timer,
-                      Color(0xFF10B981),
+                      const Color(0xFF10B981),
                     ),
                   ),
-                  SizedBox(width: 12),
+                  const SizedBox(width: 12),
                   Expanded(
                     child: _buildSimpleStatCard(
                       "",
                       "Supervisor",
                       Icons.person_outline,
-                      Color(0xFF3B82F6),
+                      const Color(0xFF3B82F6),
                       onTap: (_hasShiftToday && _supervisorName != null)
                           ? _showSupervisorModal
                           : null,
                     ),
                   ),
-                  SizedBox(width: 12),
+                  const SizedBox(width: 12),
                   Expanded(
                     child: _buildSimpleStatCard(
                       "",
                       "Open Site Map",
                       Icons.map,
-                      Color(0xFF10B981),
-                      onTap: _hasAssignment ? _openSiteOnMap : null, // ✅ disabled if no assignment
+                      const Color(0xFF10B981),
+                      onTap:
+                      _hasAssignment ? _openSiteOnMap : null,
                     ),
-
                   ),
                 ],
               ),
 
-              SizedBox(height: 20),
+              const SizedBox(height: 20),
 
-              // --- Emergency Button ---
+              // Emergency button
               GestureDetector(
-                onTap: (_shiftStarted && !_shiftEnded) ? _toggleEmergency : null,
+                onTap: (_shiftStarted && !_shiftEnded)
+                    ? _toggleEmergency
+                    : null,
                 child: Opacity(
-                  opacity: (_shiftStarted && !_shiftEnded) ? 1.0 : 0.4,
+                  opacity:
+                  (_shiftStarted && !_shiftEnded) ? 1.0 : 0.4,
                   child: Container(
                     width: double.infinity,
-                    padding: EdgeInsets.all(16),
+                    padding: const EdgeInsets.all(16),
                     decoration: BoxDecoration(
                       borderRadius: BorderRadius.circular(20),
                       color: _hasShiftToday
-                          ? (_isEmergencyActive ? Colors.redAccent : Colors.red)
+                          ? (_isEmergencyActive
+                          ? Colors.redAccent
+                          : Colors.red)
                           : Colors.grey,
                       boxShadow: _hasShiftToday
                           ? [
                         BoxShadow(
                           color: Colors.red.withOpacity(0.3),
                           blurRadius: 10,
-                          offset: Offset(0, 4),
+                          offset: const Offset(0, 4),
                         ),
                       ]
                           : [],
                     ),
                     child: Row(
                       children: [
-                        Icon(Icons.warning, size: 28, color: Colors.white),
-                        SizedBox(width: 12),
+                        const Icon(Icons.warning,
+                            size: 28, color: Colors.white),
+                        const SizedBox(width: 12),
                         Expanded(
                           child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
+                            crossAxisAlignment:
+                            CrossAxisAlignment.start,
                             children: [
                               Text(
                                 !_hasShiftToday
@@ -1118,13 +1191,13 @@ class _HomeScreenState extends State<HomeScreen> {
                                     : (_isEmergencyActive
                                     ? "EMERGENCY ACTIVE"
                                     : "EMERGENCY ALERT"),
-                                style: TextStyle(
+                                style: const TextStyle(
                                   fontSize: 16,
                                   fontWeight: FontWeight.w700,
                                   color: Colors.white,
                                 ),
                               ),
-                              SizedBox(height: 4),
+                              const SizedBox(height: 4),
                               Text(
                                 !_hasShiftToday
                                     ? "Emergency disabled outside shift"
@@ -1133,20 +1206,24 @@ class _HomeScreenState extends State<HomeScreen> {
                                     : "Press for emergency"),
                                 style: TextStyle(
                                   fontSize: 12,
-                                  color: Colors.white.withOpacity(0.9),
+                                  color:
+                                  Colors.white.withOpacity(0.9),
                                 ),
                               ),
                             ],
                           ),
                         ),
-                        Icon(Icons.arrow_forward, color: Colors.white),
+                        const Icon(Icons.arrow_forward,
+                            color: Colors.white),
                       ],
                     ),
                   ),
                 ),
               ),
-              SizedBox(height: 16), // ✅ ADD THIS
 
+              const SizedBox(height: 16),
+
+              // Start / Stop shift button
               if (_hasShiftToday && !_shiftEnded)
                 GestureDetector(
                   onTap: _canStartShift
@@ -1155,29 +1232,37 @@ class _HomeScreenState extends State<HomeScreen> {
                       ? _stopShift
                       : null,
                   child: Opacity(
-                    opacity: (_canStartShift || _canStopShift) ? 1.0 : 0.4,
+                    opacity:
+                    (_canStartShift || _canStopShift) ? 1.0 : 0.4,
                     child: Container(
                       width: double.infinity,
-                      padding: EdgeInsets.all(16),
+                      padding: const EdgeInsets.all(16),
                       decoration: BoxDecoration(
                         borderRadius: BorderRadius.circular(20),
-                        color: _shiftStarted ? Colors.redAccent : Colors.green,
+                        color: _shiftStarted
+                            ? Colors.redAccent
+                            : Colors.green,
                       ),
                       child: Row(
                         children: [
                           Icon(
-                            _shiftStarted ? Icons.stop : Icons.play_arrow,
+                            _shiftStarted
+                                ? Icons.stop
+                                : Icons.play_arrow,
                             color: Colors.white,
                             size: 28,
                           ),
-                          SizedBox(width: 12),
+                          const SizedBox(width: 12),
                           Expanded(
                             child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
+                              crossAxisAlignment:
+                              CrossAxisAlignment.start,
                               children: [
                                 Text(
-                                  _shiftStarted ? "STOP SHIFT" : "START SHIFT",
-                                  style: TextStyle(
+                                  _shiftStarted
+                                      ? "STOP SHIFT"
+                                      : "START SHIFT",
+                                  style: const TextStyle(
                                     color: Colors.white,
                                     fontSize: 16,
                                     fontWeight: FontWeight.w700,
@@ -1188,7 +1273,8 @@ class _HomeScreenState extends State<HomeScreen> {
                                       ? "Available at shift end"
                                       : "Available 20 minutes before start",
                                   style: TextStyle(
-                                    color: Colors.white.withOpacity(0.9),
+                                    color:
+                                    Colors.white.withOpacity(0.9),
                                     fontSize: 12,
                                   ),
                                 ),
@@ -1201,12 +1287,11 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                 ),
 
+              const SizedBox(height: 25),
 
-              SizedBox(height: 25),
-
-              // --- Quick Actions Title ---
+              // Quick Actions
               Padding(
-                padding: EdgeInsets.only(left: 4),
+                padding: const EdgeInsets.only(left: 4),
                 child: Text(
                   "Quick Actions",
                   style: TextStyle(
@@ -1217,33 +1302,30 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
               ),
 
-              SizedBox(height: 12),
+              const SizedBox(height: 12),
 
-              // --- Grid View - SIMPLE FIX: Use Column with Rows ---
               Column(
                 children: [
-                  // Row 1
                   Row(
                     children: [
                       Expanded(
                         child: _buildSimpleActionButton(
                           Icons.beach_access,
                           "Vacation\nRequest",
-                          Color(0xFF3B82F6),
+                          const Color(0xFF3B82F6),
                         ),
                       ),
-                      SizedBox(width: 12),
+                      const SizedBox(width: 12),
                       Expanded(
                         child: _buildSimpleActionButton(
                           Icons.access_time_filled,
                           "Available\nShifts",
-                          Color(0xFF10B981),
+                          const Color(0xFF10B981),
                         ),
                       ),
                     ],
                   ),
-                  SizedBox(height: 12),
-                  // Row 2
+                  const SizedBox(height: 12),
                   if (_isSupervisor)
                     Column(
                       children: [
@@ -1253,40 +1335,38 @@ class _HomeScreenState extends State<HomeScreen> {
                               child: _buildSimpleActionButton(
                                 Icons.message_outlined,
                                 "Counseling\nStatements",
-                                Color(0xFFF59E0B),
+                                const Color(0xFFF59E0B),
                               ),
                             ),
-                            SizedBox(width: 12),
+                            const SizedBox(width: 12),
                             Expanded(
                               child: _buildSimpleActionButton(
                                 Icons.report,
                                 "New Counseling\nReport",
-                                Color(0xFFEF4444),
+                                const Color(0xFFEF4444),
                               ),
                             ),
                           ],
                         ),
-                        SizedBox(height: 12),
+                        const SizedBox(height: 12),
                       ],
                     ),
-
-                  SizedBox(height: 12),
-                  // Row 3
+                  const SizedBox(height: 12),
                   Row(
                     children: [
                       Expanded(
                         child: _buildSimpleActionButton(
                           Icons.support_agent,
                           "Dispatch\nContacts",
-                          Color(0xFF8B5CF6),
+                          const Color(0xFF8B5CF6),
                         ),
                       ),
-                      SizedBox(width: 12),
+                      const SizedBox(width: 12),
                       Expanded(
                         child: _buildSimpleActionButton(
                           Icons.settings_outlined,
                           "Settings\n& Profile",
-                          Color(0xFF6B7280),
+                          const Color(0xFF6B7280),
                         ),
                       ),
                     ],
@@ -1294,14 +1374,18 @@ class _HomeScreenState extends State<HomeScreen> {
                 ],
               ),
 
-              SizedBox(height: 90), // Padding for bottom nav
+              const SizedBox(height: 90),
             ],
           ),
         ),
       ),
     );
   }
-// Update the stat card to work with Expanded
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Widget helpers
+  // ─────────────────────────────────────────────────────────────────────────
+
   Widget _buildSimpleStatCard(
       String value,
       String label,
@@ -1312,7 +1396,7 @@ class _HomeScreenState extends State<HomeScreen> {
     return GestureDetector(
       onTap: onTap,
       child: Container(
-        padding: EdgeInsets.all(12),
+        padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(12),
           color: _cardColor,
@@ -1324,7 +1408,7 @@ class _HomeScreenState extends State<HomeScreen> {
             Row(
               children: [
                 Container(
-                  padding: EdgeInsets.all(6),
+                  padding: const EdgeInsets.all(6),
                   decoration: BoxDecoration(
                     color: color.withOpacity(0.1),
                     borderRadius: BorderRadius.circular(8),
@@ -1345,11 +1429,9 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
                   ),
                 ),
-
-
               ],
             ),
-            SizedBox(height: 8),
+            const SizedBox(height: 8),
             Text(
               label,
               style: TextStyle(
@@ -1363,21 +1445,20 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-
-  Widget _buildSimpleActionButton(IconData icon, String label, Color color) {
+  Widget _buildSimpleActionButton(
+      IconData icon, String label, Color color) {
     return GestureDetector(
       onTap: () {
         if (label.contains("Vacation")) {
           _onItemTapped(5);
         } else if (label.contains("Shifts")) {
-          _onItemTapped(6); // index of ShiftsPage
+          _onItemTapped(6);
         } else if (label.contains("Dispatch")) {
-          _onItemTapped(7); // ✅ DispatchContactsPage
+          _onItemTapped(7);
         } else if (label.contains("Counseling\nStatements")) {
-          _onItemTapped(8); // CounselingListPage
+          _onItemTapped(8);
         } else if (label.contains("New Counseling\nReport")) {
-          _onItemTapped(9); // CounselingUploadPage
-
+          _onItemTapped(9);
         } else {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
@@ -1395,19 +1476,19 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
         child: Center(
           child: Padding(
-            padding: EdgeInsets.all(12),
+            padding: const EdgeInsets.all(12),
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 Container(
-                  padding: EdgeInsets.all(10),
+                  padding: const EdgeInsets.all(10),
                   decoration: BoxDecoration(
                     color: color.withOpacity(0.1),
                     shape: BoxShape.circle,
                   ),
                   child: Icon(icon, size: 22, color: color),
                 ),
-                SizedBox(height: 8),
+                const SizedBox(height: 8),
                 Text(
                   label,
                   textAlign: TextAlign.center,

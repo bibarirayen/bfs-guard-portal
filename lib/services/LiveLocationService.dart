@@ -1,12 +1,16 @@
-// lib/services/LiveLocationService.dart - ENHANCED VERSION
+// lib/services/LiveLocationService.dart
 
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:stomp_dart_client/stomp.dart';
 import 'package:stomp_dart_client/stomp_config.dart';
 import 'package:stomp_dart_client/stomp_frame.dart';
+
+import '../config/ApiService.dart';
 
 class LiveLocationService {
   static final LiveLocationService _instance =
@@ -16,23 +20,74 @@ class LiveLocationService {
 
   LiveLocationService._internal();
 
+  // ─── Internal state ───────────────────────────────────────────────────────
   StompClient? stompClient;
   StreamSubscription<Position>? _positionSubscription;
   Timer? _heartbeatTimer;
+  Timer? _shiftCheckTimer;
 
   bool _isTracking = false;
-
   Position? _lastPosition;
   DateTime? _lastSentTime;
+  DateTime? _lastShiftCheck; // throttle for piggyback check
 
-  /// CONFIGURATION (you can tune these)
-  static const int updateIntervalSeconds = 10;   // Fixed 10-second updates as requested
-  static const double movementSpeedThreshold = 1.0; // m/s (~3.6 km/h) - kept for logging
+  int? _currentUserId;
+  int? _currentAssignmentId;
 
+  /// HomeScreen sets this so it can update its UI when the service
+  /// self-stops because the server said the shift ended.
+  VoidCallback? onShiftEndedRemotely;
+
+  // ─── Configuration ────────────────────────────────────────────────────────
+  static const int _locationIntervalSeconds = 30;
+  static const int _shiftCheckIntervalSeconds = 30;
+
+  // ─── Public API ───────────────────────────────────────────────────────────
+
+  bool get isTracking => _isTracking;
+  Position? get lastPosition => _lastPosition;
+  bool get isConnected => stompClient?.connected ?? false;
+
+  /// Start GPS tracking + background shift watcher.
   void startTracking(int userId, int assignmentId) {
     stopTracking(); // clean restart
+
+    _currentUserId = userId;
+    _currentAssignmentId = assignmentId;
     _isTracking = true;
 
+    _connectWebSocket(userId, assignmentId);
+    _startShiftChecker(userId, assignmentId);
+  }
+
+  /// Fully stop everything. Safe to call multiple times.
+  void stopTracking() {
+    _isTracking = false;
+
+    _shiftCheckTimer?.cancel();
+    _shiftCheckTimer = null;
+
+    _heartbeatTimer?.cancel();
+    _heartbeatTimer = null;
+
+    _positionSubscription?.cancel();
+    _positionSubscription = null;
+
+    stompClient?.deactivate();
+    stompClient = null;
+
+    _lastPosition = null;
+    _lastSentTime = null;
+    _lastShiftCheck = null;
+    _currentUserId = null;
+    _currentAssignmentId = null;
+
+    print('🛑 LiveLocationService: tracking fully stopped');
+  }
+
+  // ─── WebSocket ────────────────────────────────────────────────────────────
+
+  void _connectWebSocket(int userId, int assignmentId) {
     stompClient = StompClient(
       config: StompConfig(
         url: 'wss://api.blackfabricsecurity.com/ws',
@@ -41,143 +96,203 @@ class LiveLocationService {
           print('✅ WebSocket connected');
           _startLocationStream(userId, assignmentId);
         },
-        onWebSocketError: (error) {
-          print("❌ WebSocket error: $error");
-        },
-        onDisconnect: (_) {
-          print('⚠️ WebSocket disconnected');
-        },
+        onWebSocketError: (error) => print('❌ WebSocket error: $error'),
+        onDisconnect: (_) => print('⚠️ WebSocket disconnected'),
       ),
     );
-
     stompClient!.activate();
   }
 
+  // ─── Shift checker (Timer-based) ─────────────────────────────────────────
+  // Runs every 30 s as long as iOS keeps this singleton alive via the
+  // active location stream. Covers the normal background case.
+
+  void _startShiftChecker(int userId, int assignmentId) {
+    _shiftCheckTimer?.cancel();
+
+    _shiftCheckTimer = Timer.periodic(
+      const Duration(seconds: _shiftCheckIntervalSeconds),
+          (_) async {
+        if (!_isTracking) return;
+        try {
+          final active = await _isShiftStillActive(assignmentId);
+          if (!active) {
+            print('🛑 [Timer] Shift ended → stopping tracking');
+            await _handleRemoteShiftEnd();
+          }
+        } catch (e) {
+          // Network blip — keep running, don't stop on transient errors
+          print('⚠️ Shift timer check error (keeping alive): $e');
+        }
+      },
+    );
+  }
+
+  // ─── Location stream ──────────────────────────────────────────────────────
+
   void _startLocationStream(int userId, int assignmentId) {
-    // ============================================
-    // iOS-OPTIMIZED SETTINGS FOR BACKGROUND TRACKING
-    // ============================================
     final locationSettings = Platform.isIOS
         ? AppleSettings(
       accuracy: LocationAccuracy.bestForNavigation,
       activityType: ActivityType.otherNavigation,
-      distanceFilter: 3, // Update every 3 meters
-      pauseLocationUpdatesAutomatically: false, // CRITICAL - never pause
-      showBackgroundLocationIndicator: true, // Shows blue bar on iOS
-      // iOS 14+ specific - explicitly enable background updates
+      distanceFilter: 3,
+      pauseLocationUpdatesAutomatically: false, // CRITICAL
+      showBackgroundLocationIndicator: true,    // Blue bar on iOS
       allowBackgroundLocationUpdates: true,
     )
-        : const LocationSettings(
+        : AndroidSettings(
       accuracy: LocationAccuracy.bestForNavigation,
       distanceFilter: 3,
+      intervalDuration:
+      const Duration(seconds: _locationIntervalSeconds),
+      foregroundNotificationConfig: const ForegroundNotificationConfig(
+        notificationText: 'Location tracking active',
+        notificationTitle: 'Black Fabric Security',
+        enableWakeLock: true,
+      ),
     );
 
-    // ============================================
-    // START LOCATION STREAM WITH ERROR HANDLING
-    // ============================================
     _positionSubscription =
         Geolocator.getPositionStream(locationSettings: locationSettings)
             .listen(
               (Position pos) {
             _lastPosition = pos;
-
             if (!_isTracking) return;
 
             final now = DateTime.now();
 
-            // Send location every 10 seconds (fixed interval)
+            // Send location every 30 s
             if (_lastSentTime == null ||
-                now.difference(_lastSentTime!).inSeconds >= updateIntervalSeconds) {
+                now.difference(_lastSentTime!).inSeconds >=
+                    _locationIntervalSeconds) {
               _sendLocation(userId, assignmentId);
             }
+
+            // ── PIGGYBACK shift check ────────────────────────────────────────
+            // Safety net for iOS suspension: every time iOS wakes the app for
+            // a GPS fix we also verify the shift is still active.
+            // Throttled to once per 30 s so it doesn't spam the server.
+            _piggybackShiftCheck(assignmentId);
+            // ────────────────────────────────────────────────────────────────
           },
           onError: (error) {
-            print("❌ Location stream error: $error");
-
-            // Attempt to restart stream after error
+            print('❌ Location stream error: $error');
             Future.delayed(const Duration(seconds: 5), () {
               if (_isTracking) {
-                print('🔄 Attempting to restart location stream...');
                 _positionSubscription?.cancel();
                 _startLocationStream(userId, assignmentId);
               }
             });
           },
-          cancelOnError: false, // Don't cancel on error, keep trying
+          cancelOnError: false,
         );
 
-    // ============================================
-    // SAFETY HEARTBEAT (every 10 seconds)
-    // ============================================
-    // Ensures update even if location stream pauses or fails
-    _heartbeatTimer =
-        Timer.periodic(const Duration(seconds: updateIntervalSeconds), (_) {
-          if (_isTracking && _lastPosition != null) {
-            _sendLocation(userId, assignmentId);
-          } else if (_isTracking && _lastPosition == null) {
-            print('⚠️ Heartbeat: No location available');
-          }
-        });
+    // Safety heartbeat — fires even if the device barely moves
+    _heartbeatTimer?.cancel();
+    _heartbeatTimer = Timer.periodic(
+        const Duration(seconds: _locationIntervalSeconds), (_) {
+      if (_isTracking && _lastPosition != null) {
+        _sendLocation(userId, assignmentId);
+      }
+    });
 
-    print('📍 Location tracking started for user $userId, assignment $assignmentId');
+    print(
+        '📍 Location stream started for user $userId, assignment $assignmentId');
   }
+
+  /// Called from inside the position stream callback.
+  /// Throttled: actually hits the server at most once every 30 s.
+  void _piggybackShiftCheck(int assignmentId) {
+    final now = DateTime.now();
+    if (_lastShiftCheck != null &&
+        now.difference(_lastShiftCheck!).inSeconds <
+            _shiftCheckIntervalSeconds) {
+      return; // too soon
+    }
+    _lastShiftCheck = now;
+
+    _isShiftStillActive(assignmentId).then((active) {
+      if (!active && _isTracking) {
+        print('🛑 [Piggyback] Shift ended → stopping tracking');
+        _handleRemoteShiftEnd();
+      }
+    }).catchError((e) {
+      print('⚠️ Piggyback shift check error: $e');
+    });
+  }
+
+  // ─── Server call ─────────────────────────────────────────────────────────
+
+  /// Uses the same dashboard endpoint the HomeScreen already trusts.
+  /// No new backend route needed.
+  Future<bool> _isShiftStillActive(int assignmentId) async {
+    final api = ApiService();
+    final prefs = await SharedPreferences.getInstance();
+    final guardId = prefs.getInt('userId');
+    if (guardId == null) return false;
+
+    final response = await api
+        .get('assignments/dashboard-mobile/$guardId')
+        .timeout(const Duration(seconds: 10));
+
+    if (response.statusCode == 200) {
+      final data = jsonDecode(response.body);
+      final bool active = data['Active'] == true;
+      final int? serverAssignmentId = data['assignmentId'] as int?;
+
+      if (!active) return false;
+      // If the server returned a different assignment, treat as ended
+      if (serverAssignmentId != null &&
+          serverAssignmentId != assignmentId) {
+        print(
+            '⚠️ Assignment mismatch (server=$serverAssignmentId, local=$assignmentId)');
+        return false;
+      }
+      return true;
+    }
+
+    // 401 / other error → stop tracking
+    print('⚠️ Dashboard returned ${response.statusCode} → stopping');
+    return false;
+  }
+
+  Future<void> _handleRemoteShiftEnd() async {
+    stopTracking();
+
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('shift_active', false);
+    await prefs.remove('active_assignment_id');
+    await prefs.remove('active_guard_id');
+
+    onShiftEndedRemotely?.call();
+  }
+
+  // ─── Send ─────────────────────────────────────────────────────────────────
 
   void _sendLocation(int userId, int assignmentId) {
     if (!_isTracking ||
         stompClient == null ||
         !stompClient!.connected ||
-        _lastPosition == null) {
-      if (_isTracking && _lastPosition != null && stompClient?.connected != true) {
-        print('⚠️ Cannot send location: WebSocket not connected');
-      }
-      return;
-    }
+        _lastPosition == null) return;
 
     _lastSentTime = DateTime.now();
 
-    final locationData = {
-      "userId": userId,
-      "shiftId": assignmentId,
-      "lat": _lastPosition!.latitude,
-      "lng": _lastPosition!.longitude,
-      "speed": _lastPosition!.speed,
-      "accuracy": _lastPosition!.accuracy,
-      "timestamp": DateTime.now().toIso8601String(),
-      "platform": Platform.isIOS ? "iOS" : "Android",
-    };
-
     stompClient!.send(
       destination: '/app/location',
-      body: jsonEncode(locationData),
+      body: jsonEncode({
+        'userId': userId,
+        'shiftId': assignmentId,
+        'lat': _lastPosition!.latitude,
+        'lng': _lastPosition!.longitude,
+        'speed': _lastPosition!.speed,
+        'accuracy': _lastPosition!.accuracy,
+        'timestamp': _lastSentTime!.toIso8601String(),
+        'platform': Platform.isIOS ? 'iOS' : 'Android',
+      }),
     );
 
-    print(
-        "📍 Sent location: ${_lastPosition!.latitude.toStringAsFixed(6)}, "
-            "${_lastPosition!.longitude.toStringAsFixed(6)} | "
-            "speed: ${_lastPosition!.speed.toStringAsFixed(2)} m/s | "
-            "accuracy: ${_lastPosition!.accuracy.toStringAsFixed(1)}m");
+    print('📍 Sent: ${_lastPosition!.latitude.toStringAsFixed(6)}, '
+        '${_lastPosition!.longitude.toStringAsFixed(6)} | '
+        'speed: ${_lastPosition!.speed.toStringAsFixed(1)} m/s');
   }
-
-  void stopTracking() {
-    _isTracking = false;
-
-    _positionSubscription?.cancel();
-    _positionSubscription = null;
-
-    _heartbeatTimer?.cancel();
-    _heartbeatTimer = null;
-
-    stompClient?.deactivate();
-    stompClient = null;
-
-    _lastPosition = null;
-    _lastSentTime = null;
-
-    print('🛑 Location tracking stopped');
-  }
-
-  // Getters for current state
-  bool get isTracking => _isTracking;
-  Position? get lastPosition => _lastPosition;
-  bool get isConnected => stompClient?.connected ?? false;
 }
