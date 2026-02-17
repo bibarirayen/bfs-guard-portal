@@ -508,117 +508,9 @@ class _HomeScreenState extends State<HomeScreen> {
   // ─────────────────────────────────────────────────────────────────────────
 
   Future<void> _startShift() async {
-    LocationPermission permission = await Geolocator.checkPermission();
-
-    if (Platform.isIOS && permission != LocationPermission.always) {
-      bool? shouldProceed = await showDialog<bool>(
-        context: context,
-        barrierDismissible: false,
-        builder: (context) => AlertDialog(
-          title: const Row(
-            children: [
-              Icon(Icons.location_on, color: Colors.red),
-              SizedBox(width: 8),
-              Text('Permission Required'),
-            ],
-          ),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text(
-                'You MUST allow location access "Always" to start your shift.',
-                style: TextStyle(fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(height: 16),
-              const Text('Why "Always" is required:'),
-              const SizedBox(height: 8),
-              const Text('✓ Track your patrol route during the entire shift'),
-              const Text(
-                  '✓ Ensure your safety even when app is in background'),
-              const Text('✓ Automatic checkpoint verification'),
-              const Text('✓ Real-time location monitoring'),
-              const SizedBox(height: 16),
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: Colors.blue.shade50,
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: Colors.blue.shade200),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'How to enable "Always" permission:',
-                      style: TextStyle(
-                          fontWeight: FontWeight.bold,
-                          color: Colors.blue.shade900),
-                    ),
-                    const SizedBox(height: 8),
-                    const Text('1. Tap "Open Settings" below',
-                        style: TextStyle(fontSize: 13)),
-                    const Text('2. Tap "Location"',
-                        style: TextStyle(fontSize: 13)),
-                    const Text('3. Select "Always"',
-                        style: TextStyle(fontSize: 13)),
-                    const Text('4. Return to the app',
-                        style: TextStyle(fontSize: 13)),
-                  ],
-                ),
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text('Cancel'),
-            ),
-            ElevatedButton.icon(
-              onPressed: () {
-                openAppSettings();
-                Navigator.pop(context, true);
-              },
-              icon: const Icon(Icons.settings),
-              label: const Text('Open Settings'),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.blue,
-                foregroundColor: Colors.white,
-              ),
-            ),
-          ],
-        ),
-      );
-
-      if (shouldProceed != true) return;
-
-      await Future.delayed(const Duration(seconds: 1));
-      permission = await Geolocator.checkPermission();
-
-      if (permission != LocationPermission.always) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('⚠️ "Always" permission required to start shift'),
-            backgroundColor: Colors.orange,
-            duration: Duration(seconds: 5),
-          ),
-        );
-        return;
-      }
-    }
-
-    bool hasPermission =
-    await PermissionHelper.requestAlwaysLocationPermission(context);
-    if (!hasPermission) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content:
-          Text('❌ Location permission denied - cannot start shift'),
-          backgroundColor: Colors.red,
-        ),
-      );
-      return;
-    }
+    // ── Step 1: ensure location permission is sufficient ──────────────────
+    final bool hasPermission = await _ensureLocationPermission();
+    if (!hasPermission) return;
 
     await _getCurrentPosition();
     if (_currentPosition == null) {
@@ -753,71 +645,139 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  Future<bool> _handleLocationPermission() async {
-    bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
+  /// Correct iOS + Android location permission flow:
+  ///
+  /// iOS sequence:
+  ///   denied → request() → shows "While Using / Don't Allow" system dialog
+  ///   whileInUse → request() again → shows "Change to Always Allow" banner
+  ///   always → good to go
+  ///   deniedForever → only then send to Settings
+  ///
+  /// Android: same but "always" is a separate runtime permission after
+  ///   "while using" is granted.
+  Future<bool> _ensureLocationPermission() async {
+    // 1. Check location service is on
+    final bool serviceEnabled =
+    await Geolocator.isLocationServiceEnabled();
     if (!serviceEnabled) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-            content: Text('Please enable location services')),
-      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+              content: Text('Please turn on Location Services in Settings')),
+        );
+      }
       await Geolocator.openLocationSettings();
       return false;
     }
 
     LocationPermission permission = await Geolocator.checkPermission();
 
+    // 2. Never asked before → request (shows system dialog)
     if (permission == LocationPermission.denied) {
       permission = await Geolocator.requestPermission();
     }
 
+    // 3. User hit "Don't Allow" permanently → send to Settings
     if (permission == LocationPermission.deniedForever) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-              'Location permanently denied. Please enable it in settings.'),
-        ),
-      );
-      await Geolocator.openAppSettings();
+      if (mounted) {
+        await showDialog(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: const Text('Location Permission Required'),
+            content: const Text(
+              'Location access was permanently denied. '
+                  'Please open Settings → Privacy & Security → Location Services '
+                  '→ [App Name] and select "Always".',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('Cancel'),
+              ),
+              ElevatedButton(
+                onPressed: () {
+                  Navigator.pop(ctx);
+                  openAppSettings();
+                },
+                child: const Text('Open Settings'),
+              ),
+            ],
+          ),
+        );
+      }
       return false;
     }
 
-    if (Platform.isIOS && permission == LocationPermission.whileInUse) {
-      final shouldRequest = await showDialog<bool>(
-        context: context,
-        builder: (context) => AlertDialog(
-          title: const Text('Location Access Required'),
-          content: const Text(
-            'BFS Guard Portal needs "Always Allow" location access to track your position during shifts, even when the app is in the background.',
+    // 4. "While Using" granted → ask for "Always" (iOS shows upgrade banner;
+    //    Android shows a separate system dialog)
+    if (permission == LocationPermission.whileInUse) {
+      if (Platform.isIOS) {
+        // Show explanation before the system upgrade banner appears
+        final proceed = await showDialog<bool>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: const Row(
+              children: [
+                Icon(Icons.location_on, color: Color(0xFF4F46E5)),
+                SizedBox(width: 8),
+                Text('Background Location'),
+              ],
+            ),
+            content: const Text(
+              'To track your patrol while the app is in the background, '
+                  'please select "Always" on the next screen.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('Not Now'),
+              ),
+              ElevatedButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                child: const Text('Continue'),
+              ),
+            ],
           ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text('Cancel'),
-            ),
-            TextButton(
-              onPressed: () => Navigator.pop(context, true),
-              child: const Text('Continue'),
-            ),
-          ],
-        ),
-      );
-
-      if (shouldRequest != true) return false;
+        );
+        if (proceed != true) {
+          // "While Using" is still acceptable — tracking works in foreground
+          return true;
+        }
+      }
+      // This call triggers the iOS "Change to Always Allow" banner
+      // or the Android background-location dialog
       permission = await Geolocator.requestPermission();
     }
 
-    if (permission != LocationPermission.always &&
-        permission != LocationPermission.whileInUse) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content:
-          Text('Location access is required for shift tracking.'),
-        ),
-      );
-      return false;
+    // 5. Final check — "always" is ideal; "whileInUse" is acceptable fallback
+    if (permission == LocationPermission.always ||
+        permission == LocationPermission.whileInUse) {
+      return true;
     }
 
-    return true;
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Location permission is required to start a shift.'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+    return false;
+  }
+
+  /// Used by _restoreLiveTrackingIfNeeded (silent check, no UI dialogs)
+  Future<bool> _handleLocationPermission() async {
+    final bool serviceEnabled =
+    await Geolocator.isLocationServiceEnabled();
+    if (!serviceEnabled) return false;
+
+    LocationPermission permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied) {
+      permission = await Geolocator.requestPermission();
+    }
+    return permission == LocationPermission.always ||
+        permission == LocationPermission.whileInUse;
   }
 
   // ─────────────────────────────────────────────────────────────────────────
