@@ -3,12 +3,12 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:crossplatformblackfabric/config/ApiService.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:http/http.dart' as http;
 import 'package:flutter_image_compress/flutter_image_compress.dart';
 import 'package:path_provider/path_provider.dart';
-import '../widgets/custom_appbar.dart';
 import 'package:permission_handler/permission_handler.dart';
 
 class ReportPage extends StatefulWidget {
@@ -21,53 +21,216 @@ class ReportPage extends StatefulWidget {
 class _ReportPageState extends State<ReportPage> {
   // --- Theme variables ---
   bool _isDarkMode = true;
+  // ─────────────────────────────────────────────────────────────────────────
+  // UNIFIED PERMISSION HANDLER
+  // Handles all edge cases for iOS + Android, camera + gallery, photo + video
+  // ─────────────────────────────────────────────────────────────────────────
   Future<bool> _requestPermissions(ImageSource source, {bool forVideo = false}) async {
-    // iOS: image_picker handles permissions automatically
     if (Platform.isIOS) {
-      return true; // Let image_picker handle iOS permissions
+      return await _requestPermissionsIOS(source, forVideo: forVideo);
+    } else {
+      return await _requestPermissionsAndroid(source, forVideo: forVideo);
     }
+  }
 
-    // Android: Manual permission handling
-    PermissionStatus status;
-
+  Future<bool> _requestPermissionsIOS(ImageSource source, {bool forVideo = false}) async {
+    // ── Camera ──────────────────────────────────────────────────────────────
     if (source == ImageSource.camera) {
-      // Camera permission
-      status = await Permission.camera.request();
-
-      // If it's a video, also request microphone
+      // 1. Camera
+      final camStatus = await Permission.camera.request();
+      if (!camStatus.isGranted) {
+        _showPermissionDeniedDialog(
+          'Camera Permission Required',
+          'Camera access is needed to take photos/videos for reports.',
+        );
+        return false;
+      }
+      // 2. Microphone (always required on iOS to open camera for video)
       if (forVideo) {
-        PermissionStatus micStatus = await Permission.microphone.request();
+        final micStatus = await Permission.microphone.request();
         if (!micStatus.isGranted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text("Please grant microphone permission to record videos"),
-              backgroundColor: Colors.redAccent,
-            ),
+          _showPermissionDeniedDialog(
+            'Microphone Permission Required',
+            'Microphone access is required to record video with audio.\n\nGo to Settings → BFS Guard Portal → Microphone and enable it.',
           );
           return false;
         }
       }
-    } else {
-      // Gallery permission
-      if (await Permission.photos.isGranted || await Permission.storage.isGranted) {
-        return true;
-      }
-      status = await Permission.photos.request(); // Android 13+
+      return true;
     }
 
-    if (!status.isGranted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(forVideo
-              ? "Please grant permission to access videos"
-              : "Please grant permission to access images"),
-          backgroundColor: Colors.redAccent,
-        ),
+    // ── Gallery ──────────────────────────────────────────────────────────────
+    // On iOS 14+, image_picker uses PHPickerViewController which does NOT need
+    // explicit photo library permission. On iOS 13 and below it uses
+    // UIImagePickerController which does. We request it to be safe.
+    final photoStatus = await Permission.photos.request();
+    if (photoStatus.isDenied || photoStatus.isPermanentlyDenied) {
+      _showPermissionDeniedDialog(
+        'Photo Library Permission Required',
+        'Photo library access is needed to select ${forVideo ? 'videos' : 'photos'} for reports.\n\nGo to Settings → BFS Guard Portal → Photos and set to "All Photos".',
       );
       return false;
     }
-
+    // "limited" access is still enough for PHPickerViewController
     return true;
+  }
+
+  Future<bool> _requestPermissionsAndroid(ImageSource source, {bool forVideo = false}) async {
+    // ── Camera ──────────────────────────────────────────────────────────────
+    if (source == ImageSource.camera) {
+      final camStatus = await Permission.camera.request();
+      if (!camStatus.isGranted) {
+        if (camStatus.isPermanentlyDenied) {
+          _showPermissionDeniedDialog(
+            'Camera Permission Blocked',
+            'Camera permission is permanently blocked.\n\nOpen App Settings to enable it.',
+            showSettings: true,
+          );
+        } else {
+          _snackError('Camera permission is required to take photos/videos.');
+        }
+        return false;
+      }
+
+      if (forVideo) {
+        final micStatus = await Permission.microphone.request();
+        if (!micStatus.isGranted) {
+          if (micStatus.isPermanentlyDenied) {
+            _showPermissionDeniedDialog(
+              'Microphone Permission Blocked',
+              'Microphone permission is permanently blocked.\n\nOpen App Settings to enable it.',
+              showSettings: true,
+            );
+          } else {
+            _snackError('Microphone permission is required to record videos.');
+          }
+          return false;
+        }
+      }
+      return true;
+    }
+
+    // ── Gallery ──────────────────────────────────────────────────────────────
+    // Android API level split:
+    //   ≥ 33 (Android 13+): READ_MEDIA_IMAGES / READ_MEDIA_VIDEO
+    //   < 33 (Android ≤12): READ_EXTERNAL_STORAGE
+    final sdkVersion = await _getAndroidSdkVersion();
+
+    if (sdkVersion >= 33) {
+      final Permission perm = forVideo ? Permission.videos : Permission.photos;
+      final status = await perm.request();
+      if (!status.isGranted) {
+        if (status.isPermanentlyDenied) {
+          _showPermissionDeniedDialog(
+            forVideo ? 'Video Permission Blocked' : 'Photo Permission Blocked',
+            '${forVideo ? 'Video' : 'Photo'} permission is permanently blocked.\n\nOpen App Settings to enable it.',
+            showSettings: true,
+          );
+        } else {
+          _snackError(
+              '${forVideo ? 'Video' : 'Photo'} library permission is required.');
+        }
+        return false;
+      }
+    } else {
+      // Android ≤ 12: need READ_EXTERNAL_STORAGE
+      final status = await Permission.storage.request();
+      if (!status.isGranted) {
+        if (status.isPermanentlyDenied) {
+          _showPermissionDeniedDialog(
+            'Storage Permission Blocked',
+            'Storage permission is permanently blocked.\n\nOpen App Settings to enable it.',
+            showSettings: true,
+          );
+        } else {
+          _snackError('Storage permission is required to access the gallery.');
+        }
+        return false;
+      }
+    }
+    return true;
+  }
+
+  // Cache the SDK version so we don't call it repeatedly
+  int? _cachedSdkVersion;
+  Future<int> _getAndroidSdkVersion() async {
+    if (_cachedSdkVersion != null) return _cachedSdkVersion!;
+    try {
+      // Use a platform channel to get SDK_INT without adding device_info_plus
+      const channel = MethodChannel('flutter/platform');
+      // Fallback: parse from dart:io Platform.operatingSystemVersion
+      // Format: "Linux 5.4.x (Android 13)" or similar
+      final version = Platform.operatingSystemVersion;
+      // Try to extract Android API level from version string
+      final match = RegExp(r'Android (\d+)').firstMatch(version);
+      if (match != null) {
+        final androidVer = int.tryParse(match.group(1) ?? '');
+        if (androidVer != null) {
+          // Map Android version to API level
+          final apiMap = {14: 34, 13: 33, 12: 32, 11: 30, 10: 29, 9: 28};
+          _cachedSdkVersion = apiMap[androidVer] ?? (androidVer >= 13 ? 33 : 28);
+          return _cachedSdkVersion!;
+        }
+      }
+      _cachedSdkVersion = 30; // safe fallback
+      return _cachedSdkVersion!;
+    } catch (_) {
+      _cachedSdkVersion = 30;
+      return _cachedSdkVersion!;
+    }
+  }
+
+  void _snackError(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(message),
+      backgroundColor: Colors.redAccent,
+      behavior: SnackBarBehavior.floating,
+    ));
+  }
+
+  void _showPermissionDeniedDialog(String title, String message,
+      {bool showSettings = false}) {
+    if (!mounted) return;
+    showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        backgroundColor: _cardColor,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Row(children: [
+          const Icon(Icons.lock, color: Colors.redAccent, size: 22),
+          const SizedBox(width: 8),
+          Expanded(
+              child: Text(title,
+                  style: TextStyle(
+                      color: _textColor,
+                      fontSize: 16,
+                      fontWeight: FontWeight.w700))),
+        ]),
+        content: Text(message,
+            style: TextStyle(color: _secondaryTextColor, fontSize: 14, height: 1.5)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text('Cancel',
+                style: TextStyle(color: _secondaryTextColor)),
+          ),
+          if (showSettings)
+            ElevatedButton(
+              onPressed: () {
+                Navigator.pop(context);
+                openAppSettings();
+              },
+              style: ElevatedButton.styleFrom(
+                  backgroundColor: _primaryColor,
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10))),
+              child: const Text('Open Settings',
+                  style: TextStyle(color: Colors.white)),
+            ),
+        ],
+      ),
+    );
   }
 
 
@@ -173,128 +336,74 @@ class _ReportPageState extends State<ReportPage> {
 
 
   Future<void> _pickVideo(ImageSource source) async {
-    // ============================================
-    // iOS-SPECIFIC PERMISSION HANDLING
-    // ============================================
-    if (Platform.isIOS && source == ImageSource.camera) {
-      // Request microphone permission explicitly for iOS
-      PermissionStatus micStatus = await Permission.microphone.request();
+    final granted = await _requestPermissions(source, forVideo: true);
+    if (!granted) return;
 
-      if (!micStatus.isGranted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text("Microphone permission is required to record video with audio"),
-            backgroundColor: Colors.redAccent,
-          ),
-        );
-
-        if (micStatus.isPermanentlyDenied) {
-          openAppSettings();
-        }
-        return;
-      }
-
-      // Also ensure camera permission for iOS
-      PermissionStatus cameraStatus = await Permission.camera.request();
-      if (!cameraStatus.isGranted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text("Camera permission is required to record video"),
-            backgroundColor: Colors.redAccent,
-          ),
-        );
-
-        if (cameraStatus.isPermanentlyDenied) {
-          openAppSettings();
-        }
-        return;
-      }
-    }
-
-    // ============================================
-    // ANDROID-SPECIFIC PERMISSION HANDLING
-    // ============================================
-    if (Platform.isAndroid) {
-      // Request basic permissions (camera or gallery)
-      bool granted = await _requestPermissions(source, forVideo: true);
-      if (!granted) return;
-
-      // Check for microphone permanent denial
-      if (source == ImageSource.camera) {
-        PermissionStatus micStatus = await Permission.microphone.status;
-        if (micStatus.isPermanentlyDenied) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text("Microphone permission is permanently denied. Please enable it in settings."),
-              backgroundColor: Colors.redAccent,
-            ),
-          );
-          openAppSettings();
-          return;
-        }
-      }
-
-      // Check camera/gallery permanent denial
-      if ((source == ImageSource.camera && await Permission.camera.isPermanentlyDenied) ||
-          (source == ImageSource.gallery &&
-              (await Permission.photos.isPermanentlyDenied ||
-                  await Permission.storage.isPermanentlyDenied))) {
-        openAppSettings();
-        return;
-      }
-    }
-
-    // ============================================
-    // PICK THE VIDEO
-    // ============================================
     try {
-      final XFile? pickedFile = await _picker.pickVideo(source: source);
+      final XFile? pickedFile = await _picker.pickVideo(
+        source: source,
+        maxDuration: const Duration(minutes: 10),
+      );
       if (pickedFile == null) return;
 
       final File videoFile = File(pickedFile.path);
-      setState(() {
-        _mediaFiles.add(videoFile);
-      });
+      if (!await videoFile.exists()) {
+        _snackError('Could not access the selected video. Please try again.');
+        return;
+      }
+
+      setState(() => _mediaFiles.add(videoFile));
     } catch (e) {
-      debugPrint("Video pick error: $e");
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text("Error picking video: $e"),
-          backgroundColor: Colors.redAccent,
-        ),
-      );
+      debugPrint('Video pick error: $e');
+      final s = e.toString().toLowerCase();
+      if (s.contains('permission') || s.contains('denied')) {
+        _showPermissionDeniedDialog(
+          'Permission Required',
+          'Please grant the required permission to access ${source == ImageSource.camera ? "the camera" : "your gallery"}.',
+          showSettings: true,
+        );
+      } else if (!s.contains('cancel')) {
+        _snackError('Error picking video. Please try again.');
+      }
     }
   }
 
-
-
-
-
   // Image picker
   final ImagePicker _picker = ImagePicker();
+
   Future<void> _pickImage(ImageSource source) async {
-    bool granted = await _requestPermissions(source);
-    if (!granted) return; // stop if permissions not granted
-    if (await Permission.camera.isPermanentlyDenied ||
-        await Permission.photos.isPermanentlyDenied) {
-      openAppSettings();
-      return;
-    }
+    final granted = await _requestPermissions(source, forVideo: false);
+    if (!granted) return;
+
     try {
-      final XFile? pickedFile = await _picker.pickImage(source: source);
+      final XFile? pickedFile = await _picker.pickImage(
+        source: source,
+        imageQuality: 85,
+        maxWidth: 1920,
+        maxHeight: 1920,
+      );
       if (pickedFile == null) return;
 
-      // 🔒 Normalize the file immediately
       final File tempFile = File(pickedFile.path);
+      if (!await tempFile.exists()) {
+        _snackError('Could not access the selected image. Please try again.');
+        return;
+      }
 
-      // ✅ Compress & get a REAL dart:io File
       final File compressedFile = await _compressImage(tempFile);
-
-      setState(() {
-        _mediaFiles.add(compressedFile);
-      });
+      setState(() => _mediaFiles.add(compressedFile));
     } catch (e) {
-      debugPrint("Image pick error: $e");
+      debugPrint('Image pick error: $e');
+      final s = e.toString().toLowerCase();
+      if (s.contains('permission') || s.contains('denied')) {
+        _showPermissionDeniedDialog(
+          'Permission Required',
+          'Please grant the required permission to access ${source == ImageSource.camera ? "the camera" : "your photo library"}.',
+          showSettings: true,
+        );
+      } else if (!s.contains('cancel')) {
+        _snackError('Error picking image. Please try again.');
+      }
     }
   }
 

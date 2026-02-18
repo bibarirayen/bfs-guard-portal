@@ -6,7 +6,7 @@ import 'package:ndef/record.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../config/ApiService.dart';
 import 'login_screen.dart';
-import 'package:ndef/ndef.dart'; // add this import at the top
+import 'package:ndef/ndef.dart';
 
 class NfcAssignPage extends StatefulWidget {
   const NfcAssignPage({super.key});
@@ -29,6 +29,7 @@ class _NfcAssignPageState extends State<NfcAssignPage> {
   Color get secondaryTextColor => _isDarkMode ? Colors.white : Colors.white;
   Color get primaryColor => _isDarkMode ? Color(0xFF4F46E5) : Color(0xFF3B82F6);
   Color get dangerColor => Color(0xFFEF4444);
+  Color get warningColor => Color(0xFFF59E0B);
 
   @override
   void initState() {
@@ -57,7 +58,6 @@ class _NfcAssignPageState extends State<NfcAssignPage> {
   }
 
   Future<void> assignNfc(int stopId) async {
-    // Check NFC availability first
     final availability = await FlutterNfcKit.nfcAvailability;
     if (availability != NFCAvailability.available) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -70,7 +70,6 @@ class _NfcAssignPageState extends State<NfcAssignPage> {
     String? nfcTagId;
 
     try {
-      // STEP 1: Poll with iosAlertMessage — required on iOS 17+ to keep session alive
       NFCTag tag = await FlutterNfcKit.poll(
         timeout: const Duration(seconds: 20),
         iosMultipleTagMessage: 'Multiple tags detected. Present only one tag.',
@@ -78,26 +77,8 @@ class _NfcAssignPageState extends State<NfcAssignPage> {
       );
 
       nfcTagId = tag.id;
-
-      // STEP 2: Small delay — iOS 18 needs breathing room after poll before write
       await Future.delayed(const Duration(milliseconds: 150));
 
-      // STEP 3: Build a well-formed NDEF Text Record
-      // iOS 18 strictly validates the TNF + type + payload structure.
-      // A Text record (TNF=wellKnown, type=0x54) must have:
-      //   payload[0] = status byte (bit7=0 for UTF-8, bits5-0 = lang code length)
-      //   payload[1..n] = language code (e.g. 'en')
-      //   payload[n+1..] = actual text
-      final Uint8List langBytes = Uint8List.fromList(utf8.encode('en'));
-      final Uint8List textBytes = Uint8List.fromList(utf8.encode(stopId.toString()));
-      final Uint8List payload = Uint8List(1 + langBytes.length + textBytes.length);
-      payload[0] = langBytes.length; // status byte: UTF-8 + lang length = 2
-      payload.setRange(1, 1 + langBytes.length, langBytes);
-      payload.setRange(1 + langBytes.length, payload.length, textBytes);
-      await Future.delayed(const Duration(milliseconds: 150));
-
-      // STEP 4: Write NDEF with proper TNF and type byte
-      // ✅ CORRECT — proper TNF + raw byte 0x54
       await FlutterNfcKit.writeNDEFRecords([
         TextRecord(
           language: 'en',
@@ -105,10 +86,8 @@ class _NfcAssignPageState extends State<NfcAssignPage> {
         ),
       ]);
 
-      // STEP 5: Finish with a success message (iOS shows native checkmark UI)
       await FlutterNfcKit.finish(iosAlertMessage: 'NFC tag assigned successfully!');
 
-      // STEP 6: Save tag ID to backend
       final response = await apiService.post(
         'stops/$stopId/nfc',
         {'nfcTagId': nfcTagId},
@@ -127,7 +106,6 @@ class _NfcAssignPageState extends State<NfcAssignPage> {
         throw Exception('Backend error: ${response.statusCode}');
       }
     } catch (e) {
-      // Always close the NFC session on error or iOS will stay in a hung state
       try {
         await FlutterNfcKit.finish(iosErrorMessage: 'Failed to assign NFC tag.');
       } catch (_) {}
@@ -135,7 +113,6 @@ class _NfcAssignPageState extends State<NfcAssignPage> {
       if (mounted) {
         String errorMsg = 'Error scanning/writing NFC. Please try again.';
         final errStr = e.toString().toLowerCase();
-
         if (errStr.contains('session invalidated') || errStr.contains('500')) {
           errorMsg = 'NFC session lost. Hold the tag steady and try again.';
         } else if (errStr.contains('timeout')) {
@@ -147,7 +124,104 @@ class _NfcAssignPageState extends State<NfcAssignPage> {
         } else if (errStr.contains('ndef')) {
           errorMsg = 'This tag may not support NDEF. Try a different tag.';
         }
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(errorMsg)),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => scanning = false);
+    }
+  }
 
+  Future<void> resetNfc(int stopId) async {
+    // Confirm before resetting
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: cardColor,
+        title: Text('Reset NFC Tag', style: TextStyle(color: textColor)),
+        content: Text(
+          'This will erase the NFC tag data and unlink it from this stop. Hold the tag near your phone when ready.',
+          style: TextStyle(color: secondaryTextColor),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text('Cancel', style: TextStyle(color: secondaryTextColor)),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: ElevatedButton.styleFrom(backgroundColor: dangerColor),
+            child: const Text('Reset', style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+
+    final availability = await FlutterNfcKit.nfcAvailability;
+    if (availability != NFCAvailability.available) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('NFC is not available on this device')),
+      );
+      return;
+    }
+
+    setState(() => scanning = true);
+
+    try {
+      await FlutterNfcKit.poll(
+        timeout: const Duration(seconds: 20),
+        iosMultipleTagMessage: 'Multiple tags detected. Present only one tag.',
+        iosAlertMessage: 'Hold your iPhone near the NFC tag to reset it.',
+      );
+
+      await Future.delayed(const Duration(milliseconds: 150));
+
+      // Write an empty Text record to overwrite existing data
+      await FlutterNfcKit.writeNDEFRecords([
+        TextRecord(
+          language: 'en',
+          text: '',
+        ),
+      ]);
+
+      await FlutterNfcKit.finish(iosAlertMessage: 'NFC tag reset successfully!');
+
+      // Clear nfcTagId in the backend (set to null)
+      final response = await apiService.post(
+        'stops/$stopId/nfc',
+        {'nfcTagId': null},
+      );
+
+      if (response.statusCode == 200) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('NFC tag reset successfully!'),
+              backgroundColor: Colors.orange,
+            ),
+          );
+        }
+      } else {
+        throw Exception('Backend error: ${response.statusCode}');
+      }
+    } catch (e) {
+      try {
+        await FlutterNfcKit.finish(iosErrorMessage: 'Failed to reset NFC tag.');
+      } catch (_) {}
+
+      if (mounted) {
+        String errorMsg = 'Error resetting NFC tag. Please try again.';
+        final errStr = e.toString().toLowerCase();
+        if (errStr.contains('timeout')) {
+          errorMsg = 'Timed out. Bring the tag closer and try again.';
+        } else if (errStr.contains('user cancel') || errStr.contains('cancelled')) {
+          errorMsg = 'Reset cancelled.';
+        } else if (errStr.contains('tag connection lost')) {
+          errorMsg = 'Tag moved away too quickly. Hold it steady and retry.';
+        }
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(errorMsg)),
         );
@@ -175,10 +249,7 @@ class _NfcAssignPageState extends State<NfcAssignPage> {
         elevation: 0,
         title: const Text(
           'Assign NFC Tags',
-          style: TextStyle(
-            color: Colors.white,
-            fontWeight: FontWeight.bold,
-          ),
+          style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
         ),
         actions: [
           IconButton(
@@ -206,37 +277,79 @@ class _NfcAssignPageState extends State<NfcAssignPage> {
                         borderRadius: BorderRadius.circular(15),
                         side: BorderSide(color: borderColor),
                       ),
-                      child: ListTile(
-                        contentPadding: const EdgeInsets.symmetric(
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
                             horizontal: 16, vertical: 12),
-                        title: Text(
-                          stop['name'] ?? 'Unnamed Stop',
-                          style: TextStyle(
-                            color: textColor,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                        subtitle: Text(
-                          'Site: ${stop['siteName'] ?? '-'}',
-                          style: TextStyle(color: secondaryTextColor),
-                        ),
-                        trailing: ElevatedButton.icon(
-                          onPressed: scanning
-                              ? null
-                              : () => assignNfc(stop['id']),
-                          icon: const Icon(Icons.nfc),
-                          label: Text(
-                            scanning ? 'Scanning...' : 'Add NFC',
-                            style: const TextStyle(color: Colors.white),
-                          ),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: primaryColor,
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(12),
+                        child: Row(
+                          children: [
+                            // Stop info
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment:
+                                CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    stop['name'] ?? 'Unnamed Stop',
+                                    style: TextStyle(
+                                      color: textColor,
+                                      fontWeight: FontWeight.w600,
+                                      fontSize: 15,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    'Site: ${stop['siteName'] ?? '-'}',
+                                    style: TextStyle(
+                                        color: secondaryTextColor,
+                                        fontSize: 13),
+                                  ),
+                                ],
+                              ),
                             ),
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 12, vertical: 10),
-                          ),
+                            const SizedBox(width: 8),
+                            // Assign button
+                            ElevatedButton.icon(
+                              onPressed: scanning
+                                  ? null
+                                  : () => assignNfc(stop['id']),
+                              icon: const Icon(Icons.nfc, size: 16),
+                              label: Text(
+                                scanning ? '...' : 'Assign',
+                                style: const TextStyle(
+                                    color: Colors.white, fontSize: 13),
+                              ),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: primaryColor,
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 10, vertical: 8),
+                              ),
+                            ),
+                            const SizedBox(width: 6),
+                            // Reset button
+                            ElevatedButton.icon(
+                              onPressed: scanning
+                                  ? null
+                                  : () => resetNfc(stop['id']),
+                              icon: const Icon(Icons.delete_outline,
+                                  size: 16),
+                              label: const Text(
+                                'Reset',
+                                style: TextStyle(
+                                    color: Colors.white, fontSize: 13),
+                              ),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: warningColor,
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 10, vertical: 8),
+                              ),
+                            ),
+                          ],
                         ),
                       ),
                     );
