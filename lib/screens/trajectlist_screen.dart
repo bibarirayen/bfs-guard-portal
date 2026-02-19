@@ -536,13 +536,18 @@ class _CheckpointsScreenState extends State<CheckpointsScreen> {
   //  Formula:  accuracy = (range×2 - distance) / range  × 100
   //  Minimum accepted accuracy: 70%
   // ─────────────────────────────────────────────────────────────────────────
-  int _calculateAccuracy(double distanceM, double rangeM) {
-    if (rangeM <= 0) return 0;
-    if (distanceM <= rangeM) return 100;
-    final maxDist = rangeM * 2.0;
-    if (distanceM >= maxDist) return 0;
-    return ((maxDist - distanceM) / rangeM * 100.0).clamp(0.0, 100.0).round();
+  int _calculateAccuracy(double distanceM) {
+    const rangeM = 10.0;     // full accuracy within 10 m
+    const maxDist = 15.0;    // anything beyond 15 m is rejected (0%)
+
+    if (distanceM <= rangeM) return 100;           // inside valid zone
+    if (distanceM >= maxDist) return 0;           // too far
+    // linear decay between 10 and 15 meters
+    return ((maxDist - distanceM) / (maxDist - rangeM) * 100.0)
+        .clamp(0.0, 100.0)
+        .round();
   }
+
 
   // ── Main scan handler ─────────────────────────────────────────────────────
   Future<void> _scanCheckpoint(int index) async {
@@ -659,7 +664,7 @@ class _CheckpointsScreenState extends State<CheckpointsScreen> {
       stop.latitude,
       stop.longitude,
     );
-    final accuracy = _calculateAccuracy(distanceM, stop.range);
+    final accuracy = _calculateAccuracy(distanceM);
 
     debugPrint(
         '📍 [${stop.name}] dist=${distanceM.toStringAsFixed(1)}m  range=${stop.range}m  accuracy=$accuracy%');
@@ -761,7 +766,7 @@ class _CheckpointsScreenState extends State<CheckpointsScreen> {
                 try {
                   await FlutterNfcKit.finish();
                 } catch (_) {}
-                if (mounted) Navigator.of(context, rootNavigator: true).pop();
+                if (mounted) Navigator.pop(context); // close only the dialog
               },
               child: Text('Cancel',
                   style: TextStyle(color: secondaryTextColor, fontSize: 14)),
@@ -774,16 +779,12 @@ class _CheckpointsScreenState extends State<CheckpointsScreen> {
 
   void _dismissNfcDialog() {
     if (mounted) {
-      Navigator.of(context, rootNavigator: true).popUntil((r) {
-        // pop the dialog only, not the whole screen
-        return r.isFirst || r.settings.name != null;
-      });
-      // simpler safe approach:
       try {
-        Navigator.of(context, rootNavigator: true).pop();
+        Navigator.of(context, rootNavigator: true).pop(); // just close the topmost dialog
       } catch (_) {}
     }
   }
+
 
   // ── Too-far dialog ────────────────────────────────────────────────────────
   void _showTooFarDialog({

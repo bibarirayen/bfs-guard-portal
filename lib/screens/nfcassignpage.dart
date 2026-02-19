@@ -69,69 +69,77 @@ class _NfcAssignPageState extends State<NfcAssignPage> {
     setState(() => scanning = true);
     String? nfcTagId;
 
+    NFCTag? tag;
+
     try {
-      NFCTag tag = await FlutterNfcKit.poll(
+      tag = await FlutterNfcKit.poll(
         timeout: const Duration(seconds: 20),
         iosMultipleTagMessage: 'Multiple tags detected. Present only one tag.',
         iosAlertMessage: 'Hold your iPhone near the NFC tag to assign it.',
       );
 
       nfcTagId = tag.id;
-      await Future.delayed(const Duration(milliseconds: 150));
 
       await FlutterNfcKit.writeNDEFRecords([
-        TextRecord(
-          language: 'en',
-          text: stopId.toString(),
-        ),
+        TextRecord(language: 'en', text: stopId.toString()),
       ]);
 
-      await FlutterNfcKit.finish(iosAlertMessage: 'NFC tag assigned successfully!');
-
-      final response = await apiService.post(
-        'stops/$stopId/nfc',
-        {'nfcTagId': nfcTagId},
-      );
-
-      if (response.statusCode == 200) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('NFC tag assigned successfully!'),
-              backgroundColor: Colors.green,
-            ),
-          );
-        }
-      } else {
-        throw Exception('Backend error: ${response.statusCode}');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('NFC tag assigned successfully!'),
+            backgroundColor: Colors.green,
+          ),
+        );
       }
     } catch (e) {
-      try {
-        await FlutterNfcKit.finish(iosErrorMessage: 'Failed to assign NFC tag.');
-      } catch (_) {}
+      String errMsg = 'Error scanning NFC tag.';
+      final errStr = e.toString().toLowerCase();
+      if (errStr.contains('user cancel') || errStr.contains('cancelled')) {
+        errMsg = 'Scan cancelled.';
+      } else if (errStr.contains('timeout')) {
+        errMsg = 'Timed out. Bring the tag closer.';
+      } else if (errStr.contains('session invalidated')) {
+        errMsg = 'NFC session lost. Try again.';
+      } else if (errStr.contains('ndef')) {
+        errMsg = 'Tag may not support NDEF.';
+      }
 
       if (mounted) {
-        String errorMsg = 'Error scanning/writing NFC. Please try again.';
-        final errStr = e.toString().toLowerCase();
-        if (errStr.contains('session invalidated') || errStr.contains('500')) {
-          errorMsg = 'NFC session lost. Hold the tag steady and try again.';
-        } else if (errStr.contains('timeout')) {
-          errorMsg = 'Timed out. Bring the tag closer and try again.';
-        } else if (errStr.contains('user cancel') || errStr.contains('cancelled')) {
-          errorMsg = 'Scan cancelled.';
-        } else if (errStr.contains('tag connection lost')) {
-          errorMsg = 'Tag moved away too quickly. Hold it steady and retry.';
-        } else if (errStr.contains('ndef')) {
-          errorMsg = 'This tag may not support NDEF. Try a different tag.';
-        }
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(errorMsg)),
+          SnackBar(content: Text(errMsg)),
         );
       }
     } finally {
+      try {
+        await FlutterNfcKit.finish(); // Always finish session, even on cancel
+      } catch (_) {}
       if (mounted) setState(() => scanning = false);
     }
+
+    // Send to backend if we actually got a tag
+    if (nfcTagId != null) {
+      try {
+        final response = await apiService.post(
+          'stops/$stopId/nfc',
+          {'nfcTagId': nfcTagId},
+        );
+
+        if (response.statusCode != 200 && mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Backend error: ${response.statusCode}')),
+          );
+        }
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Failed to save NFC tag: $e')),
+          );
+        }
+      }
+    }
   }
+
 
   Future<void> resetNfc(int stopId) async {
     // Confirm before resetting
