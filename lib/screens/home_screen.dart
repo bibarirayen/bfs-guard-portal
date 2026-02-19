@@ -41,7 +41,7 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
+class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver{
   int _selectedIndex = 0;
   String _shiftTime = "No shift today";
   bool _hasShiftToday = false;
@@ -113,7 +113,14 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void initState() {
     super.initState();
-
+    WidgetsBinding.instance.addObserver(this); // ✅ listen for app resume
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      final ok = await _ensureLocationPermission();
+      if (!ok) {
+        // After dialog closes (user went to settings), re-check on resume
+        // handled by didChangeAppLifecycleState
+      }
+    });
     Future<void> _requestNotificationPermission() async {
       if (await Permission.notification.isDenied) {
         await Permission.notification.request();
@@ -185,6 +192,8 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+
     _dashboardRefreshTimer?.cancel();
     _shiftButtonUpdateTimer?.cancel();
     // ── FIX 3: clear callback to prevent memory leak ──────────────────────
@@ -193,7 +202,21 @@ class _HomeScreenState extends State<HomeScreen> {
     print('🧹 Timers cleaned up');
     super.dispose();
   }
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      // User came back from Settings — re-check location permission
+      _checkLocationPermissionOnResume();
+    }
+  }
 
+  Future<void> _checkLocationPermissionOnResume() async {
+    final permission = await Geolocator.checkPermission();
+    if (permission != LocationPermission.always) {
+      // Still not "Always" — show the block screen again
+      if (mounted) setState(() {}); // triggers rebuild which shows block wall
+    }
+  }
   // ─────────────────────────────────────────────────────────────────────────
   // Restore tracking on app resume / hot-restart
   // ─────────────────────────────────────────────────────────────────────────
@@ -656,114 +679,78 @@ class _HomeScreenState extends State<HomeScreen> {
   /// Android: same but "always" is a separate runtime permission after
   ///   "while using" is granted.
   Future<bool> _ensureLocationPermission() async {
-    // 1. Check location service is on
-    final bool serviceEnabled =
-    await Geolocator.isLocationServiceEnabled();
+    // 1. Check GPS is on
+    final bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
     if (!serviceEnabled) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-              content: Text('Please turn on Location Services in Settings')),
-        );
-      }
-      await Geolocator.openLocationSettings();
+      await _showLocationBlockDialog(
+        title: 'Turn On Location Services',
+        message: 'GPS is disabled on your device. Please turn on Location Services to use this app.',
+        buttonLabel: 'Open Location Settings',
+        onTap: () => Geolocator.openLocationSettings(),
+      );
       return false;
     }
 
     LocationPermission permission = await Geolocator.checkPermission();
 
-    // 2. Never asked before → request (shows system dialog)
+    // 2. Never asked — request
     if (permission == LocationPermission.denied) {
       permission = await Geolocator.requestPermission();
     }
 
-    // 3. User hit "Don't Allow" permanently → send to Settings
-    if (permission == LocationPermission.deniedForever) {
-      if (mounted) {
-        await showDialog(
-          context: context,
-          builder: (ctx) => AlertDialog(
-            title: const Text('Location Permission Required'),
-            content: const Text(
-              'Location access was permanently denied. '
-                  'Please open Settings → Privacy & Security → Location Services '
-                  '→ [App Name] and select "Always".',
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(ctx),
-                child: const Text('Cancel'),
-              ),
-              ElevatedButton(
-                onPressed: () {
-                  Navigator.pop(ctx);
-                  openAppSettings();
-                },
-                child: const Text('Open Settings'),
-              ),
-            ],
-          ),
-        );
-      }
-      return false;
-    }
+    // 3. Already "Always" — good
+    if (permission == LocationPermission.always) return true;
 
-    // 4. "While Using" granted → ask for "Always" (iOS shows upgrade banner;
-    //    Android shows a separate system dialog)
-    if (permission == LocationPermission.whileInUse) {
-      if (Platform.isIOS) {
-        // Show explanation before the system upgrade banner appears
-        final proceed = await showDialog<bool>(
-          context: context,
-          builder: (ctx) => AlertDialog(
-            title: const Row(
-              children: [
-                Icon(Icons.location_on, color: Color(0xFF4F46E5)),
-                SizedBox(width: 8),
-                Text('Background Location'),
-              ],
-            ),
-            content: const Text(
-              'To track your patrol while the app is in the background, '
-                  'please select "Always" on the next screen.',
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(ctx, false),
-                child: const Text('Not Now'),
-              ),
-              ElevatedButton(
-                onPressed: () => Navigator.pop(ctx, true),
-                child: const Text('Continue'),
-              ),
-            ],
-          ),
-        );
-        if (proceed != true) {
-          // "While Using" is still acceptable — tracking works in foreground
-          return true;
-        }
-      }
-      // This call triggers the iOS "Change to Always Allow" banner
-      // or the Android background-location dialog
-      permission = await Geolocator.requestPermission();
-    }
-
-    // 5. Final check — "always" is ideal; "whileInUse" is acceptable fallback
-    if (permission == LocationPermission.always ||
-        permission == LocationPermission.whileInUse) {
-      return true;
-    }
-
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Location permission is required to start a shift.'),
-          backgroundColor: Colors.red,
-        ),
-      );
-    }
+    // 4. Permanently denied or only "While In Use" — block and send to settings
+    await _showLocationBlockDialog(
+      title: 'Location Set to "Always" Required',
+      message: 'This app requires location access set to "Always" for shift tracking and safety monitoring.\n\nGo to Settings → [App] → Location → select "Always".',
+      buttonLabel: 'Open Settings',
+      onTap: () => openAppSettings(),
+    );
     return false;
+  }
+
+  Future<void> _showLocationBlockDialog({
+    required String title,
+    required String message,
+    required String buttonLabel,
+    required VoidCallback onTap,
+  }) async {
+    if (!mounted) return;
+    await showDialog(
+      context: context,
+      barrierDismissible: false, // ✅ cannot dismiss by tapping outside
+      builder: (ctx) => WillPopScope(
+        onWillPop: () async => false, // ✅ back button does nothing
+        child: AlertDialog(
+          backgroundColor: const Color(0xFF1E293B),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: Row(children: [
+            const Icon(Icons.location_off, color: Colors.redAccent, size: 24),
+            const SizedBox(width: 8),
+            Expanded(child: Text(title, style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w700))),
+          ]),
+          content: Text(message, style: TextStyle(color: Colors.grey[400], fontSize: 14, height: 1.6)),
+          actions: [
+            ElevatedButton.icon(
+              onPressed: () {
+                Navigator.pop(ctx);
+                onTap();
+              },
+              icon: const Icon(Icons.settings, size: 18),
+              label: Text(buttonLabel),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF4F46E5),
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   /// Used by _restoreLiveTrackingIfNeeded (silent check, no UI dialogs)
