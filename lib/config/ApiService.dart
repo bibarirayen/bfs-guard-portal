@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:convert';
+import 'package:dio/dio.dart'; // add this import at top
 
 class ApiService {
   final String baseUrl = "https://api.blackfabricsecurity.com/api/";
@@ -23,6 +24,48 @@ class ApiService {
     return await http.get(Uri.parse("$baseUrl$endpoint"), headers: headers);
   }
 
+// Add this method to ApiService class:
+  Future<void> uploadReportDio(
+      Map<String, dynamic> payload,
+      List<File> files,
+      Function(int sent, int total) onProgress,
+      ) async {
+    final prefs = await SharedPreferences.getInstance();
+    final String? token = prefs.getString('jwt');
+
+    final dio = Dio();
+    dio.options.connectTimeout = const Duration(seconds: 30);
+    dio.options.sendTimeout = const Duration(minutes: 30);
+    dio.options.receiveTimeout = const Duration(minutes: 5);
+
+    final formData = FormData();
+    formData.fields.add(MapEntry('payload', jsonEncode(payload)));
+
+    for (final file in files) {
+      formData.files.add(MapEntry(
+        'files',
+        await MultipartFile.fromFile(
+          file.path,
+          filename: file.path.split('/').last,
+        ),
+      ));
+    }
+
+    final response = await dio.post(
+      '${baseUrl}reports/upload',
+      data: formData,
+      options: Options(
+        headers: {
+          if (token != null) 'Authorization': 'Bearer $token',
+        },
+      ),
+      onSendProgress: onProgress,
+    );
+
+    if (response.statusCode != 200 && response.statusCode != 201) {
+      throw Exception('Upload failed: ${response.statusCode}');
+    }
+  }
   Future<http.Response> post(String endpoint, Map<String, dynamic> body) async {
     final headers = await getHeaders();
     return await http.post(
