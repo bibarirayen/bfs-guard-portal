@@ -18,6 +18,9 @@ class _ConfigurePasswordScreenState extends State<ConfigurePasswordScreen> {
   final TextEditingController passwordController = TextEditingController();
   final TextEditingController confirmController = TextEditingController();
 
+  // ✅ SMS consent state
+  bool _smsConsentChecked = false;
+
   void _savePassword() async {
     final password = passwordController.text;
     final confirm = confirmController.text;
@@ -36,6 +39,17 @@ class _ConfigurePasswordScreenState extends State<ConfigurePasswordScreen> {
       return;
     }
 
+    // ✅ Block submission if consent not given
+    if (!_smsConsentChecked) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text("Please agree to receive SMS alerts to continue."),
+          backgroundColor: Colors.redAccent,
+        ),
+      );
+      return;
+    }
+
     final response = await http.put(
       Uri.parse(
         "https://api.blackfabricsecurity.com/api/users/newpassword/${widget.userId}",
@@ -47,22 +61,16 @@ class _ConfigurePasswordScreenState extends State<ConfigurePasswordScreen> {
     );
 
     if (response.statusCode == 200) {
-      final data = jsonDecode(response.body);
-
-      // 🔐 SAVE NEW TOKEN
-      // OPTIONAL: clear any old session
       final prefs = await SharedPreferences.getInstance();
       await prefs.remove('jwt');
 
       if (!mounted) return;
 
-// Go back to login screen
       Navigator.pushAndRemoveUntil(
         context,
         MaterialPageRoute(builder: (_) => const LoginScreen()),
-            (route) => false, // clears navigation stack
+            (route) => false,
       );
-
     } else {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text("Error: ${response.body}")),
@@ -75,7 +83,7 @@ class _ConfigurePasswordScreenState extends State<ConfigurePasswordScreen> {
     return Scaffold(
       backgroundColor: Colors.blue.shade50,
       body: Center(
-        child: Padding(
+        child: SingleChildScrollView(
           padding: const EdgeInsets.all(30),
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
@@ -97,6 +105,82 @@ class _ConfigurePasswordScreenState extends State<ConfigurePasswordScreen> {
                 decoration: const InputDecoration(labelText: "Confirm Password"),
               ),
               const SizedBox(height: 30),
+
+              // ─────────────────────────────────────────────────────────────
+              // ✅ SMS CONSENT CHECKBOX (required before saving)
+              // ─────────────────────────────────────────────────────────────
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: _smsConsentChecked ? Colors.blue.shade400 : Colors.grey.shade300,
+                    width: 1.5,
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.05),
+                      blurRadius: 8,
+                      offset: const Offset(0, 2),
+                    ),
+                  ],
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // Opt-in description header
+                    const Text(
+                      "SMS Alert Consent",
+                      style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: Color(0xFF1E293B)),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      "Users opt in through the mobile application during their first login. "
+                          "Before activating SMS alerts, users must check a dedicated consent box agreeing "
+                          "to receive emergency SMS notifications. The opt-in checkbox is separate from other "
+                          "agreements and clearly states that message frequency may vary, message and data rates "
+                          "may apply, and that users can reply STOP to opt out at any time.",
+                      style: TextStyle(fontSize: 12, color: Colors.grey.shade600, height: 1.5),
+                    ),
+                    const SizedBox(height: 14),
+                    const Divider(height: 1),
+                    const SizedBox(height: 14),
+
+                    // ✅ The actual consent checkbox row
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        SizedBox(
+                          width: 24,
+                          height: 24,
+                          child: Checkbox(
+                            value: _smsConsentChecked,
+                            activeColor: Colors.blue.shade600,
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
+                            onChanged: (val) => setState(() => _smsConsentChecked = val ?? false),
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: GestureDetector(
+                            onTap: () => setState(() => _smsConsentChecked = !_smsConsentChecked),
+                            child: const Text(
+                              "I agree to receive emergency SMS alerts from Black Fabric Security. "
+                                  "Message frequency may vary. Standard message and data rates may apply. "
+                                  "Reply STOP to opt out. Reply HELP for assistance. "
+                                  "Your mobile information will not be sold or shared for marketing purposes.",
+                              style: TextStyle(fontSize: 12, color: Color(0xFF374151), height: 1.6),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+
+              const SizedBox(height: 24),
               ElevatedButton(
                 onPressed: _savePassword,
                 child: const Text("Save"),
