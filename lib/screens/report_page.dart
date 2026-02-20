@@ -1,4 +1,4 @@
-// file: lib/pages/report_page.dart
+// file: lib/screens/report_page.dart
 import 'dart:convert';
 import 'dart:io';
 import 'package:crossplatformblackfabric/config/ApiService.dart';
@@ -259,6 +259,12 @@ class _ReportPageState extends State<ReportPage> {
   // STATE
   // ─────────────────────────────────────────────────────────────────────────
   final List<File> _mediaFiles = [];
+
+  // ✅ NEW: tracks which index is currently being loaded (null = none loading)
+  int? _loadingMediaIndex;
+  // ✅ NEW: true while any pick operation is in progress (blocks buttons)
+  bool _isPickingMedia = false;
+
   String _selectedReportType = "Incident Report";
   final List<String> _reportTypes = [
     "Incident Report",
@@ -316,6 +322,8 @@ class _ReportPageState extends State<ReportPage> {
       _vehicleTowed = false;
       _uploadProgress = 0.0;
       _isSubmitting = false;
+      _loadingMediaIndex = null;
+      _isPickingMedia = false;
     });
 
     for (final c in [
@@ -337,7 +345,7 @@ class _ReportPageState extends State<ReportPage> {
   }
 
   // ─────────────────────────────────────────────────────────────────────────
-  // IMAGE / VIDEO PICKING
+  // IMAGE / VIDEO PICKING  — with per-item loading indicator
   // ─────────────────────────────────────────────────────────────────────────
   Future<File> _compressImage(File file) async {
     final dir = await getTemporaryDirectory();
@@ -351,24 +359,53 @@ class _ReportPageState extends State<ReportPage> {
   }
 
   Future<void> _pickVideo(ImageSource source) async {
+    if (_isPickingMedia) return; // block if already picking
     final granted = await _requestPermissions(source, forVideo: true);
     if (!granted) return;
+
+    // ✅ Add a placeholder "loading" slot at the end of the grid
+    final int placeholderIndex = _mediaFiles.length;
+    setState(() {
+      _isPickingMedia = true;
+      _loadingMediaIndex = placeholderIndex;
+    });
+
     try {
       final XFile? pickedFile = await _picker.pickVideo(
         source: source, maxDuration: const Duration(minutes: 60),
       );
-      if (pickedFile == null) return;
+
+      if (pickedFile == null) {
+        // user cancelled
+        setState(() { _isPickingMedia = false; _loadingMediaIndex = null; });
+        return;
+      }
 
       try {
         final fileSize = await pickedFile.length();
         final fileSizeMB = fileSize / (1024 * 1024);
-        if (fileSizeMB > 1000) { _snackError('Video exceeds 1GB limit.'); return; }
-      } catch (_) { /* Can't read size on large files on iOS — just proceed */ }
+        if (fileSizeMB > 1000) {
+          setState(() { _isPickingMedia = false; _loadingMediaIndex = null; });
+          _snackError('Video exceeds 1GB limit.');
+          return;
+        }
+      } catch (_) { /* large file on iOS — skip size check */ }
 
       final File videoFile = File(pickedFile.path);
-      if (!await videoFile.exists()) { _snackError('Could not access the selected video.'); return; }
-      setState(() => _mediaFiles.add(videoFile));
+      if (!await videoFile.exists()) {
+        setState(() { _isPickingMedia = false; _loadingMediaIndex = null; });
+        _snackError('Could not access the selected video.');
+        return;
+      }
+
+      // ✅ File ready — add it and clear the loading state
+      setState(() {
+        _mediaFiles.add(videoFile);
+        _isPickingMedia = false;
+        _loadingMediaIndex = null;
+      });
     } catch (e) {
+      setState(() { _isPickingMedia = false; _loadingMediaIndex = null; });
       debugPrint('Video pick error: $e');
       final s = e.toString().toLowerCase();
       if (s.contains('permission') || s.contains('denied')) {
@@ -381,18 +418,44 @@ class _ReportPageState extends State<ReportPage> {
   }
 
   Future<void> _pickImage(ImageSource source) async {
+    if (_isPickingMedia) return; // block if already picking
     final granted = await _requestPermissions(source, forVideo: false);
     if (!granted) return;
+
+    // ✅ Add a placeholder "loading" slot at the end of the grid
+    final int placeholderIndex = _mediaFiles.length;
+    setState(() {
+      _isPickingMedia = true;
+      _loadingMediaIndex = placeholderIndex;
+    });
+
     try {
       final XFile? pickedFile = await _picker.pickImage(
         source: source, imageQuality: 85, maxWidth: 1920, maxHeight: 1920,
       );
-      if (pickedFile == null) return;
+
+      if (pickedFile == null) {
+        setState(() { _isPickingMedia = false; _loadingMediaIndex = null; });
+        return;
+      }
+
       final File tempFile = File(pickedFile.path);
-      if (!await tempFile.exists()) { _snackError('Could not access the selected image.'); return; }
+      if (!await tempFile.exists()) {
+        setState(() { _isPickingMedia = false; _loadingMediaIndex = null; });
+        _snackError('Could not access the selected image.');
+        return;
+      }
+
+      // ✅ Compress while the spinner is showing
       final File compressedFile = await _compressImage(tempFile);
-      setState(() => _mediaFiles.add(compressedFile));
+
+      setState(() {
+        _mediaFiles.add(compressedFile);
+        _isPickingMedia = false;
+        _loadingMediaIndex = null;
+      });
     } catch (e) {
+      setState(() { _isPickingMedia = false; _loadingMediaIndex = null; });
       debugPrint('Image pick error: $e');
       final s = e.toString().toLowerCase();
       if (s.contains('permission') || s.contains('denied')) {
@@ -467,7 +530,6 @@ class _ReportPageState extends State<ReportPage> {
 
     try {
       if (_mediaFiles.isNotEmpty) {
-        // ✅ Dio streaming upload — streams from disk, no RAM overload
         await api.uploadReportDio(
           payload,
           _mediaFiles,
@@ -478,7 +540,6 @@ class _ReportPageState extends State<ReportPage> {
           },
         );
       } else {
-        // ✅ Normal JSON post when no files
         final response = await api.post('reports', payload);
         if (response.statusCode != 200 && response.statusCode != 201) {
           throw Exception("Failed: ${response.statusCode}");
@@ -490,7 +551,7 @@ class _ReportPageState extends State<ReportPage> {
           backgroundColor: Colors.greenAccent,
           content: Text("Report submitted successfully!", style: TextStyle(color: Colors.black)),
         ));
-        // ✅ RESET PAGE after success
+        // ✅ Reset the entire page after success
         _resetPage();
       }
     } on DioException catch (e) {
@@ -701,7 +762,8 @@ class _ReportPageState extends State<ReportPage> {
                                         _buildImageButton(icon: Icons.photo_library_rounded, label: "Gallery", onTap: () => _pickImage(ImageSource.gallery), color: const Color(0xFF8B5CF6)),
                                       ],
                                     ),
-                                    if (_mediaFiles.isNotEmpty) ...[
+                                    // ✅ Show grid + loading placeholder
+                                    if (_mediaFiles.isNotEmpty || _loadingMediaIndex != null) ...[
                                       const SizedBox(height: 20),
                                       _buildImageGrid(),
                                     ],
@@ -717,7 +779,7 @@ class _ReportPageState extends State<ReportPage> {
 
                     const SizedBox(height: 16),
 
-                    // ✅ SUBMIT BUTTON WITH PROGRESS BAR
+                    // ✅ SUBMIT BUTTON WITH REAL PROGRESS BAR
                     Container(
                       decoration: BoxDecoration(
                         borderRadius: BorderRadius.circular(20),
@@ -750,7 +812,7 @@ class _ReportPageState extends State<ReportPage> {
                                 ClipRRect(
                                   borderRadius: BorderRadius.circular(4),
                                   child: LinearProgressIndicator(
-                                    // ✅ null = indeterminate spinner, value = real % progress
+                                    // null = spinning indeterminate, value = real fill bar
                                     value: _uploadProgress > 0 ? _uploadProgress : null,
                                     backgroundColor: Colors.white30,
                                     valueColor: const AlwaysStoppedAnimation<Color>(Colors.white),
@@ -786,26 +848,31 @@ class _ReportPageState extends State<ReportPage> {
   // WIDGETS
   // ─────────────────────────────────────────────────────────────────────────
   Widget _buildImageButton({required IconData icon, required String label, required VoidCallback onTap, required Color color}) {
+    // ✅ Dim button while picking is in progress
+    final bool disabled = _isPickingMedia;
     return Expanded(
-      child: Container(
-        margin: const EdgeInsets.symmetric(horizontal: 4),
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(16),
-          color: color.withOpacity(0.1),
-          border: Border.all(color: color.withOpacity(0.3), width: 1),
-        ),
-        child: Material(
-          color: Colors.transparent,
-          child: InkWell(
-            onTap: onTap,
+      child: Opacity(
+        opacity: disabled ? 0.4 : 1.0,
+        child: Container(
+          margin: const EdgeInsets.symmetric(horizontal: 4),
+          decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(16),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(vertical: 16),
-              child: Column(children: [
-                Icon(icon, size: 28, color: color),
-                const SizedBox(height: 8),
-                Text(label, style: TextStyle(color: color, fontWeight: FontWeight.w600, fontSize: 12), textAlign: TextAlign.center),
-              ]),
+            color: color.withOpacity(0.1),
+            border: Border.all(color: color.withOpacity(0.3), width: 1),
+          ),
+          child: Material(
+            color: Colors.transparent,
+            child: InkWell(
+              onTap: disabled ? null : onTap,
+              borderRadius: BorderRadius.circular(16),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 16),
+                child: Column(children: [
+                  Icon(icon, size: 28, color: color),
+                  const SizedBox(height: 8),
+                  Text(label, style: TextStyle(color: color, fontWeight: FontWeight.w600, fontSize: 12), textAlign: TextAlign.center),
+                ]),
+              ),
             ),
           ),
         ),
@@ -813,18 +880,61 @@ class _ReportPageState extends State<ReportPage> {
     );
   }
 
+  // ✅ Grid now shows a loading placeholder tile while picking
   Widget _buildImageGrid() {
+    // Total items = real files + 1 placeholder if loading
+    final int totalItems = _mediaFiles.length + (_loadingMediaIndex != null ? 1 : 0);
+
     return GridView.builder(
       shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
-      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: 3, crossAxisSpacing: 12, mainAxisSpacing: 12),
-      itemCount: _mediaFiles.length,
+      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 3, crossAxisSpacing: 12, mainAxisSpacing: 12,
+      ),
+      itemCount: totalItems,
       itemBuilder: (context, index) {
-        File file = _mediaFiles[index];
-        String ext = file.path.split('.').last.toLowerCase();
-        Widget mediaWidget = ['mp4', 'mov', 'avi'].contains(ext)
-            ? Container(color: Colors.black, child: const Center(child: Icon(Icons.play_circle_fill, size: 40, color: Colors.white)))
+        // ✅ Last tile is the loading placeholder
+        if (_loadingMediaIndex != null && index == _mediaFiles.length) {
+          return ClipRRect(
+            borderRadius: BorderRadius.circular(12),
+            child: Container(
+              decoration: BoxDecoration(
+                color: _isDarkMode ? const Color(0xFF374151) : Colors.grey[200],
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: _primaryColor.withOpacity(0.4), width: 1.5),
+              ),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  SizedBox(
+                    width: 28,
+                    height: 28,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2.5,
+                      valueColor: AlwaysStoppedAnimation<Color>(_primaryColor),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Loading...',
+                    style: TextStyle(color: _secondaryTextColor, fontSize: 10, fontWeight: FontWeight.w500),
+                  ),
+                ],
+              ),
+            ),
+          );
+        }
+
+        // ✅ Normal file tile
+        final File file = _mediaFiles[index];
+        final String ext = file.path.split('.').last.toLowerCase();
+        final Widget mediaWidget = ['mp4', 'mov', 'avi'].contains(ext)
+            ? Container(
+          color: Colors.black,
+          child: const Center(child: Icon(Icons.play_circle_fill, size: 40, color: Colors.white)),
+        )
             : Image.file(file, fit: BoxFit.cover);
+
         return Stack(
           fit: StackFit.expand,
           children: [
@@ -835,8 +945,11 @@ class _ReportPageState extends State<ReportPage> {
                 onTap: () => setState(() => _mediaFiles.removeAt(index)),
                 child: Container(
                   padding: const EdgeInsets.all(4),
-                  decoration: BoxDecoration(color: Colors.red, shape: BoxShape.circle,
-                      boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.3), blurRadius: 4, offset: const Offset(0, 2))]),
+                  decoration: BoxDecoration(
+                    color: Colors.red,
+                    shape: BoxShape.circle,
+                    boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.3), blurRadius: 4, offset: const Offset(0, 2))],
+                  ),
                   child: const Icon(Icons.close, size: 16, color: Colors.white),
                 ),
               ),
