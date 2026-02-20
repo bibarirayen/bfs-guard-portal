@@ -358,12 +358,26 @@ class _ReportPageState extends State<ReportPage> {
     return File(compressedXFile.path);
   }
 
+  /// Copies a file (especially content:// URIs on Android) to a real temp path.
+  /// This is what makes gallery videos fast — instead of Dio slowly streaming
+  /// through Android's content resolver during upload, we copy once up front
+  /// while the spinner is already showing, then upload from a real file path.
+  Future<File> _copyToTempFile(XFile xfile) async {
+    final dir = await getTemporaryDirectory();
+    // Preserve the original extension so MIME detection works later
+    final originalName = xfile.path.split('/').last.split('\\').last;
+    final ext = originalName.contains('.') ? originalName.split('.').last : 'mp4';
+    final destPath = '${dir.path}/${DateTime.now().millisecondsSinceEpoch}.$ext';
+    // XFile.saveTo copies efficiently using the platform's native copy
+    await xfile.saveTo(destPath);
+    return File(destPath);
+  }
+
   Future<void> _pickVideo(ImageSource source) async {
-    if (_isPickingMedia) return; // block if already picking
+    if (_isPickingMedia) return;
     final granted = await _requestPermissions(source, forVideo: true);
     if (!granted) return;
 
-    // ✅ Add a placeholder "loading" slot at the end of the grid
     final int placeholderIndex = _mediaFiles.length;
     setState(() {
       _isPickingMedia = true;
@@ -376,29 +390,25 @@ class _ReportPageState extends State<ReportPage> {
       );
 
       if (pickedFile == null) {
-        // user cancelled
         setState(() { _isPickingMedia = false; _loadingMediaIndex = null; });
         return;
       }
 
+      // ✅ Copy to real temp path WHILE spinner is showing.
+      // This resolves content:// URIs on Android immediately so upload is fast.
+      final File videoFile = await _copyToTempFile(pickedFile);
+
+      // Check size on the real file now that we have a proper path
       try {
-        final fileSize = await pickedFile.length();
-        final fileSizeMB = fileSize / (1024 * 1024);
+        final fileSizeMB = await videoFile.length() / (1024 * 1024);
         if (fileSizeMB > 1000) {
+          await videoFile.delete(); // clean up temp
           setState(() { _isPickingMedia = false; _loadingMediaIndex = null; });
           _snackError('Video exceeds 1GB limit.');
           return;
         }
-      } catch (_) { /* large file on iOS — skip size check */ }
+      } catch (_) {}
 
-      final File videoFile = File(pickedFile.path);
-      if (!await videoFile.exists()) {
-        setState(() { _isPickingMedia = false; _loadingMediaIndex = null; });
-        _snackError('Could not access the selected video.');
-        return;
-      }
-
-      // ✅ File ready — add it and clear the loading state
       setState(() {
         _mediaFiles.add(videoFile);
         _isPickingMedia = false;

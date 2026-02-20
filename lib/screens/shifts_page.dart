@@ -32,7 +32,6 @@ class _ShiftsPageState extends State<ShiftsPage> {
     final api = ApiService();
 
     try {
-      // ✅ Updated endpoint to fetch openShift assignments
       final response = await api.get('assignments/OpenShift');
 
       if (response.statusCode == 200) {
@@ -43,25 +42,23 @@ class _ShiftsPageState extends State<ShiftsPage> {
             final shift = assignment["shift"];
             final client = shift["client"];
             final site = shift["site"];
-            final fromDate = assignment["fromDate"]; // e.g., "2026-01-21"
+            final fromDate = assignment["fromDate"];
             final toDate = assignment["toDate"];
             final start = shift["startTime"];
             final end = shift["endTime"];
 
             int duration = 0;
             if (start != null && end != null) {
-              // Combine with a fake date so DateTime.parse works
               final startDT = DateTime.parse('${assignment["fromDate"]}T$start');
               final endDT = DateTime.parse('${assignment["fromDate"]}T$end');
               duration = endDT.difference(startDT).inHours;
             }
 
-
             return {
               "client": client?["name"] ?? "Unknown Client",
               "site": site?["name"] ?? "Unknown Site",
-              "description": "", // optional
-              "contact": "", // optional
+              "description": "",
+              "contact": "",
               "from": start ?? "",
               "to": end ?? "",
               "fromDate": fromDate ?? "",
@@ -71,9 +68,8 @@ class _ShiftsPageState extends State<ShiftsPage> {
                 (site?["latitude"] ?? 36.81897).toDouble(),
                 (site?["longitude"] ?? 10.16579).toDouble(),
               ),
-              "assignmentId": assignment["id"], // optional if needed
+              "assignmentId": assignment["id"],
             };
-
           }).toList();
         });
       } else {
@@ -157,18 +153,16 @@ class _ShiftsPageState extends State<ShiftsPage> {
                 ),
 
                 const SizedBox(height: 8),
-
                 _infoRow("From", shift["from"]),
                 _infoRow("To", shift["to"]),
 
-
                 const SizedBox(height: 12),
                 Text("Location",
-                    style: TextStyle(
-                        fontWeight: FontWeight.bold, color: _textColor)),
+                    style: TextStyle(fontWeight: FontWeight.bold, color: _textColor)),
 
                 const SizedBox(height: 8),
 
+                // ✅ FIXED MAP — single TileLayer that swaps based on isSatellite
                 Container(
                   height: 260,
                   decoration: BoxDecoration(
@@ -179,43 +173,37 @@ class _ShiftsPageState extends State<ShiftsPage> {
                     borderRadius: BorderRadius.circular(20),
                     child: Stack(
                       children: [
-                        InkWell(
-                          onTap: () => _openInMaps(shift["location"]),
-                          child: FlutterMap(
-                            mapController: mapController,
-                            options: MapOptions(
-                              initialCenter: shift["location"],
-                              initialZoom: 15,
+                        FlutterMap(
+                          mapController: mapController,
+                          options: MapOptions(
+                            initialCenter: shift["location"],
+                            initialZoom: 15,
+                          ),
+                          children: [
+                            // ✅ ONE TileLayer — switches URL based on isSatellite
+                            TileLayer(
+                              urlTemplate: isSatellite
+                                  ? "https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
+                                  : "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
                             ),
-                            children: [
-                              if (!isSatellite)
-                                TileLayer(
-                                  urlTemplate:
-                                  "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
-                                ),
-                              if (isSatellite) ...[
-                                TileLayer(
-                                  urlTemplate: isSatellite
-                                      ? "https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
-                                      : "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
-                                ),
-                              ],
-                              MarkerLayer(
-                                markers: [
-                                  Marker(
-                                    point: shift["location"],
-                                    width: 50,
-                                    height: 50,
+                            MarkerLayer(
+                              markers: [
+                                Marker(
+                                  point: shift["location"],
+                                  width: 50,
+                                  height: 50,
+                                  child: GestureDetector(
+                                    onTap: () => _openInMaps(shift["location"]),
                                     child: const Icon(
                                       Icons.location_on,
                                       color: Colors.red,
                                       size: 40,
                                     ),
                                   ),
-                                ],
-                              ),
-                            ],
-                          ),
+                                ),
+                              ],
+                            ),
+                          ],
                         ),
 
                         // SATELLITE TOGGLE
@@ -224,6 +212,7 @@ class _ShiftsPageState extends State<ShiftsPage> {
                           right: 10,
                           child: FloatingActionButton(
                             mini: true,
+                            heroTag: 'satellite_toggle',
                             backgroundColor: Colors.black87,
                             onPressed: () {
                               setModalState(() {
@@ -243,12 +232,12 @@ class _ShiftsPageState extends State<ShiftsPage> {
                           right: 10,
                           child: FloatingActionButton(
                             mini: true,
+                            heroTag: 'center_map',
                             backgroundColor: Colors.black87,
                             onPressed: () {
                               mapController.move(shift["location"], 15);
                             },
-                            child: const Icon(Icons.my_location,
-                                color: Colors.white),
+                            child: const Icon(Icons.my_location, color: Colors.white),
                           ),
                         ),
                       ],
@@ -277,12 +266,10 @@ class _ShiftsPageState extends State<ShiftsPage> {
                               return;
                             }
                             final api = ApiService();
-                            // TODO: Put your API URL here
                             final response = await api.put(
                               'assignments/assign/${shift["assignmentId"]}',
-                              {"userId": userId}, // ✅ this works with your ApiService.put
+                              {"userId": userId},
                             );
-
 
                             if (response.statusCode == 200) {
                               AwesomeDialog(
@@ -290,14 +277,18 @@ class _ShiftsPageState extends State<ShiftsPage> {
                                 dialogType: DialogType.success,
                                 title: 'Done',
                                 desc: 'You will be contacted by email for the details',
-                                btnOkOnPress: () {},
+                                // ✅ Close bottom sheet AND refresh list when user taps OK
+                                btnOkOnPress: () {
+                                  Navigator.pop(context); // close bottom sheet
+                                  _fetchShifts();         // refresh the list
+                                },
                               ).show();
                             } else if (response.statusCode == 409) {
                               AwesomeDialog(
                                 context: context,
                                 dialogType: DialogType.warning,
                                 title: 'Conflict',
-                                desc: response.body, // shows backend message: Guard is already assigned...
+                                desc: response.body,
                                 btnOkOnPress: () {},
                               ).show();
                             } else {
@@ -309,7 +300,6 @@ class _ShiftsPageState extends State<ShiftsPage> {
                                 btnOkOnPress: () {},
                               ).show();
                             }
-
                           } catch (e) {
                             debugPrint("ERROR SENDING REQUEST: $e");
                           }
@@ -330,7 +320,6 @@ class _ShiftsPageState extends State<ShiftsPage> {
 
                       const SizedBox(height: 10),
 
-                      // ✅ Open in Google Maps / Apple Maps
                       ElevatedButton.icon(
                         onPressed: () => _openInMaps(shift["location"]),
                         icon: const Icon(Icons.map, color: Colors.white),
@@ -348,13 +337,9 @@ class _ShiftsPageState extends State<ShiftsPage> {
                       ),
 
                       const SizedBox(height: 10),
-
-                      // ✅ Checkpoint button (functionality can be added later)
-
                     ],
                   ),
                 ),
-
               ],
             ),
           );
@@ -394,18 +379,15 @@ class _ShiftsPageState extends State<ShiftsPage> {
         ),
         child: Row(
           children: [
-            const Icon(Icons.work_outline,
-                size: 32, color: Color(0xFF4F46E5)),
+            const Icon(Icons.work_outline, size: 32, color: Color(0xFF4F46E5)),
             const SizedBox(width: 16),
             Expanded(
               child: Text(
                 "${shift["client"]} - ${shift["site"]}",
-                style: TextStyle(
-                    fontWeight: FontWeight.bold, color: _textColor),
+                style: TextStyle(fontWeight: FontWeight.bold, color: _textColor),
               ),
             ),
-            Icon(Icons.arrow_forward_ios,
-                size: 18, color: _secondaryTextColor),
+            Icon(Icons.arrow_forward_ios, size: 18, color: _secondaryTextColor),
           ],
         ),
       ),

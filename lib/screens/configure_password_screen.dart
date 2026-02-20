@@ -131,16 +131,16 @@ class _ConfigurePasswordScreenState extends State<ConfigurePasswordScreen> {
                   children: [
                     // Opt-in description header
                     const Text(
-                      "SMS Alert Consent",
+                      "Emergency SMS Alert Consent",
                       style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: Color(0xFF1E293B)),
                     ),
                     const SizedBox(height: 8),
                     Text(
-                      "Users opt in through the mobile application during their first login. "
-                          "Before activating SMS alerts, users must check a dedicated consent box agreeing "
-                          "to receive emergency SMS notifications. The opt-in checkbox is separate from other "
-                          "agreements and clearly states that message frequency may vary, message and data rates "
-                          "may apply, and that users can reply STOP to opt out at any time.",
+                      "I agree to receive emergency security SMS alerts from Black Fabric Security regarding my protected account or monitored location. "
+                          "Message frequency varies based on security activity. "
+                          "Standard message and data rates may apply. "
+                          "Reply STOP to opt out at any time. Reply HELP for assistance. "
+                          "My mobile number will not be sold or shared for promotional or marketing purposes.",
                       style: TextStyle(fontSize: 12, color: Colors.grey.shade600, height: 1.5),
                     ),
                     const SizedBox(height: 14),

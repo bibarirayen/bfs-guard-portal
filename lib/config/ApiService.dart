@@ -3,7 +3,8 @@ import 'dart:io';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:convert';
-import 'package:dio/dio.dart'; // add this import at top
+import 'package:dio/dio.dart';
+import 'package:http_parser/http_parser.dart'; // ✅ for MediaType
 
 class ApiService {
   final String baseUrl = "https://api.blackfabricsecurity.com/api/";
@@ -14,7 +15,7 @@ class ApiService {
 
     return {
       "Content-Type": "application/json",
-      if (token != null) "Authorization": "Bearer $token", // 🔑 add JWT
+      if (token != null) "Authorization": "Bearer $token",
     };
   }
 
@@ -24,7 +25,24 @@ class ApiService {
     return await http.get(Uri.parse("$baseUrl$endpoint"), headers: headers);
   }
 
-// Add this method to ApiService class:
+  // ✅ Returns the correct MediaType for a file based on its extension.
+  // Without this, Multer on the backend gets no content-type and rejects the file.
+  MediaType _mediaTypeForFile(String path) {
+    final ext = path.split('.').last.toLowerCase();
+    switch (ext) {
+      case 'mp4':  return MediaType('video', 'mp4');
+      case 'mov':  return MediaType('video', 'quicktime');
+      case 'avi':  return MediaType('video', 'x-msvideo');
+      case 'mkv':  return MediaType('video', 'x-matroska');
+      case 'jpg':
+      case 'jpeg': return MediaType('image', 'jpeg');
+      case 'png':  return MediaType('image', 'png');
+      case 'heic': return MediaType('image', 'heic');
+      case 'webp': return MediaType('image', 'webp');
+      default:     return MediaType('application', 'octet-stream');
+    }
+  }
+
   Future<void> uploadReportDio(
       Map<String, dynamic> payload,
       List<File> files,
@@ -36,17 +54,22 @@ class ApiService {
     final dio = Dio();
     dio.options.connectTimeout = const Duration(seconds: 30);
     dio.options.sendTimeout = const Duration(minutes: 30);
-    dio.options.receiveTimeout = const Duration(minutes: 5);
+    // ✅ Receive timeout bumped — server needs time to process + respond after upload
+    dio.options.receiveTimeout = const Duration(minutes: 10);
 
     final formData = FormData();
     formData.fields.add(MapEntry('payload', jsonEncode(payload)));
 
     for (final file in files) {
+      final filename = file.path.split('/').last;
+      final mediaType = _mediaTypeForFile(file.path); // ✅ explicit MIME type
+
       formData.files.add(MapEntry(
         'files',
         await MultipartFile.fromFile(
           file.path,
-          filename: file.path.split('/').last,
+          filename: filename,
+          contentType: mediaType, // ✅ this is what fixes the 3% error
         ),
       ));
     }
@@ -58,6 +81,8 @@ class ApiService {
         headers: {
           if (token != null) 'Authorization': 'Bearer $token',
         },
+        // ✅ Tell server what we're sending
+        contentType: 'multipart/form-data',
       ),
       onSendProgress: onProgress,
     );
