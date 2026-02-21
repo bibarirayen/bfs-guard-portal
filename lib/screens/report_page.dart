@@ -10,6 +10,7 @@ import 'package:flutter_image_compress/flutter_image_compress.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:dio/dio.dart';
+import 'package:video_compress/video_compress.dart';
 
 class ReportPage extends StatefulWidget {
   const ReportPage({super.key});
@@ -362,6 +363,19 @@ class _ReportPageState extends State<ReportPage> {
     return File(result.path);
   }
 
+  // Compress video — shrinks a 14MB raw video to ~1-3MB before upload.
+  // MediumQuality = 720p max. The spinner stays visible the whole time.
+  Future<File> _compressVideo(File file) async {
+    final MediaInfo? info = await VideoCompress.compressVideo(
+      file.path,
+      quality: VideoQuality.MediumQuality,
+      deleteOrigin: false,
+      includeAudio: true,
+    );
+    if (info == null || info.file == null) return file; // fallback to original if compress fails
+    return info.file!;
+  }
+
   Future<void> _pickVideo(ImageSource source) async {
     if (_isPickingMedia) return;
     final granted = await _requestPermissions(source, forVideo: true);
@@ -383,8 +397,8 @@ class _ReportPageState extends State<ReportPage> {
         return;
       }
 
-      // Use the path directly — no pre-copy. Dio streams from the original path.
-      final File videoFile = File(pickedFile.path);
+      // Compress while the spinner shows — turns 14MB → ~1-3MB before upload.
+      final File videoFile = await _compressVideo(File(pickedFile.path));
 
       setState(() {
         _mediaFiles.add(videoFile);

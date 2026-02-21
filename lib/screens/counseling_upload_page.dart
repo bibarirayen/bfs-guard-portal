@@ -7,6 +7,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:video_player/video_player.dart';
+import 'package:video_compress/video_compress.dart';
 import '../services/counseling_service.dart';
 
 class CounselingUploadPage extends StatefulWidget {
@@ -150,6 +151,21 @@ class _CounselingUploadPageState extends State<CounselingUploadPage> {
     }
   }
 
+  // ── Compress video ────────────────────────────────────────────────────────────
+
+  // Compress video — shrinks a 14MB raw video to ~1-3MB before upload.
+  // MediumQuality = 720p max. The spinner stays visible the whole time.
+  Future<File> _compressVideo(File file) async {
+    final MediaInfo? info = await VideoCompress.compressVideo(
+      file.path,
+      quality: VideoQuality.MediumQuality,
+      deleteOrigin: false,
+      includeAudio: true,
+    );
+    if (info == null || info.file == null) return file;
+    return info.file!;
+  }
+
   // ── Pick video ─────────────────────────────────────────────────────────────
 
   Future<void> _pickVideo(ImageSource source) async {
@@ -162,8 +178,9 @@ class _CounselingUploadPageState extends State<CounselingUploadPage> {
       final XFile? picked = await _picker.pickVideo(source: source, maxDuration: const Duration(minutes: 60));
       if (picked == null) { setState(() { _isPickingMedia = false; _loadingMediaIndex = null; }); return; }
 
-      // No pre-copy — use the path directly. Dio handles content:// URIs fine.
-      setState(() { _files.add(File(picked.path)); _isPickingMedia = false; _loadingMediaIndex = null; });
+      // Compress while the spinner shows — turns 14MB → ~1-3MB before upload.
+      final File videoFile = await _compressVideo(File(picked.path));
+      setState(() { _files.add(videoFile); _isPickingMedia = false; _loadingMediaIndex = null; });
     } catch (e) {
       setState(() { _isPickingMedia = false; _loadingMediaIndex = null; });
       if (!e.toString().toLowerCase().contains('cancel')) _snack('Could not load video');
