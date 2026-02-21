@@ -184,7 +184,9 @@ class _ShiftsPageState extends State<ShiftsPage> {
                             TileLayer(
                               urlTemplate: isSatellite
                                   ? "https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
-                                  : "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
+                                  : "https://{s}.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png",
+                              subdomains: const ['a', 'b', 'c'],
+                              userAgentPackageName: 'com.blackfabricsecurity.crossplatformblackfabric',
                             ),
                             MarkerLayer(
                               markers: [
