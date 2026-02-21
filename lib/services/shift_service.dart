@@ -57,7 +57,7 @@ class ShiftService {
       {
         'trajectoryStopId': trajectoryStopId, // ✅ REQUIRED
         'stopId': stopId,
-        'distanceMeters': distance,
+        'distanceFeet': distance,
         'accuracyPercent': accuracy,
         'isLate': isLate,
         'lateMinutes': lateMinutes,
@@ -121,4 +121,3 @@ class ShiftService {
     return shift.trajectories;
   }
 }
-

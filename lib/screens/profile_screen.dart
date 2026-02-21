@@ -253,7 +253,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
   Future<void> _contactAdmin() async {
     final Uri emailUri = Uri(
       scheme: 'mailto',
-      path: 'bibarirayen05@gmail.com',
+      path: 'admin@blackfabricsecurity.com',
       query: 'subject=Support Request&body=Hello Admin,',
     );
     if (await canLaunchUrl(emailUri)) {
@@ -525,32 +525,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 Icons.support_agent,
                 Color(0xFF3B82F6),
                 _contactAdmin,
-              ),
-              _buildActionButton(
-                'App Settings',
-                Icons.settings,
-                secondaryTextColor,
-                    () {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text('Settings page coming soon!'),
-                      backgroundColor: cardColor,
-                    ),
-                  );
-                },
-              ),
-              _buildActionButton(
-                'Help & FAQ',
-                Icons.help_outline,
-                Color(0xFF8B5CF6),
-                    () {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text('Help section coming soon!'),
-                      backgroundColor: cardColor,
-                    ),
-                  );
-                },
               ),
 
               const SizedBox(height: 25),

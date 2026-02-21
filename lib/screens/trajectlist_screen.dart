@@ -527,23 +527,30 @@ class _CheckpointsScreenState extends State<CheckpointsScreen> {
     return checkpoints[index - 1].isScanned;
   }
 
-  // ── Range / Accuracy calculation ──────────────────────────────────────────
-  //
-  //  distance ≤ range            → 100%  (fully inside the valid zone)
-  //  range < distance < range×2  → linear decay  100% → 0%
-  //  distance ≥ range×2          → 0%   (too far, rejected)
-  //
-  //  Formula:  accuracy = (range×2 - distance) / range  × 100
-  //  Minimum accepted accuracy: 70%
-  // ─────────────────────────────────────────────────────────────────────────
-  int _calculateAccuracy(double distanceM) {
-    const rangeM = 10.0;     // full accuracy within 10 m
-    const maxDist = 15.0;    // anything beyond 15 m is rejected (0%)
+  // ── Unit helpers ─────────────────────────────────────────────────────────
+  // Geolocator always returns meters internally. We convert to feet for
+  // all business logic and display. 1 m = 3.28084 ft.
+  static const double _mToFt = 3.28084;
+  double _toFeet(double meters) => meters * _mToFt;
 
-    if (distanceM <= rangeM) return 100;           // inside valid zone
-    if (distanceM >= maxDist) return 0;           // too far
-    // linear decay between 10 and 15 meters
-    return ((maxDist - distanceM) / (maxDist - rangeM) * 100.0)
+  // ── Range / Accuracy calculation (all in FEET) ───────────────────────────
+  //
+  //  Uses stop.range (feet, set per-checkpoint in the admin panel).
+  //
+  //  distanceFt ≤ rangeFt          → 100%  (fully inside the zone)
+  //  rangeFt < dist ≤ rangeFt×1.5  → linear decay 100% → 0%
+  //  distanceFt > rangeFt×1.5      → 0%   (rejected)
+  //
+  //  Minimum accepted accuracy to allow scan: 70%
+  // ─────────────────────────────────────────────────────────────────────────
+  int _calculateAccuracy(double distanceM, double stopRangeFt) {
+    final distanceFt = _toFeet(distanceM);
+    final maxDist = stopRangeFt * 1.5; // hard reject beyond 1.5× the stop range
+
+    if (distanceFt <= stopRangeFt) return 100; // inside valid zone
+    if (distanceFt >= maxDist) return 0;       // too far
+    // linear decay between rangeFt and 1.5×rangeFt
+    return ((maxDist - distanceFt) / (maxDist - stopRangeFt) * 100.0)
         .clamp(0.0, 100.0)
         .round();
   }
@@ -664,15 +671,16 @@ class _CheckpointsScreenState extends State<CheckpointsScreen> {
       stop.latitude,
       stop.longitude,
     );
-    final accuracy = _calculateAccuracy(distanceM);
+    final distanceFt = _toFeet(distanceM); // convert for all logic & display
+    final accuracy = _calculateAccuracy(distanceM, stop.range); // stop.range is in feet from DB
 
     debugPrint(
-        '📍 [${stop.name}] dist=${distanceM.toStringAsFixed(1)}m  range=${stop.range}m  accuracy=$accuracy%');
+        '📍 [${stop.name}] dist=${distanceFt.toStringAsFixed(1)}ft  range=${stop.range}ft  accuracy=$accuracy%');
 
     // 9. Reject if guard is too far away
     if (accuracy < 70) {
       setState(() => _isScanning = false);
-      _showTooFarDialog(distanceM: distanceM, rangeM: stop.range, accuracy: accuracy);
+      _showTooFarDialog(distanceFt: distanceFt, rangeFt: stop.range, accuracy: accuracy);
       return;
     }
 
@@ -704,7 +712,7 @@ class _CheckpointsScreenState extends State<CheckpointsScreen> {
         _isScanning = false;
       });
       _snack(
-          '✅ ${stop.name} validated! (${distanceM.toStringAsFixed(0)} m, $accuracy%)');
+          '✅ ${stop.name} validated! (${distanceFt.toStringAsFixed(0)} ft, $accuracy%)');
     }
   }
 
@@ -788,8 +796,8 @@ class _CheckpointsScreenState extends State<CheckpointsScreen> {
 
   // ── Too-far dialog ────────────────────────────────────────────────────────
   void _showTooFarDialog({
-    required double distanceM,
-    required double rangeM,
+    required double distanceFt,
+    required double rangeFt,
     required int accuracy,
   }) {
     showDialog(
@@ -809,8 +817,8 @@ class _CheckpointsScreenState extends State<CheckpointsScreen> {
           mainAxisSize: MainAxisSize.min,
           children: [
             _infoRow('Your distance',
-                '${distanceM.toStringAsFixed(0)} m', isHighlight: true),
-            _infoRow('Valid range', '≤ ${rangeM.toStringAsFixed(0)} m'),
+                '${distanceFt.toStringAsFixed(0)} ft', isHighlight: true),
+            _infoRow('Valid range', '≤ ${rangeFt.toStringAsFixed(0)} ft'),
             _infoRow('Accuracy', '$accuracy% (min 70%)'),
             const SizedBox(height: 14),
             Container(
@@ -1174,7 +1182,7 @@ class _CheckpointsScreenState extends State<CheckpointsScreen> {
                   Icon(Icons.radar, size: 12, color: secondaryTextColor),
                   const SizedBox(width: 4),
                   Text(
-                      'Range: ${checkpoint.range.toStringAsFixed(0)} m',
+                      'Range: ${checkpoint.range.toStringAsFixed(0)} ft',
                       style: TextStyle(
                           color: secondaryTextColor, fontSize: 11)),
                   const SizedBox(width: 12),
