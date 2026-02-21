@@ -10,7 +10,6 @@ import 'package:flutter_image_compress/flutter_image_compress.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:dio/dio.dart';
-import 'package:video_player/video_player.dart';
 
 class ReportPage extends StatefulWidget {
   const ReportPage({super.key});
@@ -348,30 +347,19 @@ class _ReportPageState extends State<ReportPage> {
   // ─────────────────────────────────────────────────────────────────────────
   // IMAGE / VIDEO PICKING  — with per-item loading indicator
   // ─────────────────────────────────────────────────────────────────────────
+  // Compress image for camera shots only.
+  // maxWidth/maxHeight = cap at 1280 (never upscale). quality 72 is plenty.
   Future<File> _compressImage(File file) async {
     final dir = await getTemporaryDirectory();
     final targetPath = '${dir.path}/${DateTime.now().millisecondsSinceEpoch}.jpg';
-    final XFile? compressedXFile = await FlutterImageCompress.compressAndGetFile(
-      file.absolute.path, targetPath, quality: 80, minWidth: 1280, minHeight: 1280,
+    final XFile? result = await FlutterImageCompress.compressAndGetFile(
+      file.absolute.path, targetPath,
+      quality: 72,
+      minWidth: 1280, minHeight: 1280,
       format: CompressFormat.jpeg,
     );
-    if (compressedXFile == null) return file;
-    return File(compressedXFile.path);
-  }
-
-  /// Copies a file (especially content:// URIs on Android) to a real temp path.
-  /// This is what makes gallery videos fast — instead of Dio slowly streaming
-  /// through Android's content resolver during upload, we copy once up front
-  /// while the spinner is already showing, then upload from a real file path.
-  Future<File> _copyToTempFile(XFile xfile) async {
-    final dir = await getTemporaryDirectory();
-    // Preserve the original extension so MIME detection works later
-    final originalName = xfile.path.split('/').last.split('\\').last;
-    final ext = originalName.contains('.') ? originalName.split('.').last : 'mp4';
-    final destPath = '${dir.path}/${DateTime.now().millisecondsSinceEpoch}.$ext';
-    // XFile.saveTo copies efficiently using the platform's native copy
-    await xfile.saveTo(destPath);
-    return File(destPath);
+    if (result == null) return file;
+    return File(result.path);
   }
 
   Future<void> _pickVideo(ImageSource source) async {
@@ -395,20 +383,8 @@ class _ReportPageState extends State<ReportPage> {
         return;
       }
 
-      // ✅ Copy to real temp path WHILE spinner is showing.
-      // This resolves content:// URIs on Android immediately so upload is fast.
-      final File videoFile = await _copyToTempFile(pickedFile);
-
-      // Check size on the real file now that we have a proper path
-      try {
-        final fileSizeMB = await videoFile.length() / (1024 * 1024);
-        if (fileSizeMB > 1000) {
-          await videoFile.delete(); // clean up temp
-          setState(() { _isPickingMedia = false; _loadingMediaIndex = null; });
-          _snackError('Video exceeds 1GB limit.');
-          return;
-        }
-      } catch (_) {}
+      // Use the path directly — no pre-copy. Dio streams from the original path.
+      final File videoFile = File(pickedFile.path);
 
       setState(() {
         _mediaFiles.add(videoFile);
@@ -441,9 +417,11 @@ class _ReportPageState extends State<ReportPage> {
     });
 
     try {
-      final XFile? pickedFile = await _picker.pickImage(
-        source: source, imageQuality: 85, maxWidth: 1920, maxHeight: 1920,
-      );
+      // For camera: no imageQuality here — we compress ourselves below with better settings.
+      // For gallery: imageQuality+maxWidth does the resize natively (fast, no double compress).
+      final XFile? pickedFile = source == ImageSource.camera
+          ? await _picker.pickImage(source: source)
+          : await _picker.pickImage(source: source, imageQuality: 72, maxWidth: 1280, maxHeight: 1280);
 
       if (pickedFile == null) {
         setState(() { _isPickingMedia = false; _loadingMediaIndex = null; });
@@ -457,11 +435,13 @@ class _ReportPageState extends State<ReportPage> {
         return;
       }
 
-      // ✅ Compress while the spinner is showing
-      final File compressedFile = await _compressImage(tempFile);
+      // Camera images need compression; gallery images were already resized above.
+      final File finalFile = source == ImageSource.camera
+          ? await _compressImage(tempFile)
+          : tempFile;
 
       setState(() {
-        _mediaFiles.add(compressedFile);
+        _mediaFiles.add(finalFile);
         _isPickingMedia = false;
         _loadingMediaIndex = null;
       });
@@ -939,39 +919,33 @@ class _ReportPageState extends State<ReportPage> {
         // ✅ Normal file tile
         final File file = _mediaFiles[index];
         final String ext = file.path.split('.').last.toLowerCase();
-        final bool isVideo = ['mp4', 'mov', 'avi', 'mkv', 'webm'].contains(ext);
-        final Widget mediaWidget = isVideo
+        final Widget mediaWidget = ['mp4', 'mov', 'avi'].contains(ext)
             ? Container(
           color: Colors.black,
           child: const Center(child: Icon(Icons.play_circle_fill, size: 40, color: Colors.white)),
         )
             : Image.file(file, fit: BoxFit.cover);
 
-        return GestureDetector(
-          onTap: () => Navigator.of(context).push(MaterialPageRoute(
-            builder: (_) => _LocalMediaFullScreenPage(file: file, isVideo: isVideo),
-          )),
-          child: Stack(
-            fit: StackFit.expand,
-            children: [
-              ClipRRect(borderRadius: BorderRadius.circular(12), child: mediaWidget),
-              Positioned(
-                top: 6, right: 6,
-                child: GestureDetector(
-                  onTap: () => setState(() => _mediaFiles.removeAt(index)),
-                  child: Container(
-                    padding: const EdgeInsets.all(4),
-                    decoration: BoxDecoration(
-                      color: Colors.red,
-                      shape: BoxShape.circle,
-                      boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.3), blurRadius: 4, offset: const Offset(0, 2))],
-                    ),
-                    child: const Icon(Icons.close, size: 16, color: Colors.white),
+        return Stack(
+          fit: StackFit.expand,
+          children: [
+            ClipRRect(borderRadius: BorderRadius.circular(12), child: mediaWidget),
+            Positioned(
+              top: 6, right: 6,
+              child: GestureDetector(
+                onTap: () => setState(() => _mediaFiles.removeAt(index)),
+                child: Container(
+                  padding: const EdgeInsets.all(4),
+                  decoration: BoxDecoration(
+                    color: Colors.red,
+                    shape: BoxShape.circle,
+                    boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.3), blurRadius: 4, offset: const Offset(0, 2))],
                   ),
+                  child: const Icon(Icons.close, size: 16, color: Colors.white),
                 ),
               ),
-            ],
-          ),
+            ),
+          ],
         );
       },
     );
@@ -1114,110 +1088,4 @@ class _ReportPageState extends State<ReportPage> {
       Expanded(child: TextFormField(controller: c2, decoration: _modernInput(l2), style: TextStyle(color: _textColor))),
     ]),
   );
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Full-screen viewer for LOCAL files (picked from device)
-// ─────────────────────────────────────────────────────────────────────────────
-class _LocalMediaFullScreenPage extends StatefulWidget {
-  final File file;
-  final bool isVideo;
-
-  const _LocalMediaFullScreenPage({required this.file, required this.isVideo});
-
-  @override
-  State<_LocalMediaFullScreenPage> createState() => _LocalMediaFullScreenPageState();
-}
-
-class _LocalMediaFullScreenPageState extends State<_LocalMediaFullScreenPage> {
-  VideoPlayerController? _controller;
-  bool _initialized = false;
-  bool _error = false;
-
-  @override
-  void initState() {
-    super.initState();
-    if (widget.isVideo) _initVideo();
-  }
-
-  Future<void> _initVideo() async {
-    try {
-      _controller = VideoPlayerController.file(widget.file);
-      await _controller!.initialize();
-      setState(() => _initialized = true);
-      _controller!.play();
-    } catch (_) {
-      setState(() => _error = true);
-    }
-  }
-
-  @override
-  void dispose() {
-    _controller?.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.black,
-      appBar: AppBar(
-        backgroundColor: Colors.black,
-        iconTheme: const IconThemeData(color: Colors.white),
-        title: Text(
-          widget.isVideo ? 'Video Preview' : 'Photo Preview',
-          style: const TextStyle(color: Colors.white),
-        ),
-      ),
-      body: Center(
-        child: widget.isVideo ? _buildVideo() : _buildImage(),
-      ),
-      floatingActionButton: widget.isVideo && _initialized
-          ? FloatingActionButton(
-        backgroundColor: Colors.white24,
-        onPressed: () => setState(() {
-          _controller!.value.isPlaying
-              ? _controller!.pause()
-              : _controller!.play();
-        }),
-        child: Icon(
-          _controller!.value.isPlaying ? Icons.pause : Icons.play_arrow,
-          color: Colors.white,
-        ),
-      )
-          : null,
-    );
-  }
-
-  Widget _buildImage() {
-    return InteractiveViewer(
-      minScale: 0.5,
-      maxScale: 5.0,
-      child: Image.file(
-        widget.file,
-        fit: BoxFit.contain,
-        errorBuilder: (_, __, ___) => const Icon(Icons.broken_image, color: Colors.white54, size: 80),
-      ),
-    );
-  }
-
-  Widget _buildVideo() {
-    if (_error) {
-      return const Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(Icons.error_outline, color: Colors.redAccent, size: 64),
-          SizedBox(height: 16),
-          Text('Could not play video', style: TextStyle(color: Colors.white54)),
-        ],
-      );
-    }
-    if (!_initialized) {
-      return const CircularProgressIndicator(color: Colors.white);
-    }
-    return AspectRatio(
-      aspectRatio: _controller!.value.aspectRatio,
-      child: VideoPlayer(_controller!),
-    );
-  }
 }

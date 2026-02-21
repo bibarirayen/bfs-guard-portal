@@ -175,4 +175,45 @@ class ApiService {
     final headers = await getHeaders();
     return await http.delete(Uri.parse("$baseUrl$endpoint"), headers: headers);
   }
+
+  // Dio-based counseling upload — gives real upload progress + correct MIME types.
+  Future<void> uploadCounselingDio(
+      Map<String, dynamic> payload,
+      List<File> files,
+      Function(int sent, int total) onProgress,
+      ) async {
+    final prefs = await SharedPreferences.getInstance();
+    final String? token = prefs.getString('jwt');
+
+    final dio = Dio();
+    dio.options.connectTimeout = const Duration(seconds: 30);
+    dio.options.sendTimeout = const Duration(minutes: 30);
+    dio.options.receiveTimeout = const Duration(minutes: 10);
+
+    final formData = FormData();
+    formData.fields.add(MapEntry('payload', jsonEncode(payload)));
+
+    for (final file in files) {
+      final filename = file.path.split('/').last;
+      final mediaType = _mediaTypeForFile(file.path);
+      formData.files.add(MapEntry(
+        'files',
+        await MultipartFile.fromFile(file.path, filename: filename, contentType: mediaType),
+      ));
+    }
+
+    final response = await dio.post(
+      '${baseUrl}counseling/upload',
+      data: formData,
+      options: Options(
+        headers: {if (token != null) 'Authorization': 'Bearer $token'},
+        contentType: 'multipart/form-data',
+      ),
+      onSendProgress: onProgress,
+    );
+
+    if (response.statusCode != 200 && response.statusCode != 201) {
+      throw Exception('Upload failed: ${response.statusCode}');
+    }
+  }
 }

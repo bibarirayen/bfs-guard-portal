@@ -31,9 +31,12 @@ class CounselingService {
     }
   }
 
-  // Upload counseling statement with media
-  Future<http.StreamedResponse> uploadStatement(
-      Map<String, dynamic> payload, List<File> files) async {
-    return await api.uploadMultipart('counseling/upload', payload, files);
+  // Upload counseling statement with media — uses Dio for real progress + MIME types
+  Future<void> uploadStatementDio(
+      Map<String, dynamic> payload,
+      List<File> files,
+      Function(int sent, int total) onProgress,
+      ) async {
+    return await api.uploadCounselingDio(payload, files, onProgress);
   }
 }
