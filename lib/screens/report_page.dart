@@ -1,6 +1,7 @@
 // file: lib/screens/report_page.dart
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 import 'package:crossplatformblackfabric/config/ApiService.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -11,6 +12,15 @@ import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:dio/dio.dart';
 import 'package:video_compress/video_compress.dart';
+
+/// Holds a media file + optional pre-generated video thumbnail bytes.
+class _MediaItem {
+  File file;
+  final bool isVideo;
+  Uint8List? thumbnail; // null for images or until thumbnail is generated
+
+  _MediaItem({required this.file, required this.isVideo, this.thumbnail});
+}
 
 class ReportPage extends StatefulWidget {
   const ReportPage({super.key});
@@ -259,16 +269,13 @@ class _ReportPageState extends State<ReportPage> {
   // ─────────────────────────────────────────────────────────────────────────
   // STATE
   // ─────────────────────────────────────────────────────────────────────────
-  final List<File> _mediaFiles = [];
+  // Each entry holds the File and an optional thumbnail bytes for videos.
+  final List<_MediaItem> _mediaItems = [];
 
-  // Tracks in-progress background compressions: index → Future<File>
-  // If the user submits before compression finishes, we await these first.
+  // Tracks background compression futures: index → Future<File>
   final Map<int, Future<File>> _pendingCompressions = {};
 
-  // Only used for camera photo compression (fast ~1s, worth showing a spinner)
-  // Videos never block the UI — they appear instantly and compress in background
-  int? _loadingMediaIndex;
-  bool _isPickingMedia = false; // only true during camera photo compress
+  bool _isPickingMedia = false;
 
   String _selectedReportType = "Incident Report";
   final List<String> _reportTypes = [
@@ -320,7 +327,7 @@ class _ReportPageState extends State<ReportPage> {
   // ─────────────────────────────────────────────────────────────────────────
   void _resetPage() {
     setState(() {
-      _mediaFiles.clear();
+      _mediaItems.clear();
       _pendingCompressions.clear();
       _selectedReportType = "Incident Report";
       _policeCalled = false;
@@ -328,7 +335,6 @@ class _ReportPageState extends State<ReportPage> {
       _vehicleTowed = false;
       _uploadProgress = 0.0;
       _isSubmitting = false;
-      _loadingMediaIndex = null;
       _isPickingMedia = false;
     });
 
@@ -350,8 +356,6 @@ class _ReportPageState extends State<ReportPage> {
     ]) { c.clear(); }
   }
 
-
-
   // ─────────────────────────────────────────────────────────────────────────
   // IMAGE / VIDEO PICKING  — with per-item loading indicator
   // ─────────────────────────────────────────────────────────────────────────
@@ -370,49 +374,60 @@ class _ReportPageState extends State<ReportPage> {
     return File(result.path);
   }
 
-  // LowQuality = 360p — much faster compression, fine for security footage.
+  // Compress video — shrinks a 14MB raw video to ~1-3MB before upload.
+  // MediumQuality = 720p max. The spinner stays visible the whole time.
   Future<File> _compressVideo(File file) async {
     final MediaInfo? info = await VideoCompress.compressVideo(
       file.path,
-      quality: VideoQuality.LowQuality,
+      quality: VideoQuality.MediumQuality,
       deleteOrigin: false,
       includeAudio: true,
     );
-    if (info == null || info.file == null) return file;
+    if (info == null || info.file == null) return file; // fallback to original if compress fails
     return info.file!;
   }
 
-  // Videos appear in the grid INSTANTLY after gallery closes.
-  // Compression runs in background — buttons stay enabled so user can pick more.
-  // If submit is tapped before compression finishes, it waits automatically.
   Future<void> _pickVideo(ImageSource source) async {
+    if (_isPickingMedia) return;
     final granted = await _requestPermissions(source, forVideo: true);
     if (!granted) return;
+
+    setState(() => _isPickingMedia = true);
 
     try {
       final XFile? pickedFile = await _picker.pickVideo(
         source: source, maxDuration: const Duration(minutes: 60),
       );
+      setState(() => _isPickingMedia = false);
+
       if (pickedFile == null) return;
 
-      // Add raw file immediately — shows in grid right away, no spinner, no waiting.
+      // ✅ INSTANT: add to grid immediately with no thumbnail yet.
       final File rawFile = File(pickedFile.path);
-      final int fileIndex = _mediaFiles.length;
-      setState(() => _mediaFiles.add(rawFile));
+      final item = _MediaItem(file: rawFile, isVideo: true);
+      final int itemIndex = _mediaItems.length;
+      setState(() => _mediaItems.add(item));
 
-      // Compress silently in background.
+      // ✅ Generate thumbnail in background — updates cell when ready.
+      VideoCompress.getByteThumbnail(rawFile.path, quality: 50).then((bytes) {
+        if (mounted && bytes != null && itemIndex < _mediaItems.length) {
+          setState(() => _mediaItems[itemIndex].thumbnail = bytes);
+        }
+      }).catchError((_) {}); // silent — play icon fallback is fine
+
+      // ✅ Compress in background — no blocking, no spinner.
       final Future<File> compressionFuture = _compressVideo(rawFile);
-      _pendingCompressions[fileIndex] = compressionFuture;
-
-      final File compressed = await compressionFuture;
-      _pendingCompressions.remove(fileIndex);
-
-      // Swap raw → compressed in place once done.
-      if (mounted && fileIndex < _mediaFiles.length) {
-        setState(() => _mediaFiles[fileIndex] = compressed);
-      }
+      _pendingCompressions[itemIndex] = compressionFuture;
+      compressionFuture.then((compressed) {
+        _pendingCompressions.remove(itemIndex);
+        if (mounted && itemIndex < _mediaItems.length) {
+          setState(() => _mediaItems[itemIndex].file = compressed);
+        }
+      }).catchError((_) {
+        _pendingCompressions.remove(itemIndex); // keep raw on failure
+      });
     } catch (e) {
-      debugPrint('Video pick error: $e');
+      setState(() => _isPickingMedia = false);
       final s = e.toString().toLowerCase();
       if (s.contains('permission') || s.contains('denied')) {
         _showPermissionDeniedDialog('Permission Required',
@@ -424,64 +439,42 @@ class _ReportPageState extends State<ReportPage> {
   }
 
   Future<void> _pickImage(ImageSource source) async {
-    if (_isPickingMedia) return; // block only if camera compress is in progress
+    if (_isPickingMedia) return;
     final granted = await _requestPermissions(source, forVideo: false);
     if (!granted) return;
 
-    if (source == ImageSource.camera) {
-      // Camera: show spinner in grid while we compress the raw shot (~1s)
-      final int placeholderIndex = _mediaFiles.length;
-      setState(() { _isPickingMedia = true; _loadingMediaIndex = placeholderIndex; });
+    setState(() => _isPickingMedia = true);
 
-      try {
-        final XFile? pickedFile = await _picker.pickImage(source: source);
-        if (pickedFile == null) {
-          setState(() { _isPickingMedia = false; _loadingMediaIndex = null; });
-          return;
-        }
-        final File tempFile = File(pickedFile.path);
-        if (!await tempFile.exists()) {
-          setState(() { _isPickingMedia = false; _loadingMediaIndex = null; });
-          _snackError('Could not access the selected image.');
-          return;
-        }
-        final File finalFile = await _compressImage(tempFile);
-        setState(() {
-          _mediaFiles.add(finalFile);
-          _isPickingMedia = false;
-          _loadingMediaIndex = null;
-        });
-      } catch (e) {
-        setState(() { _isPickingMedia = false; _loadingMediaIndex = null; });
-        debugPrint('Image pick error: $e');
-        final s = e.toString().toLowerCase();
-        if (s.contains('permission') || s.contains('denied')) {
-          _showPermissionDeniedDialog('Permission Required',
-              'Please grant the required permission.', showSettings: true);
-        } else if (!s.contains('cancel')) {
-          _snackError('Error picking image. Please try again.');
-        }
+    try {
+      final XFile? pickedFile = source == ImageSource.camera
+          ? await _picker.pickImage(source: source)
+          : await _picker.pickImage(source: source, imageQuality: 72, maxWidth: 1280, maxHeight: 1280);
+
+      setState(() => _isPickingMedia = false);
+
+      if (pickedFile == null) return;
+
+      final File tempFile = File(pickedFile.path);
+      if (!await tempFile.exists()) {
+        _snackError('Could not access the selected image.');
+        return;
       }
-    } else {
-      // Gallery: image appears instantly, no spinner needed.
-      // imageQuality+maxWidth resizes natively inside the picker — already fast.
-      try {
-        final XFile? pickedFile = await _picker.pickImage(
-          source: source, imageQuality: 72, maxWidth: 1280, maxHeight: 1280,
-        );
-        if (pickedFile == null) return;
-        final File tempFile = File(pickedFile.path);
-        if (!await tempFile.exists()) { _snackError('Could not access the selected image.'); return; }
-        setState(() => _mediaFiles.add(tempFile));
-      } catch (e) {
-        debugPrint('Image pick error: $e');
-        final s = e.toString().toLowerCase();
-        if (s.contains('permission') || s.contains('denied')) {
-          _showPermissionDeniedDialog('Permission Required',
-              'Please grant the required permission.', showSettings: true);
-        } else if (!s.contains('cancel')) {
-          _snackError('Error picking image. Please try again.');
-        }
+
+      // For camera: compress first (fast, <1s). Gallery: already resized.
+      final File finalFile = source == ImageSource.camera
+          ? await _compressImage(tempFile)
+          : tempFile;
+
+      // ✅ INSTANT: add image to grid immediately.
+      setState(() => _mediaItems.add(_MediaItem(file: finalFile, isVideo: false)));
+    } catch (e) {
+      setState(() => _isPickingMedia = false);
+      final s = e.toString().toLowerCase();
+      if (s.contains('permission') || s.contains('denied')) {
+        _showPermissionDeniedDialog('Permission Required',
+            'Please grant the required permission.', showSettings: true);
+      } else if (!s.contains('cancel')) {
+        _snackError('Error picking image. Please try again.');
       }
     }
   }
@@ -548,8 +541,7 @@ class _ReportPageState extends State<ReportPage> {
     setState(() { _isSubmitting = true; _uploadProgress = 0.0; });
 
     try {
-      // ✅ If background compressions are still running, wait for them first.
-      // This handles the case where the user picks a video and immediately hits submit.
+      // If background compressions are still running, wait for them first.
       if (_pendingCompressions.isNotEmpty) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
@@ -558,21 +550,22 @@ class _ReportPageState extends State<ReportPage> {
             duration: Duration(seconds: 3),
           ));
         }
-        // Await all compressions and swap the results into _mediaFiles
         final entries = Map<int, Future<File>>.from(_pendingCompressions);
         for (final entry in entries.entries) {
           final compressed = await entry.value;
           _pendingCompressions.remove(entry.key);
-          if (entry.key < _mediaFiles.length) {
-            _mediaFiles[entry.key] = compressed;
+          if (entry.key < _mediaItems.length) {
+            _mediaItems[entry.key].file = compressed;
           }
         }
       }
 
-      if (_mediaFiles.isNotEmpty) {
+      final List<File> files = _mediaItems.map((m) => m.file).toList();
+
+      if (files.isNotEmpty) {
         await api.uploadReportDio(
           payload,
-          _mediaFiles,
+          files,
               (sent, total) {
             if (total > 0 && mounted) {
               setState(() => _uploadProgress = sent / total);
@@ -802,8 +795,7 @@ class _ReportPageState extends State<ReportPage> {
                                         _buildImageButton(icon: Icons.photo_library_rounded, label: "Gallery", onTap: () => _pickImage(ImageSource.gallery), color: const Color(0xFF8B5CF6)),
                                       ],
                                     ),
-                                    // ✅ Show grid + loading placeholder
-                                    if (_mediaFiles.isNotEmpty || _loadingMediaIndex != null) ...[
+                                    if (_mediaItems.isNotEmpty) ...[
                                       const SizedBox(height: 20),
                                       _buildImageGrid(),
                                     ],
@@ -888,7 +880,7 @@ class _ReportPageState extends State<ReportPage> {
   // WIDGETS
   // ─────────────────────────────────────────────────────────────────────────
   Widget _buildImageButton({required IconData icon, required String label, required VoidCallback onTap, required Color color}) {
-    // Only dim camera photo button while its compression is running
+    // ✅ Dim button while picking is in progress
     final bool disabled = _isPickingMedia;
     return Expanded(
       child: Opacity(
@@ -920,60 +912,33 @@ class _ReportPageState extends State<ReportPage> {
     );
   }
 
-  // Grid shows all files immediately.
-  // Loading placeholder only appears briefly for camera photos during compress.
+  // Grid — no loading placeholder, files appear instantly.
   Widget _buildImageGrid() {
-    final int totalItems = _mediaFiles.length + (_loadingMediaIndex != null ? 1 : 0);
-
     return GridView.builder(
       shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
       gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
         crossAxisCount: 3, crossAxisSpacing: 12, mainAxisSpacing: 12,
       ),
-      itemCount: totalItems,
+      itemCount: _mediaItems.length,
       itemBuilder: (context, index) {
-        // ✅ Last tile is the loading placeholder
-        if (_loadingMediaIndex != null && index == _mediaFiles.length) {
-          return ClipRRect(
-            borderRadius: BorderRadius.circular(12),
-            child: Container(
-              decoration: BoxDecoration(
-                color: _isDarkMode ? const Color(0xFF374151) : Colors.grey[200],
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: _primaryColor.withOpacity(0.4), width: 1.5),
-              ),
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  SizedBox(
-                    width: 28,
-                    height: 28,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2.5,
-                      valueColor: AlwaysStoppedAnimation<Color>(_primaryColor),
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    'Loading...',
-                    style: TextStyle(color: _secondaryTextColor, fontSize: 10, fontWeight: FontWeight.w500),
-                  ),
-                ],
-              ),
-            ),
-          );
-        }
+        final item = _mediaItems[index];
 
-        // ✅ Normal file tile
-        final File file = _mediaFiles[index];
-        final String ext = file.path.split('.').last.toLowerCase();
-        final Widget mediaWidget = ['mp4', 'mov', 'avi'].contains(ext)
-            ? Container(
-          color: Colors.black,
-          child: const Center(child: Icon(Icons.play_circle_fill, size: 40, color: Colors.white)),
-        )
-            : Image.file(file, fit: BoxFit.cover);
+        Widget mediaWidget;
+        if (item.isVideo) {
+          // Show real thumbnail if ready, otherwise play-circle placeholder.
+          mediaWidget = item.thumbnail != null
+              ? Stack(fit: StackFit.expand, children: [
+            Image.memory(item.thumbnail!, fit: BoxFit.cover),
+            const Center(child: Icon(Icons.play_circle_fill, size: 36, color: Colors.white, shadows: [Shadow(blurRadius: 8, color: Colors.black54)])),
+          ])
+              : Container(
+            color: Colors.black,
+            child: const Center(child: Icon(Icons.play_circle_fill, size: 40, color: Colors.white)),
+          );
+        } else {
+          mediaWidget = Image.file(item.file, fit: BoxFit.cover);
+        }
 
         return Stack(
           fit: StackFit.expand,
@@ -982,7 +947,7 @@ class _ReportPageState extends State<ReportPage> {
             Positioned(
               top: 6, right: 6,
               child: GestureDetector(
-                onTap: () => setState(() => _mediaFiles.removeAt(index)),
+                onTap: () => setState(() => _mediaItems.removeAt(index)),
                 child: Container(
                   padding: const EdgeInsets.all(4),
                   decoration: BoxDecoration(

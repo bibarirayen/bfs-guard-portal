@@ -177,11 +177,42 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver{
           () => const CounselingUploadPage(),
     ];
 
-    // Refresh dashboard every 30 s to detect remote shift-end while foreground
+    // Refresh dashboard every 30 s to detect remote shift-end while foreground.
+    // Also checks "Always" permission — if the guard changed it mid-shift, we
+    // stop tracking and show the block dialog.
     _dashboardRefreshTimer =
-        Timer.periodic(const Duration(seconds: 30), (_) {
+        Timer.periodic(const Duration(seconds: 30), (_) async {
           print('🔄 Auto-refreshing dashboard...');
           _loadDashboard();
+
+          // ── Permission guard: runs every 30 s while app is in foreground ──
+          if (_liveLocationService.isTracking) {
+            final permission = await Geolocator.checkPermission();
+            if (permission != LocationPermission.always) {
+              print('🔒 [Timer] "Always" permission lost — stopping shift tracking');
+              _liveLocationService.stopTracking();
+              final prefs = await SharedPreferences.getInstance();
+              await prefs.setBool('shift_active', false);
+              await prefs.remove('active_assignment_id');
+              await prefs.remove('active_guard_id');
+              if (mounted) {
+                setState(() {
+                  _shiftStarted = false;
+                  _assignmentActive = false;
+                });
+                _showLocationBlockDialog(
+                  title: 'Location Set to "Always" Required',
+                  message:
+                  'Your location permission was changed to "${permission == LocationPermission.whileInUse ? "While In Use" : "Denied"}". '
+                      'Background tracking has been stopped.\n\n'
+                      'Go to Settings → [App] → Location → select "Always" to resume your shift.',
+                  buttonLabel: 'Open Settings',
+                  onTap: () => openAppSettings(),
+                );
+              }
+            }
+          }
+          // ──────────────────────────────────────────────────────────────────
         });
 
     _shiftButtonUpdateTimer =
@@ -213,8 +244,32 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver{
   Future<void> _checkLocationPermissionOnResume() async {
     final permission = await Geolocator.checkPermission();
     if (permission != LocationPermission.always) {
-      // Still not "Always" — show the block screen again
-      if (mounted) setState(() {}); // triggers rebuild which shows block wall
+      // Permission was downgraded while app was backgrounded.
+      // Stop any active tracking immediately and block the UI.
+      if (_liveLocationService.isTracking) {
+        print('⚠️ "Always" permission lost on resume — stopping tracking');
+        _liveLocationService.stopTracking();
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setBool('shift_active', false);
+        await prefs.remove('active_assignment_id');
+        await prefs.remove('active_guard_id');
+      }
+      if (mounted) {
+        setState(() {
+          _shiftStarted = false;
+          _assignmentActive = false;
+        });
+        // Show the block dialog so the guard knows they must fix it.
+        _showLocationBlockDialog(
+          title: 'Location Set to "Always" Required',
+          message:
+          'Your location permission was changed to "${permission == LocationPermission.whileInUse ? "While In Use" : "Denied"}". '
+              'Background tracking stopped.\n\n'
+              'Go to Settings → [App] → Location → select "Always" to continue your shift.',
+          buttonLabel: 'Open Settings',
+          onTap: () => openAppSettings(),
+        );
+      }
     }
   }
   // ─────────────────────────────────────────────────────────────────────────
@@ -754,17 +809,17 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver{
   }
 
   /// Used by _restoreLiveTrackingIfNeeded (silent check, no UI dialogs)
+  /// Silent check used by restore path — requires "Always" (same as start shift).
   Future<bool> _handleLocationPermission() async {
-    final bool serviceEnabled =
-    await Geolocator.isLocationServiceEnabled();
+    final bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
     if (!serviceEnabled) return false;
 
     LocationPermission permission = await Geolocator.checkPermission();
     if (permission == LocationPermission.denied) {
       permission = await Geolocator.requestPermission();
     }
-    return permission == LocationPermission.always ||
-        permission == LocationPermission.whileInUse;
+    // "While In Use" is NOT sufficient for background tracking on either platform.
+    return permission == LocationPermission.always;
   }
 
   // ─────────────────────────────────────────────────────────────────────────

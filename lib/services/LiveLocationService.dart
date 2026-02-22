@@ -155,9 +155,21 @@ class LiveLocationService {
     _positionSubscription =
         Geolocator.getPositionStream(locationSettings: locationSettings)
             .listen(
-              (Position pos) {
+              (Position pos) async {
             _lastPosition = pos;
             if (!_isTracking) return;
+
+            // ── Permission guard (background safety net) ─────────────────────
+            // Each time iOS/Android delivers a GPS fix, verify "Always" is
+            // still granted. The guard may have changed it to "While In Use"
+            // or "Denied" from Settings while the app was in the background.
+            final LocationPermission perm = await Geolocator.checkPermission();
+            if (perm != LocationPermission.always) {
+              print('🔒 [Stream] "Always" permission lost — stopping tracking');
+              await _handleRemoteShiftEnd();
+              return;
+            }
+            // ────────────────────────────────────────────────────────────────
 
             final now = DateTime.now();
 

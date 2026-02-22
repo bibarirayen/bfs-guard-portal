@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:typed_data';
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_image_compress/flutter_image_compress.dart';
@@ -9,6 +10,14 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:video_player/video_player.dart';
 import 'package:video_compress/video_compress.dart';
 import '../services/counseling_service.dart';
+
+/// Holds a media file + optional pre-generated video thumbnail bytes.
+class _MediaItem {
+  File file;
+  final bool isVideo;
+  Uint8List? thumbnail;
+  _MediaItem({required this.file, required this.isVideo, this.thumbnail});
+}
 
 class CounselingUploadPage extends StatefulWidget {
   const CounselingUploadPage({super.key});
@@ -27,16 +36,14 @@ class _CounselingUploadPageState extends State<CounselingUploadPage> {
   bool _isDarkMode = true;
   bool _loading = false;
   bool _isPickingMedia = false;
-  int? _loadingMediaIndex;
   double _uploadProgress = 0.0;
 
   List<Map<String, dynamic>> _guards = [];
   int? _selectedGuardId;
   int? _supervisorId;
-  List<File> _files = [];
+  List<_MediaItem> _mediaItems = [];
 
-  // Tracks in-progress background compressions: index → Future<File>
-  // If the user submits before compression finishes, we await these first.
+  // Tracks background compression futures: index → Future<File>
   final Map<int, Future<File>> _pendingCompressions = {};
 
   // ── Theme ──────────────────────────────────────────────────────────────────
@@ -77,11 +84,6 @@ class _CounselingUploadPageState extends State<CounselingUploadPage> {
   }
 
   // ── Helpers ────────────────────────────────────────────────────────────────
-
-  bool _isVideoFile(File f) {
-    final ext = f.path.split('.').last.toLowerCase();
-    return ['mp4', 'mov', 'avi', 'mkv', 'webm'].contains(ext);
-  }
 
   void _snack(String msg, {Color color = Colors.redAccent}) {
     if (!mounted) return;
@@ -135,40 +137,35 @@ class _CounselingUploadPageState extends State<CounselingUploadPage> {
     if (_isPickingMedia || _loading) return;
     if (!await _requestPermissions(source)) return;
 
-    if (source == ImageSource.camera) {
-      // Camera: show spinner in grid while we compress the raw shot (~1s)
-      setState(() { _isPickingMedia = true; _loadingMediaIndex = _files.length; });
-      try {
-        final XFile? picked = await _picker.pickImage(source: source);
-        if (picked == null) { setState(() { _isPickingMedia = false; _loadingMediaIndex = null; }); return; }
-        final File tmp = File(picked.path);
-        final File finalFile = await _compressImage(tmp);
-        setState(() { _files.add(finalFile); _isPickingMedia = false; _loadingMediaIndex = null; });
-      } catch (e) {
-        setState(() { _isPickingMedia = false; _loadingMediaIndex = null; });
-        if (!e.toString().toLowerCase().contains('cancel')) _snack('Could not load image');
-      }
-    } else {
-      // Gallery: image appears instantly, no spinner needed.
-      try {
-        final XFile? picked = await _picker.pickImage(
-          source: source, imageQuality: 72, maxWidth: 1280, maxHeight: 1280,
-        );
-        if (picked == null) return;
-        setState(() => _files.add(File(picked.path)));
-      } catch (e) {
-        if (!e.toString().toLowerCase().contains('cancel')) _snack('Could not load image');
-      }
+    setState(() => _isPickingMedia = true);
+
+    try {
+      final XFile? picked = source == ImageSource.camera
+          ? await _picker.pickImage(source: source)
+          : await _picker.pickImage(source: source, imageQuality: 72, maxWidth: 1280, maxHeight: 1280);
+
+      setState(() => _isPickingMedia = false);
+      if (picked == null) return;
+
+      final File tmp = File(picked.path);
+      final File finalFile = source == ImageSource.camera ? await _compressImage(tmp) : tmp;
+
+      // ✅ INSTANT: add to grid immediately.
+      setState(() => _mediaItems.add(_MediaItem(file: finalFile, isVideo: false)));
+    } catch (e) {
+      setState(() => _isPickingMedia = false);
+      if (!e.toString().toLowerCase().contains('cancel')) _snack('Could not load image');
     }
   }
 
   // ── Compress video ────────────────────────────────────────────────────────────
 
-  // LowQuality = 360p — much faster compression, fine for security footage.
+  // Compress video — shrinks a 14MB raw video to ~1-3MB before upload.
+  // MediumQuality = 720p max. The spinner stays visible the whole time.
   Future<File> _compressVideo(File file) async {
     final MediaInfo? info = await VideoCompress.compressVideo(
       file.path,
-      quality: VideoQuality.LowQuality,
+      quality: VideoQuality.MediumQuality,
       deleteOrigin: false,
       includeAudio: true,
     );
@@ -178,34 +175,41 @@ class _CounselingUploadPageState extends State<CounselingUploadPage> {
 
   // ── Pick video ─────────────────────────────────────────────────────────────
 
-  // Videos appear in the grid INSTANTLY after gallery closes.
-  // Compression runs in background — buttons stay enabled so user can pick more.
-  // If submit is tapped before compression finishes, it waits automatically.
   Future<void> _pickVideo(ImageSource source) async {
-    if (_loading) return;
+    if (_isPickingMedia || _loading) return;
     if (!await _requestPermissions(source, forVideo: true)) return;
+
+    setState(() => _isPickingMedia = true);
 
     try {
       final XFile? picked = await _picker.pickVideo(source: source, maxDuration: const Duration(minutes: 60));
+      setState(() => _isPickingMedia = false);
       if (picked == null) return;
 
-      // Add raw file immediately — shows in grid right away, no spinner, no waiting.
+      // ✅ INSTANT: add raw file immediately — no spinner, no waiting.
       final File rawFile = File(picked.path);
-      final int fileIndex = _files.length;
-      setState(() => _files.add(rawFile));
+      final item = _MediaItem(file: rawFile, isVideo: true);
+      final int itemIndex = _mediaItems.length;
+      setState(() => _mediaItems.add(item));
 
-      // Compress silently in background.
+      // ✅ Generate thumbnail in background — updates cell when ready.
+      VideoCompress.getByteThumbnail(rawFile.path, quality: 50).then((bytes) {
+        if (mounted && bytes != null && itemIndex < _mediaItems.length) {
+          setState(() => _mediaItems[itemIndex].thumbnail = bytes);
+        }
+      }).catchError((_) {});
+
+      // ✅ Compress in background — no blocking.
       final Future<File> compressionFuture = _compressVideo(rawFile);
-      _pendingCompressions[fileIndex] = compressionFuture;
-
-      final File compressed = await compressionFuture;
-      _pendingCompressions.remove(fileIndex);
-
-      // Swap raw → compressed in place once done.
-      if (mounted && fileIndex < _files.length) {
-        setState(() => _files[fileIndex] = compressed);
-      }
+      _pendingCompressions[itemIndex] = compressionFuture;
+      compressionFuture.then((compressed) {
+        _pendingCompressions.remove(itemIndex);
+        if (mounted && itemIndex < _mediaItems.length) {
+          setState(() => _mediaItems[itemIndex].file = compressed);
+        }
+      }).catchError((_) { _pendingCompressions.remove(itemIndex); });
     } catch (e) {
+      setState(() => _isPickingMedia = false);
       if (!e.toString().toLowerCase().contains('cancel')) _snack('Could not load video');
     }
   }
@@ -227,8 +231,7 @@ class _CounselingUploadPageState extends State<CounselingUploadPage> {
     setState(() { _loading = true; _uploadProgress = 0.0; });
 
     try {
-      // ✅ If background compressions are still running, wait for them first.
-      // This handles the case where the user picks a video and immediately hits submit.
+      // If background compressions are still running, wait for them first.
       if (_pendingCompressions.isNotEmpty) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
@@ -241,8 +244,8 @@ class _CounselingUploadPageState extends State<CounselingUploadPage> {
         for (final entry in entries.entries) {
           final compressed = await entry.value;
           _pendingCompressions.remove(entry.key);
-          if (entry.key < _files.length) {
-            _files[entry.key] = compressed;
+          if (entry.key < _mediaItems.length) {
+            _mediaItems[entry.key].file = compressed;
           }
         }
       }
@@ -255,7 +258,8 @@ class _CounselingUploadPageState extends State<CounselingUploadPage> {
         'guardId': _selectedGuardId,
       };
 
-      await _service.uploadStatementDio(payload, _files, (sent, total) {
+      final List<File> files = _mediaItems.map((m) => m.file).toList();
+      await _service.uploadStatementDio(payload, files, (sent, total) {
         if (total > 0 && mounted) setState(() => _uploadProgress = sent / total);
       });
 
@@ -265,7 +269,7 @@ class _CounselingUploadPageState extends State<CounselingUploadPage> {
         _descriptionController.clear();
         _categoryController.clear();
         _pendingCompressions.clear();
-        setState(() { _selectedGuardId = null; _files.clear(); _uploadProgress = 0.0; });
+        setState(() { _selectedGuardId = null; _mediaItems.clear(); _uploadProgress = 0.0; });
       }
     } on DioException catch (e) {
       _snack('Upload failed: ${e.response?.data ?? e.message}');
@@ -288,7 +292,6 @@ class _CounselingUploadPageState extends State<CounselingUploadPage> {
   );
 
   Widget _mediaButton({required IconData icon, required String label, required Color color, required VoidCallback onTap}) {
-    // Only dim camera photo button while its compression is running
     final disabled = _isPickingMedia || _loading;
     return Expanded(
       child: Opacity(
@@ -425,7 +428,6 @@ class _CounselingUploadPageState extends State<CounselingUploadPage> {
   }
 
   Widget _buildAttachmentsCard() {
-    final totalItems = _files.length + (_loadingMediaIndex != null ? 1 : 0);
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
@@ -456,9 +458,9 @@ class _CounselingUploadPageState extends State<CounselingUploadPage> {
               color: Colors.redAccent, onTap: () => _pickVideo(ImageSource.camera)),
         ]),
 
-        if (totalItems > 0) ...[
+        if (_mediaItems.isNotEmpty) ...[
           const SizedBox(height: 16),
-          Text('${_files.length} file${_files.length != 1 ? 's' : ''} selected',
+          Text('${_mediaItems.length} file${_mediaItems.length != 1 ? 's' : ''} selected',
               style: TextStyle(color: _secondaryTextColor, fontSize: 12)),
           const SizedBox(height: 8),
           GridView.builder(
@@ -466,49 +468,41 @@ class _CounselingUploadPageState extends State<CounselingUploadPage> {
             physics: const NeverScrollableScrollPhysics(),
             gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
                 crossAxisCount: 3, crossAxisSpacing: 10, mainAxisSpacing: 10),
-            itemCount: totalItems,
+            itemCount: _mediaItems.length,
             itemBuilder: (_, i) {
-              // Loading placeholder tile
-              if (_loadingMediaIndex != null && i == _files.length) {
-                return ClipRRect(
-                  borderRadius: BorderRadius.circular(12),
-                  child: Container(
-                    color: _isDarkMode ? const Color(0xFF374151) : Colors.grey[200],
-                    child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-                      SizedBox(width: 26, height: 26,
-                          child: CircularProgressIndicator(strokeWidth: 2.5,
-                              valueColor: AlwaysStoppedAnimation(_primaryColor))),
-                      const SizedBox(height: 6),
-                      Text('Loading...', style: TextStyle(color: _secondaryTextColor, fontSize: 10)),
-                    ]),
-                  ),
-                );
-              }
+              final item = _mediaItems[i];
 
-              final file = _files[i];
-              final isVideo = _isVideoFile(file);
+              Widget mediaWidget;
+              if (item.isVideo) {
+                mediaWidget = item.thumbnail != null
+                    ? Stack(fit: StackFit.expand, children: [
+                  Image.memory(item.thumbnail!, fit: BoxFit.cover),
+                  const Center(child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+                    Icon(Icons.play_circle_fill, color: Colors.white, size: 38, shadows: [Shadow(blurRadius: 8, color: Colors.black54)]),
+                    SizedBox(height: 4),
+                    Text('VIDEO', style: TextStyle(color: Colors.white70, fontSize: 9, fontWeight: FontWeight.bold)),
+                  ])),
+                ])
+                    : Container(color: Colors.black,
+                    child: const Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+                      Icon(Icons.play_circle_fill, color: Colors.white, size: 38),
+                      SizedBox(height: 4),
+                      Text('VIDEO', style: TextStyle(color: Colors.white70, fontSize: 9, fontWeight: FontWeight.bold)),
+                    ]));
+              } else {
+                mediaWidget = Image.file(item.file, fit: BoxFit.cover,
+                    errorBuilder: (_, __, ___) => Container(color: _borderColor,
+                        child: Icon(Icons.broken_image, color: _secondaryTextColor)));
+              }
 
               return GestureDetector(
                 onTap: () => Navigator.of(context).push(MaterialPageRoute(
-                    builder: (_) => _LocalMediaFullScreen(file: file, isVideo: isVideo))),
+                    builder: (_) => _LocalMediaFullScreen(file: item.file, isVideo: item.isVideo))),
                 child: Stack(fit: StackFit.expand, children: [
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(12),
-                    child: isVideo
-                        ? Container(color: Colors.black,
-                        child: const Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-                          Icon(Icons.play_circle_fill, color: Colors.white, size: 38),
-                          SizedBox(height: 4),
-                          Text('VIDEO', style: TextStyle(color: Colors.white70, fontSize: 9, fontWeight: FontWeight.bold)),
-                        ]))
-                        : Image.file(file, fit: BoxFit.cover,
-                        errorBuilder: (_, __, ___) => Container(color: _borderColor,
-                            child: Icon(Icons.broken_image, color: _secondaryTextColor))),
-                  ),
-                  // Delete button — separate from tap-to-preview
+                  ClipRRect(borderRadius: BorderRadius.circular(12), child: mediaWidget),
                   Positioned(top: 4, right: 4,
                     child: GestureDetector(
-                      onTap: () => setState(() => _files.removeAt(i)),
+                      onTap: () => setState(() => _mediaItems.removeAt(i)),
                       child: Container(
                         padding: const EdgeInsets.all(3),
                         decoration: const BoxDecoration(color: Colors.red, shape: BoxShape.circle),
