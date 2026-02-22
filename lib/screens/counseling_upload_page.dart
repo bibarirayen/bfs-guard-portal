@@ -35,6 +35,10 @@ class _CounselingUploadPageState extends State<CounselingUploadPage> {
   int? _supervisorId;
   List<File> _files = [];
 
+  // Tracks in-progress background compressions: index → Future<File>
+  // If the user submits before compression finishes, we await these first.
+  final Map<int, Future<File>> _pendingCompressions = {};
+
   // ── Theme ──────────────────────────────────────────────────────────────────
   Color get _backgroundColor => _isDarkMode ? const Color(0xFF0F172A) : const Color(0xFFF8FAFC);
   Color get _textColor => _isDarkMode ? Colors.white : const Color(0xFF1E293B);
@@ -178,9 +182,22 @@ class _CounselingUploadPageState extends State<CounselingUploadPage> {
       final XFile? picked = await _picker.pickVideo(source: source, maxDuration: const Duration(minutes: 60));
       if (picked == null) { setState(() { _isPickingMedia = false; _loadingMediaIndex = null; }); return; }
 
-      // Compress while the spinner shows — turns 14MB → ~1-3MB before upload.
-      final File videoFile = await _compressVideo(File(picked.path));
-      setState(() { _files.add(videoFile); _isPickingMedia = false; _loadingMediaIndex = null; });
+      // ✅ 1. Add raw file immediately — gallery feels instant.
+      final File rawFile = File(picked.path);
+      final int fileIndex = _files.length;
+      setState(() { _files.add(rawFile); _isPickingMedia = false; _loadingMediaIndex = null; });
+
+      // ✅ 2. Compress in background. Track the Future so submit can await it.
+      final Future<File> compressionFuture = _compressVideo(rawFile);
+      _pendingCompressions[fileIndex] = compressionFuture;
+
+      final File compressed = await compressionFuture;
+      _pendingCompressions.remove(fileIndex);
+
+      // Swap raw → compressed in place (only if file still exists at that index).
+      if (mounted && fileIndex < _files.length) {
+        setState(() => _files[fileIndex] = compressed);
+      }
     } catch (e) {
       setState(() { _isPickingMedia = false; _loadingMediaIndex = null; });
       if (!e.toString().toLowerCase().contains('cancel')) _snack('Could not load video');
@@ -204,6 +221,26 @@ class _CounselingUploadPageState extends State<CounselingUploadPage> {
     setState(() { _loading = true; _uploadProgress = 0.0; });
 
     try {
+      // ✅ If background compressions are still running, wait for them first.
+      // This handles the case where the user picks a video and immediately hits submit.
+      if (_pendingCompressions.isNotEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text('Finishing video compression, please wait a moment...'),
+            backgroundColor: Colors.orange,
+            duration: Duration(seconds: 3),
+          ));
+        }
+        final entries = Map<int, Future<File>>.from(_pendingCompressions);
+        for (final entry in entries.entries) {
+          final compressed = await entry.value;
+          _pendingCompressions.remove(entry.key);
+          if (entry.key < _files.length) {
+            _files[entry.key] = compressed;
+          }
+        }
+      }
+
       final payload = {
         'title': _titleController.text.trim(),
         'description': _descriptionController.text.trim(),
@@ -221,6 +258,7 @@ class _CounselingUploadPageState extends State<CounselingUploadPage> {
         _titleController.clear();
         _descriptionController.clear();
         _categoryController.clear();
+        _pendingCompressions.clear();
         setState(() { _selectedGuardId = null; _files.clear(); _uploadProgress = 0.0; });
       }
     } on DioException catch (e) {

@@ -261,6 +261,10 @@ class _ReportPageState extends State<ReportPage> {
   // ─────────────────────────────────────────────────────────────────────────
   final List<File> _mediaFiles = [];
 
+  // Tracks in-progress background compressions: index → Future<File>
+  // If the user submits before compression finishes, we await these first.
+  final Map<int, Future<File>> _pendingCompressions = {};
+
   // ✅ NEW: tracks which index is currently being loaded (null = none loading)
   int? _loadingMediaIndex;
   // ✅ NEW: true while any pick operation is in progress (blocks buttons)
@@ -317,6 +321,7 @@ class _ReportPageState extends State<ReportPage> {
   void _resetPage() {
     setState(() {
       _mediaFiles.clear();
+      _pendingCompressions.clear();
       _selectedReportType = "Incident Report";
       _policeCalled = false;
       _maintenanceEmailClient = false;
@@ -397,14 +402,26 @@ class _ReportPageState extends State<ReportPage> {
         return;
       }
 
-      // Compress while the spinner shows — turns 14MB → ~1-3MB before upload.
-      final File videoFile = await _compressVideo(File(pickedFile.path));
-
+      // ✅ 1. Add the raw file to the grid IMMEDIATELY — gallery feels instant.
+      final File rawFile = File(pickedFile.path);
+      final int fileIndex = _mediaFiles.length;
       setState(() {
-        _mediaFiles.add(videoFile);
+        _mediaFiles.add(rawFile);
         _isPickingMedia = false;
         _loadingMediaIndex = null;
       });
+
+      // ✅ 2. Compress in background. Track the Future so submit can await it.
+      final Future<File> compressionFuture = _compressVideo(rawFile);
+      _pendingCompressions[fileIndex] = compressionFuture;
+
+      final File compressed = await compressionFuture;
+      _pendingCompressions.remove(fileIndex);
+
+      // Swap raw → compressed in place (only if file still exists at that index).
+      if (mounted && fileIndex < _mediaFiles.length) {
+        setState(() => _mediaFiles[fileIndex] = compressed);
+      }
     } catch (e) {
       setState(() { _isPickingMedia = false; _loadingMediaIndex = null; });
       debugPrint('Video pick error: $e');
@@ -534,6 +551,27 @@ class _ReportPageState extends State<ReportPage> {
     setState(() { _isSubmitting = true; _uploadProgress = 0.0; });
 
     try {
+      // ✅ If background compressions are still running, wait for them first.
+      // This handles the case where the user picks a video and immediately hits submit.
+      if (_pendingCompressions.isNotEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text('Finishing video compression, please wait a moment...'),
+            backgroundColor: Colors.orange,
+            duration: Duration(seconds: 3),
+          ));
+        }
+        // Await all compressions and swap the results into _mediaFiles
+        final entries = Map<int, Future<File>>.from(_pendingCompressions);
+        for (final entry in entries.entries) {
+          final compressed = await entry.value;
+          _pendingCompressions.remove(entry.key);
+          if (entry.key < _mediaFiles.length) {
+            _mediaFiles[entry.key] = compressed;
+          }
+        }
+      }
+
       if (_mediaFiles.isNotEmpty) {
         await api.uploadReportDio(
           payload,
