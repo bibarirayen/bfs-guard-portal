@@ -135,34 +135,40 @@ class _CounselingUploadPageState extends State<CounselingUploadPage> {
     if (_isPickingMedia || _loading) return;
     if (!await _requestPermissions(source)) return;
 
-    setState(() { _isPickingMedia = true; _loadingMediaIndex = _files.length; });
-
-    try {
-      // Camera: no built-in resize (we compress below). Gallery: resize natively, fast.
-      final XFile? picked = source == ImageSource.camera
-          ? await _picker.pickImage(source: source)
-          : await _picker.pickImage(source: source, imageQuality: 72, maxWidth: 1280, maxHeight: 1280);
-
-      if (picked == null) { setState(() { _isPickingMedia = false; _loadingMediaIndex = null; }); return; }
-
-      final File tmp = File(picked.path);
-      final File finalFile = source == ImageSource.camera ? await _compressImage(tmp) : tmp;
-
-      setState(() { _files.add(finalFile); _isPickingMedia = false; _loadingMediaIndex = null; });
-    } catch (e) {
-      setState(() { _isPickingMedia = false; _loadingMediaIndex = null; });
-      if (!e.toString().toLowerCase().contains('cancel')) _snack('Could not load image');
+    if (source == ImageSource.camera) {
+      // Camera: show spinner in grid while we compress the raw shot (~1s)
+      setState(() { _isPickingMedia = true; _loadingMediaIndex = _files.length; });
+      try {
+        final XFile? picked = await _picker.pickImage(source: source);
+        if (picked == null) { setState(() { _isPickingMedia = false; _loadingMediaIndex = null; }); return; }
+        final File tmp = File(picked.path);
+        final File finalFile = await _compressImage(tmp);
+        setState(() { _files.add(finalFile); _isPickingMedia = false; _loadingMediaIndex = null; });
+      } catch (e) {
+        setState(() { _isPickingMedia = false; _loadingMediaIndex = null; });
+        if (!e.toString().toLowerCase().contains('cancel')) _snack('Could not load image');
+      }
+    } else {
+      // Gallery: image appears instantly, no spinner needed.
+      try {
+        final XFile? picked = await _picker.pickImage(
+          source: source, imageQuality: 72, maxWidth: 1280, maxHeight: 1280,
+        );
+        if (picked == null) return;
+        setState(() => _files.add(File(picked.path)));
+      } catch (e) {
+        if (!e.toString().toLowerCase().contains('cancel')) _snack('Could not load image');
+      }
     }
   }
 
   // ── Compress video ────────────────────────────────────────────────────────────
 
-  // Compress video — shrinks a 14MB raw video to ~1-3MB before upload.
-  // MediumQuality = 720p max. The spinner stays visible the whole time.
+  // LowQuality = 360p — much faster compression, fine for security footage.
   Future<File> _compressVideo(File file) async {
     final MediaInfo? info = await VideoCompress.compressVideo(
       file.path,
-      quality: VideoQuality.MediumQuality,
+      quality: VideoQuality.LowQuality,
       deleteOrigin: false,
       includeAudio: true,
     );
@@ -172,34 +178,34 @@ class _CounselingUploadPageState extends State<CounselingUploadPage> {
 
   // ── Pick video ─────────────────────────────────────────────────────────────
 
+  // Videos appear in the grid INSTANTLY after gallery closes.
+  // Compression runs in background — buttons stay enabled so user can pick more.
+  // If submit is tapped before compression finishes, it waits automatically.
   Future<void> _pickVideo(ImageSource source) async {
-    if (_isPickingMedia || _loading) return;
+    if (_loading) return;
     if (!await _requestPermissions(source, forVideo: true)) return;
-
-    setState(() { _isPickingMedia = true; _loadingMediaIndex = _files.length; });
 
     try {
       final XFile? picked = await _picker.pickVideo(source: source, maxDuration: const Duration(minutes: 60));
-      if (picked == null) { setState(() { _isPickingMedia = false; _loadingMediaIndex = null; }); return; }
+      if (picked == null) return;
 
-      // ✅ 1. Add raw file immediately — gallery feels instant.
+      // Add raw file immediately — shows in grid right away, no spinner, no waiting.
       final File rawFile = File(picked.path);
       final int fileIndex = _files.length;
-      setState(() { _files.add(rawFile); _isPickingMedia = false; _loadingMediaIndex = null; });
+      setState(() => _files.add(rawFile));
 
-      // ✅ 2. Compress in background. Track the Future so submit can await it.
+      // Compress silently in background.
       final Future<File> compressionFuture = _compressVideo(rawFile);
       _pendingCompressions[fileIndex] = compressionFuture;
 
       final File compressed = await compressionFuture;
       _pendingCompressions.remove(fileIndex);
 
-      // Swap raw → compressed in place (only if file still exists at that index).
+      // Swap raw → compressed in place once done.
       if (mounted && fileIndex < _files.length) {
         setState(() => _files[fileIndex] = compressed);
       }
     } catch (e) {
-      setState(() { _isPickingMedia = false; _loadingMediaIndex = null; });
       if (!e.toString().toLowerCase().contains('cancel')) _snack('Could not load video');
     }
   }
@@ -282,6 +288,7 @@ class _CounselingUploadPageState extends State<CounselingUploadPage> {
   );
 
   Widget _mediaButton({required IconData icon, required String label, required Color color, required VoidCallback onTap}) {
+    // Only dim camera photo button while its compression is running
     final disabled = _isPickingMedia || _loading;
     return Expanded(
       child: Opacity(
