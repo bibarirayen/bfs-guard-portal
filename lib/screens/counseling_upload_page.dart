@@ -9,6 +9,8 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:video_player/video_player.dart';
 import 'package:video_compress/video_compress.dart';
+import 'package:ffmpeg_kit_flutter_min/ffmpeg_kit.dart';
+import 'package:ffmpeg_kit_flutter_min/return_code.dart';
 import '../services/counseling_service.dart';
 
 /// Holds a media file + optional pre-generated video thumbnail bytes.
@@ -92,16 +94,89 @@ class _CounselingUploadPageState extends State<CounselingUploadPage> {
     );
   }
 
-  // Compress camera images — capped at 1280px, quality 72. Never upscales.
+  // ── Image compression ─────────────────────────────────────────────────────
+  // iOS  → HEIC (hardware encoder, ~10× faster than JPEG, same visual quality)
+  // Android → JPEG quality 82, cap at 1280px on the longest side.
+  // minWidth/minHeight = 0 so small images are never upscaled.
   Future<File> _compressImage(File file) async {
     final dir = await getTemporaryDirectory();
-    final target = '${dir.path}/${DateTime.now().millisecondsSinceEpoch}.jpg';
+    final ts = DateTime.now().millisecondsSinceEpoch;
+    final bool useHeic = Platform.isIOS;
+    final String ext = useHeic ? 'heic' : 'jpg';
+    final target = '${dir.path}/$ts.$ext';
+
     final result = await FlutterImageCompress.compressAndGetFile(
-      file.absolute.path, target,
-      quality: 72, minWidth: 1280, minHeight: 1280,
-      format: CompressFormat.jpeg,
+      file.absolute.path,
+      target,
+      quality: 82,
+      minWidth: 0,
+      minHeight: 0,
+      format: useHeic ? CompressFormat.heic : CompressFormat.jpeg,
     );
     return result == null ? file : File(result.path);
+  }
+
+  // ── Video compression ──────────────────────────────────────────────────────
+  // Android: FFmpeg h264_mediacodec (hardware) — 10–20× faster than video_compress.
+  // iOS:     video_compress AVFoundation hardware encoder.
+  Future<File> _compressVideo(File file) async {
+    if (Platform.isAndroid) {
+      return await _compressVideoAndroid(file);
+    } else {
+      return await _compressVideoIOS(file);
+    }
+  }
+
+  Future<File> _compressVideoAndroid(File file) async {
+    final dir = await getTemporaryDirectory();
+    final out = '${dir.path}/${DateTime.now().millisecondsSinceEpoch}_compressed.mp4';
+
+    final cmd = '-i "${file.path}" '
+        '-c:v h264_mediacodec '
+        '-b:v 1200k '
+        '-vf "scale=960:540:force_original_aspect_ratio=decrease,pad=960:540:(ow-iw)/2:(oh-ih)/2" '
+        '-c:a aac -b:a 96k '
+        '-movflags +faststart '
+        '"$out"';
+
+    final session = await FFmpegKit.execute(cmd);
+    final returnCode = await session.getReturnCode();
+
+    if (ReturnCode.isSuccess(returnCode)) {
+      final compressed = File(out);
+      if (await compressed.exists()) return compressed;
+    }
+
+    // Fallback to software if hardware encoder not available
+    print('⚠️ Hardware encode failed, falling back to libx264');
+    final fallbackOut = '${dir.path}/${DateTime.now().millisecondsSinceEpoch}_fallback.mp4';
+    final fallbackCmd = '-i "${file.path}" '
+        '-c:v libx264 -preset ultrafast -crf 28 '
+        '-vf "scale=960:540:force_original_aspect_ratio=decrease,pad=960:540:(ow-iw)/2:(oh-ih)/2" '
+        '-c:a aac -b:a 96k '
+        '-movflags +faststart '
+        '"$fallbackOut"';
+    final fallbackSession = await FFmpegKit.execute(fallbackCmd);
+    final fallbackCode = await fallbackSession.getReturnCode();
+    if (ReturnCode.isSuccess(fallbackCode)) {
+      final f = File(fallbackOut);
+      if (await f.exists()) return f;
+    }
+
+    return file;
+  }
+
+  Future<File> _compressVideoIOS(File file) async {
+    await VideoCompress.cancelCompression();
+    final MediaInfo? info = await VideoCompress.compressVideo(
+      file.path,
+      quality: VideoQuality.Res960x540Quality,
+      deleteOrigin: false,
+      includeAudio: true,
+      frameRate: 30,
+    );
+    if (info == null || info.file == null) return file;
+    return info.file!;
   }
 
   // ── Permissions ────────────────────────────────────────────────────────────
@@ -142,35 +217,30 @@ class _CounselingUploadPageState extends State<CounselingUploadPage> {
     try {
       final XFile? picked = source == ImageSource.camera
           ? await _picker.pickImage(source: source)
-          : await _picker.pickImage(source: source, imageQuality: 72, maxWidth: 1280, maxHeight: 1280);
+          : await _picker.pickImage(source: source);
 
       setState(() => _isPickingMedia = false);
       if (picked == null) return;
 
-      final File tmp = File(picked.path);
-      final File finalFile = source == ImageSource.camera ? await _compressImage(tmp) : tmp;
+      // ✅ TRULY INSTANT: add raw file to grid RIGHT NOW before any compression.
+      final File rawFile = File(picked.path);
+      final item = _MediaItem(file: rawFile, isVideo: false);
+      final int itemIndex = _mediaItems.length;
+      setState(() => _mediaItems.add(item));
 
-      // ✅ INSTANT: add to grid immediately.
-      setState(() => _mediaItems.add(_MediaItem(file: finalFile, isVideo: false)));
+      // Compress in background — swaps file silently when done.
+      final Future<File> compressionFuture = _compressImage(rawFile);
+      _pendingCompressions[itemIndex] = compressionFuture;
+      compressionFuture.then((compressed) {
+        _pendingCompressions.remove(itemIndex);
+        if (mounted && itemIndex < _mediaItems.length) {
+          setState(() => _mediaItems[itemIndex].file = compressed);
+        }
+      }).catchError((_) { _pendingCompressions.remove(itemIndex); });
     } catch (e) {
       setState(() => _isPickingMedia = false);
       if (!e.toString().toLowerCase().contains('cancel')) _snack('Could not load image');
     }
-  }
-
-  // ── Compress video ────────────────────────────────────────────────────────────
-
-  // Compress video — shrinks a 14MB raw video to ~1-3MB before upload.
-  // MediumQuality = 720p max. The spinner stays visible the whole time.
-  Future<File> _compressVideo(File file) async {
-    final MediaInfo? info = await VideoCompress.compressVideo(
-      file.path,
-      quality: VideoQuality.MediumQuality,
-      deleteOrigin: false,
-      includeAudio: true,
-    );
-    if (info == null || info.file == null) return file;
-    return info.file!;
   }
 
   // ── Pick video ─────────────────────────────────────────────────────────────
