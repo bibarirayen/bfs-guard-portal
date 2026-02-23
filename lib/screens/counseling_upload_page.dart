@@ -1,9 +1,8 @@
-import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_image_compress/flutter_image_compress.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -11,6 +10,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:video_player/video_player.dart';
 import 'package:video_compress/video_compress.dart';
 import '../services/counseling_service.dart';
+// flutter_image_compress REMOVED — use imageQuality param on pickImage instead (no crashes)
 
 /// Holds a media file + optional pre-generated video thumbnail bytes.
 class _MediaItem {
@@ -18,7 +18,7 @@ class _MediaItem {
   final bool isVideo;
   Uint8List? thumbnail;
   bool isCompressing;
-  double compressionProgress; // 0.0 → 1.0
+  double compressionProgress;
   File? compressedFile;
   bool compressionFailed;
 
@@ -53,8 +53,9 @@ class _CounselingUploadPageState extends State<CounselingUploadPage> {
   int? _supervisorId;
   List<_MediaItem> _mediaItems = [];
 
-  // Tracks background compression futures: index → Future<File>
-  final Map<int, Future<File>> _pendingCompressions = {};
+  // Video compression queue
+  final List<({_MediaItem item, int index})> _compressionQueue = [];
+  bool _compressionRunning = false;
 
   // ── Theme ──────────────────────────────────────────────────────────────────
   Color get _backgroundColor => _isDarkMode ? const Color(0xFF0F172A) : const Color(0xFFF8FAFC);
@@ -81,7 +82,6 @@ class _CounselingUploadPageState extends State<CounselingUploadPage> {
   }
 
   // ── Init ───────────────────────────────────────────────────────────────────
-
   Future<void> loadSupervisorAndGuards() async {
     final prefs = await SharedPreferences.getInstance();
     _supervisorId = prefs.getInt('userId');
@@ -93,8 +93,6 @@ class _CounselingUploadPageState extends State<CounselingUploadPage> {
     }
   }
 
-  // ── Helpers ────────────────────────────────────────────────────────────────
-
   void _snack(String msg, {Color color = Colors.redAccent}) {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
@@ -102,31 +100,99 @@ class _CounselingUploadPageState extends State<CounselingUploadPage> {
     );
   }
 
-  // ── Image compression ─────────────────────────────────────────────────────
-  Future<File> _compressImage(File file) async {
-    try {
-      final dir    = await getTemporaryDirectory();
-      final ts     = DateTime.now().millisecondsSinceEpoch;
-      // Always use JPEG — HEIC can crash on some iOS versions with gallery paths
-      final target = '${dir.path}/$ts.jpg';
-      final result = await FlutterImageCompress.compressAndGetFile(
-        file.absolute.path, target,
-        quality: 85, minWidth: 0, minHeight: 0,
-        format: CompressFormat.jpeg,
-      );
-      if (result != null) {
-        final compressed = File(result.path);
-        if (await compressed.exists()) return compressed;
+  // ── Permissions ────────────────────────────────────────────────────────────
+  Future<bool> _requestPermissions(ImageSource source, {bool forVideo = false}) async {
+    if (Platform.isIOS) return true;
+
+    if (source == ImageSource.camera) {
+      if (!(await Permission.camera.request()).isGranted) {
+        _snack('Camera permission required');
+        return false;
       }
-    } catch (_) {}
-    return file; // always fall back to raw — never crash
+      if (forVideo && !(await Permission.microphone.request()).isGranted) {
+        _snack('Microphone permission required for video');
+        return false;
+      }
+      return true;
+    }
+
+    if (await Permission.photos.isGranted || await Permission.storage.isGranted) return true;
+    final s = await Permission.photos.request();
+    if (!s.isGranted) {
+      _snack(forVideo ? 'Video library permission required' : 'Photo library permission required');
+      return false;
+    }
+    return true;
   }
 
-  // ── Video compression queue ───────────────────────────────────────────────
-  // Queued so multiple picked videos compress one-at-a-time (video_compress is single-threaded)
-  final List<({_MediaItem item, int index})> _compressionQueue = [];
-  bool _compressionRunning = false;
+  // ── Copy to stable temp path ───────────────────────────────────────────────
+  Future<File> _copyToTemp(String sourcePath, {required String ext}) async {
+    try {
+      final dir  = await getTemporaryDirectory();
+      final dest = '${dir.path}/${DateTime.now().millisecondsSinceEpoch}.$ext';
+      return await File(sourcePath).copy(dest);
+    } catch (_) {
+      return File(sourcePath);
+    }
+  }
 
+  // ── Pick image ─────────────────────────────────────────────────────────────
+  // THE FIX: imageQuality: 85 replaces flutter_image_compress — zero crashes
+  Future<void> _pickImage(ImageSource source) async {
+    if (_loading) return;
+    if (!await _requestPermissions(source)) return;
+
+    XFile? picked;
+    try {
+      picked = await _picker.pickImage(source: source, imageQuality: 85);
+    } catch (_) {
+      return;
+    }
+    if (picked == null || !mounted) return;
+
+    // Copy to stable temp path
+    final File stableFile = await _copyToTemp(picked.path, ext: 'jpg');
+
+    // ADD TO GRID IMMEDIATELY
+    setState(() => _mediaItems.add(_MediaItem(file: stableFile, isVideo: false)));
+  }
+
+  // ── Pick video ─────────────────────────────────────────────────────────────
+  Future<void> _pickVideo(ImageSource source) async {
+    if (_loading) return;
+    if (!await _requestPermissions(source, forVideo: true)) return;
+
+    XFile? picked;
+    try {
+      picked = await _picker.pickVideo(source: source, maxDuration: const Duration(minutes: 60));
+    } catch (_) {
+      return;
+    }
+    if (picked == null || !mounted) return;
+
+    // Copy to stable temp path
+    final File stableFile = await _copyToTemp(picked.path, ext: 'mp4');
+
+    // ADD TO GRID IMMEDIATELY
+    final item = _MediaItem(file: stableFile, isVideo: true);
+    final int itemIndex = _mediaItems.length;
+    setState(() => _mediaItems.add(item));
+
+    // After frame renders: thumbnail + compression
+    SchedulerBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+
+      VideoCompress.getByteThumbnail(stableFile.path, quality: 50).then((bytes) {
+        if (mounted && bytes != null && itemIndex < _mediaItems.length) {
+          setState(() => _mediaItems[itemIndex].thumbnail = bytes);
+        }
+      }).catchError((_) {});
+
+      _queueVideoCompression(item, itemIndex);
+    });
+  }
+
+  // ── Video compression queue ────────────────────────────────────────────────
   void _queueVideoCompression(_MediaItem item, int index) {
     if (!mounted) return;
     setState(() {
@@ -168,9 +234,7 @@ class _CounselingUploadPageState extends State<CounselingUploadPage> {
           _mediaItems[index].compressedFile = info?.file;
           _mediaItems[index].isCompressing = false;
           _mediaItems[index].compressionProgress = 1.0;
-          // Update the pending compression future to resolved
         });
-        _pendingCompressions.remove(index);
       }
     } catch (_) {
       if (mounted && index < _mediaItems.length) {
@@ -179,92 +243,13 @@ class _CounselingUploadPageState extends State<CounselingUploadPage> {
           _mediaItems[index].compressionFailed = true;
           _mediaItems[index].compressionProgress = 0.0;
         });
-        _pendingCompressions.remove(index);
       }
     } finally {
       sub?.unsubscribe();
     }
   }
 
-
-  // ── Permissions ────────────────────────────────────────────────────────────
-
-  Future<bool> _requestPermissions(ImageSource source, {bool forVideo = false}) async {
-    if (Platform.isIOS) return true;
-
-    if (source == ImageSource.camera) {
-      if (!(await Permission.camera.request()).isGranted) {
-        _snack('Camera permission required');
-        return false;
-      }
-      if (forVideo && !(await Permission.microphone.request()).isGranted) {
-        _snack('Microphone permission required for video');
-        return false;
-      }
-      return true;
-    }
-
-    // Gallery
-    if (await Permission.photos.isGranted || await Permission.storage.isGranted) return true;
-    final s = await Permission.photos.request();
-    if (!s.isGranted) {
-      _snack(forVideo ? 'Video library permission required' : 'Photo library permission required');
-      return false;
-    }
-    return true;
-  }
-
-  // ── Pick image ─────────────────────────────────────────────────────────────
-
-  Future<void> _pickImage(ImageSource source) async {
-    if (_loading) return;
-    if (!await _requestPermissions(source)) return;
-    XFile? picked;
-    try { picked = await _picker.pickImage(source: source); } catch (_) { return; }
-    if (picked == null || !mounted) return;
-
-    // ── ADD TO GRID IMMEDIATELY ──
-    final rawFile = File(picked.path);
-    final item = _MediaItem(file: rawFile, isVideo: false);
-    final int itemIndex = _mediaItems.length;
-    setState(() => _mediaItems.add(item));
-
-    // Compress in background, swap silently — never crash on error
-    _compressImage(rawFile).then((compressed) {
-      if (mounted && itemIndex < _mediaItems.length) {
-        setState(() => _mediaItems[itemIndex].file = compressed);
-      }
-    }).catchError((_) {});
-  }
-
-  // ── Pick video ─────────────────────────────────────────────────────────────
-
-  Future<void> _pickVideo(ImageSource source) async {
-    if (_loading) return;
-    if (!await _requestPermissions(source, forVideo: true)) return;
-    XFile? picked;
-    try { picked = await _picker.pickVideo(source: source, maxDuration: const Duration(minutes: 60)); } catch (_) { return; }
-    if (picked == null || !mounted) return;
-
-    // ── ADD TO GRID IMMEDIATELY ──
-    final rawFile = File(picked.path);
-    final item = _MediaItem(file: rawFile, isVideo: true);
-    final int itemIndex = _mediaItems.length;
-    setState(() => _mediaItems.add(item));
-
-    // Thumbnail in background
-    VideoCompress.getByteThumbnail(rawFile.path, quality: 50).then((bytes) {
-      if (mounted && bytes != null && itemIndex < _mediaItems.length) {
-        setState(() => _mediaItems[itemIndex].thumbnail = bytes);
-      }
-    }).catchError((_) {});
-
-    // Compress in background via queue — buttons stay live
-    _queueVideoCompression(item, itemIndex);
-  }
-
   // ── Submit ─────────────────────────────────────────────────────────────────
-
   Future<void> submitStatement() async {
     if (_loading) return;
 
@@ -280,11 +265,10 @@ class _CounselingUploadPageState extends State<CounselingUploadPage> {
     setState(() { _loading = true; _uploadProgress = 0.0; });
 
     try {
-      // If background compressions are still running, wait for them first.
       if (_mediaItems.any((m) => m.isCompressing)) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-            content: Text('Finishing video compression, please wait a moment...'),
+            content: Text('Finishing video compression, please wait...'),
             backgroundColor: Colors.orange,
             duration: Duration(seconds: 60),
           ));
@@ -296,7 +280,6 @@ class _CounselingUploadPageState extends State<CounselingUploadPage> {
         }
         if (mounted) ScaffoldMessenger.of(context).clearSnackBars();
       }
-      _pendingCompressions.clear();
 
       final payload = {
         'title': _titleController.text.trim(),
@@ -316,7 +299,6 @@ class _CounselingUploadPageState extends State<CounselingUploadPage> {
         _titleController.clear();
         _descriptionController.clear();
         _categoryController.clear();
-        _pendingCompressions.clear();
         setState(() { _selectedGuardId = null; _mediaItems.clear(); _uploadProgress = 0.0; });
       }
     } on DioException catch (e) {
@@ -329,7 +311,6 @@ class _CounselingUploadPageState extends State<CounselingUploadPage> {
   }
 
   // ── UI helpers ─────────────────────────────────────────────────────────────
-
   InputDecoration _input(String label) => InputDecoration(
     labelText: label,
     labelStyle: TextStyle(color: _secondaryTextColor, fontWeight: FontWeight.w500),
@@ -362,10 +343,8 @@ class _CounselingUploadPageState extends State<CounselingUploadPage> {
   }
 
   // ── Build ──────────────────────────────────────────────────────────────────
-
   @override
   Widget build(BuildContext context) {
-    // Block all interaction while loading/picking
     return AbsorbPointer(
       absorbing: _loading,
       child: Scaffold(
@@ -378,27 +357,19 @@ class _CounselingUploadPageState extends State<CounselingUploadPage> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    // Header
                     Text('Upload Counseling Statement',
                         style: TextStyle(color: _textColor, fontSize: 22, fontWeight: FontWeight.bold)),
                     const SizedBox(height: 20),
-
-                    // Form card
                     _buildFormCard(),
                     const SizedBox(height: 20),
-
-                    // Attachments card
                     _buildAttachmentsCard(),
                     const SizedBox(height: 30),
-
-                    // Submit button
                     _buildSubmitButton(),
                     const SizedBox(height: 40),
                   ],
                 ),
               ),
 
-              // Full-screen loading overlay while submitting
               if (_loading)
                 Container(
                   color: Colors.black54,
@@ -472,6 +443,7 @@ class _CounselingUploadPageState extends State<CounselingUploadPage> {
   }
 
   Widget _buildAttachmentsCard() {
+    final anyCompressing = _mediaItems.any((m) => m.isCompressing);
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
@@ -481,13 +453,28 @@ class _CounselingUploadPageState extends State<CounselingUploadPage> {
           Icon(Icons.photo_library, color: _primaryColor, size: 20),
           const SizedBox(width: 8),
           Text('Attachments', style: TextStyle(color: _textColor, fontWeight: FontWeight.bold, fontSize: 16)),
+          const Spacer(),
+          if (anyCompressing)
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+              decoration: BoxDecoration(
+                color: Colors.deepPurpleAccent.withOpacity(0.15),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: Colors.deepPurpleAccent.withOpacity(0.4)),
+              ),
+              child: const Row(mainAxisSize: MainAxisSize.min, children: [
+                SizedBox(width: 10, height: 10,
+                    child: CircularProgressIndicator(strokeWidth: 1.5, color: Colors.deepPurpleAccent)),
+                SizedBox(width: 5),
+                Text('Compressing', style: TextStyle(color: Colors.deepPurpleAccent, fontSize: 10, fontWeight: FontWeight.w600)),
+              ]),
+            ),
         ]),
         const SizedBox(height: 8),
-        Text('Tap any thumbnail to preview it full-screen',
+        Text('Tap any thumbnail to preview full-screen',
             style: TextStyle(color: _secondaryTextColor, fontSize: 12)),
         const SizedBox(height: 16),
 
-        // Picker buttons
         Row(children: [
           _mediaButton(icon: Icons.photo_library_rounded, label: 'Gallery\nPhoto',
               color: _primaryColor, onTap: () => _pickImage(ImageSource.gallery)),
@@ -521,18 +508,13 @@ class _CounselingUploadPageState extends State<CounselingUploadPage> {
                 mediaWidget = item.thumbnail != null
                     ? Stack(fit: StackFit.expand, children: [
                   Image.memory(item.thumbnail!, fit: BoxFit.cover),
-                  const Center(child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-                    Icon(Icons.play_circle_fill, color: Colors.white, size: 38, shadows: [Shadow(blurRadius: 8, color: Colors.black54)]),
-                    SizedBox(height: 4),
-                    Text('VIDEO', style: TextStyle(color: Colors.white70, fontSize: 9, fontWeight: FontWeight.bold)),
-                  ])),
+                  const Center(child: Icon(Icons.play_circle_fill, color: Colors.white, size: 38,
+                      shadows: [Shadow(blurRadius: 8, color: Colors.black54)])),
                 ])
-                    : Container(color: Colors.black,
-                    child: const Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-                      Icon(Icons.play_circle_fill, color: Colors.white, size: 38),
-                      SizedBox(height: 4),
-                      Text('VIDEO', style: TextStyle(color: Colors.white70, fontSize: 9, fontWeight: FontWeight.bold)),
-                    ]));
+                    : Container(
+                  color: const Color(0xFF1a1a2e),
+                  child: const Center(child: Icon(Icons.videocam, color: Colors.white54, size: 36)),
+                );
               } else {
                 mediaWidget = Image.file(item.file, fit: BoxFit.cover,
                     errorBuilder: (_, __, ___) => Container(color: _borderColor,
@@ -569,7 +551,7 @@ class _CounselingUploadPageState extends State<CounselingUploadPage> {
                       ),
                     ),
 
-                  // Compression done badge
+                  // Done badge
                   if (item.isVideo && !item.isCompressing && item.compressedFile != null)
                     Positioned(bottom: 6, left: 6,
                       child: Container(
@@ -583,7 +565,7 @@ class _CounselingUploadPageState extends State<CounselingUploadPage> {
                       ),
                     ),
 
-                  // Failed badge (uploads raw)
+                  // Failed badge
                   if (item.isVideo && item.compressionFailed)
                     Positioned(bottom: 6, left: 6,
                       child: Container(

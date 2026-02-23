@@ -4,31 +4,23 @@ import 'dart:io';
 import 'dart:typed_data';
 import 'package:crossplatformblackfabric/config/ApiService.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:flutter_image_compress/flutter_image_compress.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:dio/dio.dart';
 import 'package:video_compress/video_compress.dart';
-// ffmpeg_kit removed — video_compress handles both iOS (AVFoundation) and Android (MediaCodec)
+// flutter_image_compress REMOVED — use imageQuality param on pickImage instead (no crashes)
 
 // ─── Media item ───────────────────────────────────────────────────────────────
-// Tracks the file through its lifecycle:
-//   raw file picked → compression running in background → compressed file ready
-// When Submit is pressed, we upload whichever file is ready (compressed if done,
-// raw if compression somehow failed) and wait for the upload before firing email.
 class _MediaItem {
-  File file;           // starts as raw, swapped to compressed when done
+  File file;
   final bool isVideo;
   Uint8List? thumbnail;
-
-  // Compression state
   bool isCompressing;
   bool compressionFailed;
-  double compressionProgress; // 0.0 → 1.0
-
-  // Set once compression finishes
+  double compressionProgress;
   File? compressedFile;
 
   _MediaItem({required this.file, required this.isVideo, this.thumbnail})
@@ -36,10 +28,8 @@ class _MediaItem {
         compressionFailed = false,
         compressionProgress = 0.0;
 
-  // The file we'll actually upload — compressed version if available, else raw
   File get uploadFile => compressedFile ?? file;
-
-  bool get isReady => !isCompressing; // ready to upload even if compression failed (uploads raw)
+  bool get isReady => !isCompressing;
 }
 
 class ReportPage extends StatefulWidget {
@@ -126,6 +116,10 @@ class _ReportPageState extends State<ReportPage> {
   bool _hasActiveAssignment = false;
   int? _selectedSiteId;
   final ImagePicker _picker = ImagePicker();
+
+  // Video compression queue
+  final List<({_MediaItem item, int index})> _compressionQueue = [];
+  bool _compressionRunning = false;
 
   // ─── LIFECYCLE ────────────────────────────────────────────────────────────
   @override
@@ -279,21 +273,80 @@ class _ReportPageState extends State<ReportPage> {
     ));
   }
 
-  // ─── VIDEO COMPRESSION ────────────────────────────────────────────────────
-  // Runs in background the moment a video is picked.
-  // Target: 720p, ~40–80 MB for a 2-minute clip (vs 400 MB raw).
-  // This runs while the guard fills the form — by Submit time it's usually done.
-  // ─── VIDEO COMPRESSION ────────────────────────────────────────────────────
-  // Uses video_compress on BOTH iOS and Android.
-  // iOS:     AVFoundation hardware encoder (native Apple) — very fast, no FFmpeg needed
-  // Android: MediaCodec hardware encoder — same result without FFmpeg binary
-  // This is why we removed ffmpeg_kit_flutter_min — it was retired Jan 2025
-  // and its iOS binaries now return 404, breaking every iOS build.
-  // Queue so multiple videos compress one-at-a-time (video_compress is single-threaded)
-  final List<({_MediaItem item, int index})> _compressionQueue = [];
-  bool _compressionRunning = false;
+  // ─── MEDIA PICKING ────────────────────────────────────────────────────────
+  // THE FIX:
+  // 1. imageQuality: 85 on pickImage replaces flutter_image_compress — zero crashes
+  // 2. File is copied to temp dir (stable path on both iOS/Android)
+  // 3. setState adds item to grid IMMEDIATELY after copy
+  // 4. Thumbnail + compression start AFTER the frame renders (addPostFrameCallback)
 
-  void _compressVideoInBackground(_MediaItem item, int index) {
+  Future<void> _pickImage(ImageSource source) async {
+    if (!await _requestPermissions(source)) return;
+
+    XFile? picked;
+    try {
+      // imageQuality does compression natively — replaces flutter_image_compress entirely
+      picked = await _picker.pickImage(source: source, imageQuality: 85);
+    } catch (_) {
+      return;
+    }
+    if (picked == null || !mounted) return;
+
+    // Copy to a guaranteed stable temp path
+    final File stableFile = await _copyToTemp(picked.path, ext: 'jpg');
+
+    // ADD TO GRID RIGHT NOW
+    setState(() => _mediaItems.add(_MediaItem(file: stableFile, isVideo: false)));
+  }
+
+  Future<void> _pickVideo(ImageSource source) async {
+    if (!await _requestPermissions(source, forVideo: true)) return;
+
+    XFile? picked;
+    try {
+      picked = await _picker.pickVideo(source: source);
+    } catch (_) {
+      return;
+    }
+    if (picked == null || !mounted) return;
+
+    // Copy to a guaranteed stable temp path
+    final File stableFile = await _copyToTemp(picked.path, ext: 'mp4');
+
+    // ADD TO GRID RIGHT NOW
+    final item  = _MediaItem(file: stableFile, isVideo: true);
+    final index = _mediaItems.length;
+    setState(() => _mediaItems.add(item));
+
+    // After the frame renders, kick off thumbnail + compression
+    SchedulerBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+
+      // Thumbnail in background
+      VideoCompress.getByteThumbnail(stableFile.path, quality: 50).then((bytes) {
+        if (mounted && bytes != null && index < _mediaItems.length) {
+          setState(() => _mediaItems[index].thumbnail = bytes);
+        }
+      }).catchError((_) {});
+
+      // Queue video compression
+      _queueVideoCompression(item, index);
+    });
+  }
+
+  // Copies any file to temp dir with a timestamped name — guarantees stable path
+  Future<File> _copyToTemp(String sourcePath, {required String ext}) async {
+    try {
+      final dir  = await getTemporaryDirectory();
+      final dest = '${dir.path}/${DateTime.now().millisecondsSinceEpoch}.$ext';
+      return await File(sourcePath).copy(dest);
+    } catch (_) {
+      return File(sourcePath);
+    }
+  }
+
+  // ─── VIDEO COMPRESSION QUEUE ──────────────────────────────────────────────
+  void _queueVideoCompression(_MediaItem item, int index) {
     if (!mounted) return;
     setState(() {
       item.isCompressing = true;
@@ -349,80 +402,6 @@ class _ReportPageState extends State<ReportPage> {
     }
   }
 
-  void _updateCompressionProgress(int index, double progress) {
-    if (mounted && index < _mediaItems.length) {
-      setState(() => _mediaItems[index].compressionProgress = progress.clamp(0.0, 1.0));
-    }
-  }
-
-  // ─── IMAGE COMPRESSION ────────────────────────────────────────────────────
-  Future<File> _compressImage(File file) async {
-    try {
-      final dir    = await getTemporaryDirectory();
-      final ts     = DateTime.now().millisecondsSinceEpoch;
-      // Always use JPEG — HEIC can crash on some iOS versions with gallery paths
-      final target = '${dir.path}/$ts.jpg';
-      final result = await FlutterImageCompress.compressAndGetFile(
-        file.absolute.path, target,
-        quality: 85, minWidth: 0, minHeight: 0,
-        format: CompressFormat.jpeg,
-      );
-      if (result != null) {
-        final compressed = File(result.path);
-        if (await compressed.exists()) return compressed;
-      }
-    } catch (_) {}
-    return file; // always fall back to raw — never crash
-  }
-
-  // ─── MEDIA PICKING ────────────────────────────────────────────────────────
-  Future<void> _pickVideo(ImageSource source) async {
-    if (!await _requestPermissions(source, forVideo: true)) return;
-    XFile? picked;
-    try {
-      picked = await _picker.pickVideo(source: source);
-    } catch (_) { return; }
-    if (picked == null || !mounted) return;
-
-    // ── ADD TO GRID IMMEDIATELY before any async work ──
-    final raw  = File(picked.path);
-    final item = _MediaItem(file: raw, isVideo: true);
-    final index = _mediaItems.length;
-    setState(() => _mediaItems.add(item));
-
-    // Thumbnail in background
-    VideoCompress.getByteThumbnail(raw.path, quality: 50).then((bytes) {
-      if (mounted && bytes != null && index < _mediaItems.length) {
-        setState(() => _mediaItems[index].thumbnail = bytes);
-      }
-    }).catchError((_) {});
-
-    // Compress in background — buttons stay live
-    _compressVideoInBackground(item, index);
-  }
-
-  Future<void> _pickImage(ImageSource source) async {
-    if (!await _requestPermissions(source)) return;
-    XFile? picked;
-    try {
-      picked = await _picker.pickImage(source: source);
-    } catch (_) { return; }
-    if (picked == null || !mounted) return;
-
-    // ── ADD TO GRID IMMEDIATELY before any async work ──
-    final raw  = File(picked.path);
-    final item = _MediaItem(file: raw, isVideo: false);
-    final index = _mediaItems.length;
-    setState(() => _mediaItems.add(item));
-
-    // Compress in background, swap file silently when done
-    _compressImage(raw).then((compressed) {
-      if (mounted && index < _mediaItems.length) {
-        setState(() => _mediaItems[index].file = compressed);
-      }
-    }).catchError((_) {}); // on failure keep raw — never crash
-  }
-
   // ─── FETCH SITES ──────────────────────────────────────────────────────────
   Future<void> _fetchSites() async {
     final prefs      = await SharedPreferences.getInstance();
@@ -457,12 +436,6 @@ class _ReportPageState extends State<ReportPage> {
   }
 
   // ─── SUBMIT ───────────────────────────────────────────────────────────────
-  // Strategy:
-  //   1. If any video is still compressing → show a brief "finishing compression"
-  //      message and wait for it. This is usually < 5 seconds since compression
-  //      started the moment the video was picked.
-  //   2. Upload all files (compressed videos + images) with real progress bar.
-  //   3. Save report to DB + fire client email — all in one server round-trip.
   Future<void> _submitReport() async {
     if (!_hasActiveAssignment) { _snackError("Cannot submit: no active assignment"); return; }
     if (_selectedSiteId == null) { _snackError("Please select a site"); return; }
@@ -473,31 +446,22 @@ class _ReportPageState extends State<ReportPage> {
     setState(() { _isSubmitting = true; _uploadProgress = 0.0; });
 
     try {
-      // ── Step 1: Wait for any still-compressing videos ──────────────────
-      final stillCompressing = _mediaItems.where((m) => m.isCompressing).toList();
-      if (stillCompressing.isNotEmpty) {
+      if (_mediaItems.any((m) => m.isCompressing)) {
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-            content: Text(
-              'Almost ready — finishing compression of '
-                  '${stillCompressing.length} video${stillCompressing.length > 1 ? 's' : ''}...',
-            ),
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text('Almost ready — finishing video compression...'),
             backgroundColor: Colors.orange,
-            duration: const Duration(seconds: 30),
+            duration: Duration(seconds: 30),
           ));
         }
-
-        // Poll until all compression is done (max 3 minutes)
         final deadline = DateTime.now().add(const Duration(minutes: 3));
         while (_mediaItems.any((m) => m.isCompressing)) {
-          if (DateTime.now().isAfter(deadline)) break; // safety — upload raw
+          if (DateTime.now().isAfter(deadline)) break;
           await Future.delayed(const Duration(milliseconds: 300));
         }
-
         if (mounted) ScaffoldMessenger.of(context).clearSnackBars();
       }
 
-      // ── Step 2: Collect files to upload ───────────────────────────────
       final payload = {
         "type": _selectedReportType,
         "data": {
@@ -510,16 +474,9 @@ class _ReportPageState extends State<ReportPage> {
       final filesToUpload = _mediaItems.map((m) => m.uploadFile).toList();
 
       if (filesToUpload.isNotEmpty) {
-        // Upload + save report + trigger email — single request
-        await api.uploadReportDio(
-          payload,
-          filesToUpload,
-              (sent, total) {
-            if (total > 0 && mounted) {
-              setState(() => _uploadProgress = sent / total);
-            }
-          },
-        );
+        await api.uploadReportDio(payload, filesToUpload, (sent, total) {
+          if (total > 0 && mounted) setState(() => _uploadProgress = sent / total);
+        });
       } else {
         final response = await api.post('reports', payload);
         if (response.statusCode != 200 && response.statusCode != 201) {
@@ -628,7 +585,6 @@ class _ReportPageState extends State<ReportPage> {
             constraints: BoxConstraints(minHeight: constraints.maxHeight),
             child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
 
-              // ── Report Type ──────────────────────────────────────────────
               _card(Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                 Row(children: [
                   Icon(Icons.description, color: _primaryColor, size: 20), const SizedBox(width: 8),
@@ -649,9 +605,7 @@ class _ReportPageState extends State<ReportPage> {
               ])),
               const SizedBox(height: 20),
 
-              // ── Form + Attachments ───────────────────────────────────────
               _card(Column(children: [
-                // Form fields
                 _innerBox(Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                   _siteDropdown(),
                   Row(children: [
@@ -662,13 +616,11 @@ class _ReportPageState extends State<ReportPage> {
                   ..._buildReportFields(),
                 ])),
 
-                // Attachments
                 _innerBox(Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                   Row(children: [
                     Icon(Icons.photo_library, color: _primaryColor, size: 20), const SizedBox(width: 8),
                     Text("Attachments", style: TextStyle(color: _textColor, fontSize: 16, fontWeight: FontWeight.w700)),
                     const Spacer(),
-                    // Live compression badge
                     if (anyCompressing)
                       _badge(
                         child: Row(mainAxisSize: MainAxisSize.min, children: [
@@ -685,10 +637,10 @@ class _ReportPageState extends State<ReportPage> {
                       style: TextStyle(color: _secondaryTextColor, fontSize: 12)),
                   const SizedBox(height: 16),
                   Row(mainAxisAlignment: MainAxisAlignment.spaceEvenly, children: [
-                    _mediaBtn(icon: Icons.videocam,            label: "Video",    onTap: () => _pickVideo(ImageSource.camera),  color: Colors.redAccent),
-                    _mediaBtn(icon: Icons.video_library,       label: "Gallery\nVideo", onTap: () => _pickVideo(ImageSource.gallery), color: Colors.orange),
-                    _mediaBtn(icon: Icons.camera_alt_rounded,  label: "Camera",   onTap: () => _pickImage(ImageSource.camera),  color: const Color(0xFF3B82F6)),
-                    _mediaBtn(icon: Icons.photo_library_rounded, label: "Gallery", onTap: () => _pickImage(ImageSource.gallery), color: const Color(0xFF8B5CF6)),
+                    _mediaBtn(icon: Icons.videocam,              label: "Video",         onTap: () => _pickVideo(ImageSource.camera),  color: Colors.redAccent),
+                    _mediaBtn(icon: Icons.video_library,         label: "Gallery\nVideo",onTap: () => _pickVideo(ImageSource.gallery), color: Colors.orange),
+                    _mediaBtn(icon: Icons.camera_alt_rounded,    label: "Camera",        onTap: () => _pickImage(ImageSource.camera),  color: const Color(0xFF3B82F6)),
+                    _mediaBtn(icon: Icons.photo_library_rounded, label: "Gallery",       onTap: () => _pickImage(ImageSource.gallery), color: const Color(0xFF8B5CF6)),
                   ]),
                   if (_mediaItems.isNotEmpty) ...[const SizedBox(height: 20), _buildGrid()],
                 ])),
@@ -698,7 +650,6 @@ class _ReportPageState extends State<ReportPage> {
 
               const SizedBox(height: 16),
 
-              // ── Submit ────────────────────────────────────────────────────
               Container(
                 decoration: BoxDecoration(
                   borderRadius: BorderRadius.circular(20),
@@ -769,20 +720,24 @@ class _ReportPageState extends State<ReportPage> {
             const Center(child: Icon(Icons.play_circle_fill, size: 36, color: Colors.white,
                 shadows: [Shadow(blurRadius: 8, color: Colors.black54)])),
           ])
-              : Container(color: Colors.black87,
-              child: const Center(child: Icon(Icons.play_circle_fill, size: 40, color: Colors.white)));
+              : Container(
+            color: const Color(0xFF1a1a2e),
+            child: const Center(child: Icon(Icons.videocam, size: 36, color: Colors.white54)),
+          );
         } else {
-          thumb = Image.file(item.file, fit: BoxFit.cover,
-              errorBuilder: (_, __, ___) => Container(
-                color: Colors.grey[800],
-                child: const Center(child: Icon(Icons.image, color: Colors.white54, size: 36)),
-              ));
+          thumb = Image.file(
+            item.file,
+            fit: BoxFit.cover,
+            errorBuilder: (_, __, ___) => Container(
+              color: Colors.grey[800],
+              child: const Center(child: Icon(Icons.image, color: Colors.white54, size: 36)),
+            ),
+          );
         }
 
         return Stack(fit: StackFit.expand, children: [
           ClipRRect(borderRadius: BorderRadius.circular(12), child: thumb),
 
-          // Compression progress bar (purple, only for videos)
           if (item.isVideo && item.isCompressing)
             Positioned(bottom: 0, left: 0, right: 0,
               child: ClipRRect(
@@ -790,7 +745,7 @@ class _ReportPageState extends State<ReportPage> {
                 child: Column(mainAxisSize: MainAxisSize.min, children: [
                   Container(color: Colors.black54, padding: const EdgeInsets.symmetric(vertical: 2),
                     child: Center(child: Text(
-                      '${(item.compressionProgress * 100).toStringAsFixed(0)}% compressed',
+                      '${(item.compressionProgress * 100).toStringAsFixed(0)}%',
                       style: const TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.w600),
                     )),
                   ),
@@ -804,7 +759,6 @@ class _ReportPageState extends State<ReportPage> {
               ),
             ),
 
-          // Compression done checkmark
           if (item.isVideo && !item.isCompressing && item.compressedFile != null)
             Positioned(bottom: 6, left: 6,
               child: Container(
@@ -818,7 +772,6 @@ class _ReportPageState extends State<ReportPage> {
               ),
             ),
 
-          // Compression failed badge (will upload raw)
           if (item.isVideo && item.compressionFailed)
             Positioned(bottom: 6, left: 6,
               child: Container(
@@ -828,7 +781,6 @@ class _ReportPageState extends State<ReportPage> {
               ),
             ),
 
-          // Delete button
           Positioned(top: 6, right: 6,
             child: GestureDetector(
               onTap: () => setState(() => _mediaItems.removeAt(i)),
@@ -845,10 +797,9 @@ class _ReportPageState extends State<ReportPage> {
     );
   }
 
-  // ─── SMALL HELPERS ────────────────────────────────────────────────────────
+  // ─── HELPERS ──────────────────────────────────────────────────────────────
   Widget _card(Widget child) => Container(
     padding: const EdgeInsets.all(20),
-    margin: const EdgeInsets.only(bottom: 0),
     decoration: BoxDecoration(
       borderRadius: BorderRadius.circular(20), color: _cardColor,
       border: Border.all(color: _borderColor),
