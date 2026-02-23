@@ -11,8 +11,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:dio/dio.dart';
 import 'package:video_compress/video_compress.dart';
-import 'package:ffmpeg_kit_flutter_min/ffmpeg_kit.dart';
-import 'package:ffmpeg_kit_flutter_min/return_code.dart';
+// ffmpeg_kit removed — video_compress handles both iOS (AVFoundation) and Android (MediaCodec)
 
 // ─── Media item ───────────────────────────────────────────────────────────────
 // Tracks the file through its lifecycle:
@@ -286,6 +285,12 @@ class _ReportPageState extends State<ReportPage> {
   // Runs in background the moment a video is picked.
   // Target: 720p, ~40–80 MB for a 2-minute clip (vs 400 MB raw).
   // This runs while the guard fills the form — by Submit time it's usually done.
+  // ─── VIDEO COMPRESSION ────────────────────────────────────────────────────
+  // Uses video_compress on BOTH iOS and Android.
+  // iOS:     AVFoundation hardware encoder (native Apple) — very fast, no FFmpeg needed
+  // Android: MediaCodec hardware encoder — same result without FFmpeg binary
+  // This is why we removed ffmpeg_kit_flutter_min — it was retired Jan 2025
+  // and its iOS binaries now return 404, breaking every iOS build.
   Future<void> _compressVideoInBackground(_MediaItem item, int index) async {
     if (!mounted) return;
     setState(() {
@@ -293,101 +298,37 @@ class _ReportPageState extends State<ReportPage> {
       item.compressionProgress = 0.01;
     });
 
-    try {
-      File compressed;
-
-      if (Platform.isAndroid) {
-        compressed = await _compressAndroid(item.file, index);
-      } else {
-        compressed = await _compressIOS(item.file, index);
-      }
-
-      if (mounted && index < _mediaItems.length) {
-        setState(() {
-          _mediaItems[index].compressedFile  = compressed;
-          _mediaItems[index].isCompressing   = false;
-          _mediaItems[index].compressionProgress = 1.0;
-        });
-      }
-    } catch (_) {
-      // Compression failed — we'll just upload the raw file. No crash.
-      if (mounted && index < _mediaItems.length) {
-        setState(() {
-          _mediaItems[index].isCompressing      = false;
-          _mediaItems[index].compressionFailed  = true;
-          _mediaItems[index].compressionProgress = 0.0;
-        });
-      }
-    }
-  }
-
-  Future<File> _compressAndroid(File file, int index) async {
-    final dir = await getTemporaryDirectory();
-    final ts  = DateTime.now().millisecondsSinceEpoch;
-    final out = '${dir.path}/${ts}_720p.mp4';
-
-    // h264_mediacodec = Android hardware encoder (MediaCodec API)
-    // Hardware encoding is 10–20x faster than software (libx264)
-    // scale=1280:720 → 720p, keeps aspect ratio, pads with black if needed
-    // b:v 1500k → ~1.5 Mbps — sharp at 720p, good for playback and email links
-    // movflags +faststart → browser/email can play before fully downloaded
-    final hwCmd =
-        '-i "${file.path}" '
-        '-c:v h264_mediacodec '
-        '-b:v 1500k '
-        '-vf "scale=\'if(gt(iw,ih),1280,-2)\':\'if(gt(iw,ih),-2,1280)\'" '
-        '-c:a aac -b:a 96k '
-        '-movflags +faststart '
-        '"$out"';
-
-    final session  = await FFmpegKit.execute(hwCmd);
-    final rc       = await session.getReturnCode();
-
-    if (ReturnCode.isSuccess(rc)) {
-      final f = File(out);
-      if (await f.exists()) {
-        _updateCompressionProgress(index, 0.95);
-        return f;
-      }
-    }
-
-    // Software fallback (older devices without hardware encoder)
-    final swOut = '${dir.path}/${ts}_720p_sw.mp4';
-    final swCmd =
-        '-i "${file.path}" '
-        '-c:v libx264 -preset veryfast -crf 26 '
-        '-vf "scale=\'if(gt(iw,ih),1280,-2)\':\'if(gt(iw,ih),-2,1280)\'" '
-        '-c:a aac -b:a 96k '
-        '-movflags +faststart '
-        '"$swOut"';
-
-    final swSession = await FFmpegKit.execute(swCmd);
-    if (ReturnCode.isSuccess(await swSession.getReturnCode())) {
-      final f = File(swOut);
-      if (await f.exists()) return f;
-    }
-
-    return file; // upload raw as absolute last resort
-  }
-
-  Future<File> _compressIOS(File file, int index) async {
-    // VideoCompress uses AVFoundation hardware encoder on iOS — very fast
-    await VideoCompress.cancelCompression();
-
-    // Subscribe to compression progress to update UI
-    final sub = VideoCompress.compressProgress$.subscribe((progress) {
+    final sub = VideoCompress.compressProgress\$.subscribe((progress) {
       _updateCompressionProgress(index, progress / 100.0);
     });
 
     try {
+      await VideoCompress.cancelCompression();
+
       final info = await VideoCompress.compressVideo(
-        file.path,
-        quality: VideoQuality.Res1280x720Quality, // 720p
+        item.file.path,
+        quality: VideoQuality.Res1280x720Quality, // 720p on both platforms
         deleteOrigin: false,
         includeAudio: true,
         frameRate: 30,
       );
-      return info?.file ?? file;
+
+      if (mounted && index < _mediaItems.length) {
+        setState(() {
+          _mediaItems[index].compressedFile      = info?.file;
+          _mediaItems[index].isCompressing       = false;
+          _mediaItems[index].compressionProgress = 1.0;
+        });
+      }
+    } catch (_) {
+      // Compression failed — upload raw file. Never crash.
+      if (mounted && index < _mediaItems.length) {
+        setState(() {
+          _mediaItems[index].isCompressing       = false;
+          _mediaItems[index].compressionFailed   = true;
+          _mediaItems[index].compressionProgress = 0.0;
+        });
+      }
     } finally {
       sub.unsubscribe();
     }
