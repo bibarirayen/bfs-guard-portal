@@ -357,85 +357,70 @@ class _ReportPageState extends State<ReportPage> {
 
   // ─── IMAGE COMPRESSION ────────────────────────────────────────────────────
   Future<File> _compressImage(File file) async {
-    final dir    = await getTemporaryDirectory();
-    final ts     = DateTime.now().millisecondsSinceEpoch;
-    final useHeic = Platform.isIOS;
-    final target  = '${dir.path}/$ts.${useHeic ? 'heic' : 'jpg'}';
-    final result  = await FlutterImageCompress.compressAndGetFile(
-      file.absolute.path, target,
-      quality: 82, minWidth: 0, minHeight: 0,
-      format: useHeic ? CompressFormat.heic : CompressFormat.jpeg,
-    );
-    return result != null ? File(result.path) : file;
+    try {
+      final dir    = await getTemporaryDirectory();
+      final ts     = DateTime.now().millisecondsSinceEpoch;
+      // Always use JPEG — HEIC can crash on some iOS versions with gallery paths
+      final target = '${dir.path}/$ts.jpg';
+      final result = await FlutterImageCompress.compressAndGetFile(
+        file.absolute.path, target,
+        quality: 85, minWidth: 0, minHeight: 0,
+        format: CompressFormat.jpeg,
+      );
+      if (result != null) {
+        final compressed = File(result.path);
+        if (await compressed.exists()) return compressed;
+      }
+    } catch (_) {}
+    return file; // always fall back to raw — never crash
   }
 
   // ─── MEDIA PICKING ────────────────────────────────────────────────────────
   Future<void> _pickVideo(ImageSource source) async {
     if (!await _requestPermissions(source, forVideo: true)) return;
-
+    XFile? picked;
     try {
-      final XFile? picked = await _picker.pickVideo(source: source);
-      if (picked == null) return;
+      picked = await _picker.pickVideo(source: source);
+    } catch (_) { return; }
+    if (picked == null || !mounted) return;
 
-      final raw   = File(picked.path);
-      final item  = _MediaItem(file: raw, isVideo: true);
-      final index = _mediaItems.length;
-      // Show immediately in grid — no blocking
-      setState(() => _mediaItems.add(item));
+    // ── ADD TO GRID IMMEDIATELY before any async work ──
+    final raw  = File(picked.path);
+    final item = _MediaItem(file: raw, isVideo: true);
+    final index = _mediaItems.length;
+    setState(() => _mediaItems.add(item));
 
-      // Generate thumbnail in background
-      VideoCompress.getByteThumbnail(raw.path, quality: 50).then((bytes) {
-        if (mounted && bytes != null && index < _mediaItems.length) {
-          setState(() => _mediaItems[index].thumbnail = bytes);
-        }
-      }).catchError((_) {});
-
-      // Compress in background — grid stays interactive
-      _compressVideoInBackground(item, index);
-
-    } catch (e) {
-      final s = e.toString().toLowerCase();
-      if (s.contains('permission') || s.contains('denied')) {
-        _showPermissionDeniedDialog('Permission Required', 'Please grant the required permission.', showSettings: true);
-      } else if (!s.contains('cancel')) {
-        _snackError('Could not load video. Please try again.');
+    // Thumbnail in background
+    VideoCompress.getByteThumbnail(raw.path, quality: 50).then((bytes) {
+      if (mounted && bytes != null && index < _mediaItems.length) {
+        setState(() => _mediaItems[index].thumbnail = bytes);
       }
-    }
+    }).catchError((_) {});
+
+    // Compress in background — buttons stay live
+    _compressVideoInBackground(item, index);
   }
 
   Future<void> _pickImage(ImageSource source) async {
     if (!await _requestPermissions(source)) return;
-
+    XFile? picked;
     try {
-      final XFile? picked = await _picker.pickImage(source: source);
-      if (picked == null) return;
+      picked = await _picker.pickImage(source: source);
+    } catch (_) { return; }
+    if (picked == null || !mounted) return;
 
-      final raw = File(picked.path);
-      if (!await raw.exists()) { _snackError('Could not access the selected image.'); return; }
+    // ── ADD TO GRID IMMEDIATELY before any async work ──
+    final raw  = File(picked.path);
+    final item = _MediaItem(file: raw, isVideo: false);
+    final index = _mediaItems.length;
+    setState(() => _mediaItems.add(item));
 
-      final item  = _MediaItem(file: raw, isVideo: false);
-      final index = _mediaItems.length;
-      // Show immediately in grid — no blocking
-      setState(() => _mediaItems.add(item));
-
-      // Compress image in background, swap file when done
-      _compressImage(raw).then((compressed) {
-        if (mounted && index < _mediaItems.length) {
-          setState(() {
-            _mediaItems[index].file = compressed;
-            _mediaItems[index].compressionProgress = 1.0;
-          });
-        }
-      }).catchError((_) {});
-
-    } catch (e) {
-      final s = e.toString().toLowerCase();
-      if (s.contains('permission') || s.contains('denied')) {
-        _showPermissionDeniedDialog('Permission Required', 'Please grant the required permission.', showSettings: true);
-      } else if (!s.contains('cancel')) {
-        _snackError('Error picking image. Please try again.');
+    // Compress in background, swap file silently when done
+    _compressImage(raw).then((compressed) {
+      if (mounted && index < _mediaItems.length) {
+        setState(() => _mediaItems[index].file = compressed);
       }
-    }
+    }).catchError((_) {}); // on failure keep raw — never crash
   }
 
   // ─── FETCH SITES ──────────────────────────────────────────────────────────
@@ -787,7 +772,11 @@ class _ReportPageState extends State<ReportPage> {
               : Container(color: Colors.black87,
               child: const Center(child: Icon(Icons.play_circle_fill, size: 40, color: Colors.white)));
         } else {
-          thumb = Image.file(item.file, fit: BoxFit.cover);
+          thumb = Image.file(item.file, fit: BoxFit.cover,
+              errorBuilder: (_, __, ___) => Container(
+                color: Colors.grey[800],
+                child: const Center(child: Icon(Icons.image, color: Colors.white54, size: 36)),
+              ));
         }
 
         return Stack(fit: StackFit.expand, children: [

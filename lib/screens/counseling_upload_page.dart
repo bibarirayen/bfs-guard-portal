@@ -103,25 +103,23 @@ class _CounselingUploadPageState extends State<CounselingUploadPage> {
   }
 
   // ── Image compression ─────────────────────────────────────────────────────
-  // iOS  → HEIC (hardware encoder, ~10× faster than JPEG, same visual quality)
-  // Android → JPEG quality 82, cap at 1280px on the longest side.
-  // minWidth/minHeight = 0 so small images are never upscaled.
   Future<File> _compressImage(File file) async {
-    final dir = await getTemporaryDirectory();
-    final ts = DateTime.now().millisecondsSinceEpoch;
-    final bool useHeic = Platform.isIOS;
-    final String ext = useHeic ? 'heic' : 'jpg';
-    final target = '${dir.path}/$ts.$ext';
-
-    final result = await FlutterImageCompress.compressAndGetFile(
-      file.absolute.path,
-      target,
-      quality: 82,
-      minWidth: 0,
-      minHeight: 0,
-      format: useHeic ? CompressFormat.heic : CompressFormat.jpeg,
-    );
-    return result == null ? file : File(result.path);
+    try {
+      final dir    = await getTemporaryDirectory();
+      final ts     = DateTime.now().millisecondsSinceEpoch;
+      // Always use JPEG — HEIC can crash on some iOS versions with gallery paths
+      final target = '${dir.path}/$ts.jpg';
+      final result = await FlutterImageCompress.compressAndGetFile(
+        file.absolute.path, target,
+        quality: 85, minWidth: 0, minHeight: 0,
+        format: CompressFormat.jpeg,
+      );
+      if (result != null) {
+        final compressed = File(result.path);
+        if (await compressed.exists()) return compressed;
+      }
+    } catch (_) {}
+    return file; // always fall back to raw — never crash
   }
 
   // ── Video compression queue ───────────────────────────────────────────────
@@ -221,29 +219,22 @@ class _CounselingUploadPageState extends State<CounselingUploadPage> {
   Future<void> _pickImage(ImageSource source) async {
     if (_loading) return;
     if (!await _requestPermissions(source)) return;
+    XFile? picked;
+    try { picked = await _picker.pickImage(source: source); } catch (_) { return; }
+    if (picked == null || !mounted) return;
 
-    try {
-      final XFile? picked = await _picker.pickImage(source: source);
-      if (picked == null) return;
+    // ── ADD TO GRID IMMEDIATELY ──
+    final rawFile = File(picked.path);
+    final item = _MediaItem(file: rawFile, isVideo: false);
+    final int itemIndex = _mediaItems.length;
+    setState(() => _mediaItems.add(item));
 
-      final File rawFile = File(picked.path);
-      final item = _MediaItem(file: rawFile, isVideo: false);
-      final int itemIndex = _mediaItems.length;
-      // Show immediately in grid
-      setState(() => _mediaItems.add(item));
-
-      // Compress in background — swaps file silently when done.
-      final Future<File> compressionFuture = _compressImage(rawFile);
-      _pendingCompressions[itemIndex] = compressionFuture;
-      compressionFuture.then((compressed) {
-        _pendingCompressions.remove(itemIndex);
-        if (mounted && itemIndex < _mediaItems.length) {
-          setState(() => _mediaItems[itemIndex].file = compressed);
-        }
-      }).catchError((_) { _pendingCompressions.remove(itemIndex); });
-    } catch (e) {
-      if (!e.toString().toLowerCase().contains('cancel')) _snack('Could not load image');
-    }
+    // Compress in background, swap silently — never crash on error
+    _compressImage(rawFile).then((compressed) {
+      if (mounted && itemIndex < _mediaItems.length) {
+        setState(() => _mediaItems[itemIndex].file = compressed);
+      }
+    }).catchError((_) {});
   }
 
   // ── Pick video ─────────────────────────────────────────────────────────────
@@ -251,33 +242,25 @@ class _CounselingUploadPageState extends State<CounselingUploadPage> {
   Future<void> _pickVideo(ImageSource source) async {
     if (_loading) return;
     if (!await _requestPermissions(source, forVideo: true)) return;
+    XFile? picked;
+    try { picked = await _picker.pickVideo(source: source, maxDuration: const Duration(minutes: 60)); } catch (_) { return; }
+    if (picked == null || !mounted) return;
 
-    try {
-      final XFile? picked = await _picker.pickVideo(source: source, maxDuration: const Duration(minutes: 60));
-      if (picked == null) return;
+    // ── ADD TO GRID IMMEDIATELY ──
+    final rawFile = File(picked.path);
+    final item = _MediaItem(file: rawFile, isVideo: true);
+    final int itemIndex = _mediaItems.length;
+    setState(() => _mediaItems.add(item));
 
-      final File rawFile = File(picked.path);
-      final item = _MediaItem(file: rawFile, isVideo: true);
-      final int itemIndex = _mediaItems.length;
-      // Show immediately in grid — no blocking
-      setState(() => _mediaItems.add(item));
+    // Thumbnail in background
+    VideoCompress.getByteThumbnail(rawFile.path, quality: 50).then((bytes) {
+      if (mounted && bytes != null && itemIndex < _mediaItems.length) {
+        setState(() => _mediaItems[itemIndex].thumbnail = bytes);
+      }
+    }).catchError((_) {});
 
-      // Generate thumbnail in background
-      VideoCompress.getByteThumbnail(rawFile.path, quality: 50).then((bytes) {
-        if (mounted && bytes != null && itemIndex < _mediaItems.length) {
-          setState(() => _mediaItems[itemIndex].thumbnail = bytes);
-        }
-      }).catchError((_) {});
-
-      // Compress in background via queue — buttons stay active
-      // Use a completer so submitStatement can await it if needed
-      final completer = Completer<File>();
-      _pendingCompressions[itemIndex] = completer.future;
-      _queueVideoCompression(item, itemIndex);
-      // Resolve completer when compression finishes (polled in submitStatement)
-    } catch (e) {
-      if (!e.toString().toLowerCase().contains('cancel')) _snack('Could not load video');
-    }
+    // Compress in background via queue — buttons stay live
+    _queueVideoCompression(item, itemIndex);
   }
 
   // ── Submit ─────────────────────────────────────────────────────────────────
