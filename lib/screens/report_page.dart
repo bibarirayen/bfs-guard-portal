@@ -298,7 +298,7 @@ class _ReportPageState extends State<ReportPage> {
       item.compressionProgress = 0.01;
     });
 
-    final sub = VideoCompress.compressProgress\$.subscribe((progress) {
+    final sub = VideoCompress.compressProgress$.subscribe((progress) {
       _updateCompressionProgress(index, progress / 100.0);
     });
 

@@ -9,8 +9,6 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:video_player/video_player.dart';
 import 'package:video_compress/video_compress.dart';
-import 'package:ffmpeg_kit_flutter_min/ffmpeg_kit.dart';
-import 'package:ffmpeg_kit_flutter_min/return_code.dart';
 import '../services/counseling_service.dart';
 
 /// Holds a media file + optional pre-generated video thumbnail bytes.
@@ -117,56 +115,8 @@ class _CounselingUploadPageState extends State<CounselingUploadPage> {
   }
 
   // ── Video compression ──────────────────────────────────────────────────────
-  // Android: FFmpeg h264_mediacodec (hardware) — 10–20× faster than video_compress.
-  // iOS:     video_compress AVFoundation hardware encoder.
+  // Uses video_compress (AVFoundation on iOS, MediaCodec on Android) — no FFmpeg needed.
   Future<File> _compressVideo(File file) async {
-    if (Platform.isAndroid) {
-      return await _compressVideoAndroid(file);
-    } else {
-      return await _compressVideoIOS(file);
-    }
-  }
-
-  Future<File> _compressVideoAndroid(File file) async {
-    final dir = await getTemporaryDirectory();
-    final out = '${dir.path}/${DateTime.now().millisecondsSinceEpoch}_compressed.mp4';
-
-    final cmd = '-i "${file.path}" '
-        '-c:v h264_mediacodec '
-        '-b:v 1200k '
-        '-vf "scale=960:540:force_original_aspect_ratio=decrease,pad=960:540:(ow-iw)/2:(oh-ih)/2" '
-        '-c:a aac -b:a 96k '
-        '-movflags +faststart '
-        '"$out"';
-
-    final session = await FFmpegKit.execute(cmd);
-    final returnCode = await session.getReturnCode();
-
-    if (ReturnCode.isSuccess(returnCode)) {
-      final compressed = File(out);
-      if (await compressed.exists()) return compressed;
-    }
-
-    // Fallback to software if hardware encoder not available
-    print('⚠️ Hardware encode failed, falling back to libx264');
-    final fallbackOut = '${dir.path}/${DateTime.now().millisecondsSinceEpoch}_fallback.mp4';
-    final fallbackCmd = '-i "${file.path}" '
-        '-c:v libx264 -preset ultrafast -crf 28 '
-        '-vf "scale=960:540:force_original_aspect_ratio=decrease,pad=960:540:(ow-iw)/2:(oh-ih)/2" '
-        '-c:a aac -b:a 96k '
-        '-movflags +faststart '
-        '"$fallbackOut"';
-    final fallbackSession = await FFmpegKit.execute(fallbackCmd);
-    final fallbackCode = await fallbackSession.getReturnCode();
-    if (ReturnCode.isSuccess(fallbackCode)) {
-      final f = File(fallbackOut);
-      if (await f.exists()) return f;
-    }
-
-    return file;
-  }
-
-  Future<File> _compressVideoIOS(File file) async {
     await VideoCompress.cancelCompression();
     final MediaInfo? info = await VideoCompress.compressVideo(
       file.path,
@@ -178,6 +128,7 @@ class _CounselingUploadPageState extends State<CounselingUploadPage> {
     if (info == null || info.file == null) return file;
     return info.file!;
   }
+
 
   // ── Permissions ────────────────────────────────────────────────────────────
 
