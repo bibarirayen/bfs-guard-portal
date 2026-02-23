@@ -112,7 +112,6 @@ class _ReportPageState extends State<ReportPage> {
 
   // ─── STATE ────────────────────────────────────────────────────────────────
   final List<_MediaItem> _mediaItems = [];
-  bool _isPickingMedia  = false;
   bool _isSubmitting    = false;
   double _uploadProgress = 0.0;
 
@@ -165,7 +164,6 @@ class _ReportPageState extends State<ReportPage> {
       _vehicleTowed        = false;
       _uploadProgress      = 0.0;
       _isSubmitting        = false;
-      _isPickingMedia      = false;
     });
     for (final c in [
       _clientController, _siteController, _officerController, _dateEnteredController,
@@ -291,23 +289,41 @@ class _ReportPageState extends State<ReportPage> {
   // Android: MediaCodec hardware encoder — same result without FFmpeg binary
   // This is why we removed ffmpeg_kit_flutter_min — it was retired Jan 2025
   // and its iOS binaries now return 404, breaking every iOS build.
-  Future<void> _compressVideoInBackground(_MediaItem item, int index) async {
+  // Queue so multiple videos compress one-at-a-time (video_compress is single-threaded)
+  final List<({_MediaItem item, int index})> _compressionQueue = [];
+  bool _compressionRunning = false;
+
+  void _compressVideoInBackground(_MediaItem item, int index) {
     if (!mounted) return;
     setState(() {
       item.isCompressing = true;
       item.compressionProgress = 0.01;
     });
+    _compressionQueue.add((item: item, index: index));
+    if (!_compressionRunning) _runCompressionQueue();
+  }
 
-    final sub = VideoCompress.compressProgress$.subscribe((progress) {
-      _updateCompressionProgress(index, progress / 100.0);
-    });
+  Future<void> _runCompressionQueue() async {
+    _compressionRunning = true;
+    while (_compressionQueue.isNotEmpty) {
+      final job = _compressionQueue.removeAt(0);
+      await _doCompress(job.item, job.index);
+    }
+    _compressionRunning = false;
+  }
 
+  Future<void> _doCompress(_MediaItem item, int index) async {
+    Subscription? sub;
     try {
-      await VideoCompress.cancelCompression();
+      sub = VideoCompress.compressProgress$.subscribe((progress) {
+        if (mounted && index < _mediaItems.length) {
+          setState(() => _mediaItems[index].compressionProgress = (progress / 100.0).clamp(0.01, 0.99));
+        }
+      });
 
       final info = await VideoCompress.compressVideo(
         item.file.path,
-        quality: VideoQuality.Res1280x720Quality, // 720p on both platforms
+        quality: VideoQuality.Res1280x720Quality,
         deleteOrigin: false,
         includeAudio: true,
         frameRate: 30,
@@ -321,7 +337,6 @@ class _ReportPageState extends State<ReportPage> {
         });
       }
     } catch (_) {
-      // Compression failed — upload raw file. Never crash.
       if (mounted && index < _mediaItems.length) {
         setState(() {
           _mediaItems[index].isCompressing       = false;
@@ -330,7 +345,7 @@ class _ReportPageState extends State<ReportPage> {
         });
       }
     } finally {
-      sub.unsubscribe();
+      sub?.unsubscribe();
     }
   }
 
@@ -356,34 +371,29 @@ class _ReportPageState extends State<ReportPage> {
 
   // ─── MEDIA PICKING ────────────────────────────────────────────────────────
   Future<void> _pickVideo(ImageSource source) async {
-    if (_isPickingMedia) return;
     if (!await _requestPermissions(source, forVideo: true)) return;
-    setState(() => _isPickingMedia = true);
 
     try {
-      // No maxDuration — accept 30 seconds to 5 minutes or anything
       final XFile? picked = await _picker.pickVideo(source: source);
-      setState(() => _isPickingMedia = false);
       if (picked == null) return;
 
       final raw   = File(picked.path);
       final item  = _MediaItem(file: raw, isVideo: true);
       final index = _mediaItems.length;
+      // Show immediately in grid — no blocking
       setState(() => _mediaItems.add(item));
 
-      // Generate thumbnail (fast, display only)
+      // Generate thumbnail in background
       VideoCompress.getByteThumbnail(raw.path, quality: 50).then((bytes) {
         if (mounted && bytes != null && index < _mediaItems.length) {
           setState(() => _mediaItems[index].thumbnail = bytes);
         }
       }).catchError((_) {});
 
-      // START COMPRESSION IMMEDIATELY in background
-      // By the time the guard finishes filling the form this is likely done
+      // Compress in background — grid stays interactive
       _compressVideoInBackground(item, index);
 
     } catch (e) {
-      setState(() => _isPickingMedia = false);
       final s = e.toString().toLowerCase();
       if (s.contains('permission') || s.contains('denied')) {
         _showPermissionDeniedDialog('Permission Required', 'Please grant the required permission.', showSettings: true);
@@ -394,13 +404,10 @@ class _ReportPageState extends State<ReportPage> {
   }
 
   Future<void> _pickImage(ImageSource source) async {
-    if (_isPickingMedia) return;
     if (!await _requestPermissions(source)) return;
-    setState(() => _isPickingMedia = true);
 
     try {
       final XFile? picked = await _picker.pickImage(source: source);
-      setState(() => _isPickingMedia = false);
       if (picked == null) return;
 
       final raw = File(picked.path);
@@ -408,9 +415,10 @@ class _ReportPageState extends State<ReportPage> {
 
       final item  = _MediaItem(file: raw, isVideo: false);
       final index = _mediaItems.length;
+      // Show immediately in grid — no blocking
       setState(() => _mediaItems.add(item));
 
-      // Compress image in background (< 1s), swap file when done
+      // Compress image in background, swap file when done
       _compressImage(raw).then((compressed) {
         if (mounted && index < _mediaItems.length) {
           setState(() {
@@ -421,7 +429,6 @@ class _ReportPageState extends State<ReportPage> {
       }).catchError((_) {});
 
     } catch (e) {
-      setState(() => _isPickingMedia = false);
       final s = e.toString().toLowerCase();
       if (s.contains('permission') || s.contains('denied')) {
         _showPermissionDeniedDialog('Permission Required', 'Please grant the required permission.', showSettings: true);
@@ -883,23 +890,20 @@ class _ReportPageState extends State<ReportPage> {
   );
 
   Widget _mediaBtn({required IconData icon, required String label, required VoidCallback onTap, required Color color}) {
-    return Expanded(child: Opacity(
-      opacity: _isPickingMedia ? 0.4 : 1.0,
-      child: Container(
-        margin: const EdgeInsets.symmetric(horizontal: 4),
-        decoration: BoxDecoration(borderRadius: BorderRadius.circular(16),
-            color: color.withOpacity(0.1), border: Border.all(color: color.withOpacity(0.3))),
-        child: Material(color: Colors.transparent, child: InkWell(
-          onTap: _isPickingMedia ? null : onTap,
-          borderRadius: BorderRadius.circular(16),
-          child: Padding(padding: const EdgeInsets.symmetric(vertical: 16),
-            child: Column(children: [
-              Icon(icon, size: 28, color: color), const SizedBox(height: 8),
-              Text(label, style: TextStyle(color: color, fontWeight: FontWeight.w600, fontSize: 11), textAlign: TextAlign.center),
-            ]),
-          ),
-        )),
-      ),
+    return Expanded(child: Container(
+      margin: const EdgeInsets.symmetric(horizontal: 4),
+      decoration: BoxDecoration(borderRadius: BorderRadius.circular(16),
+          color: color.withOpacity(0.1), border: Border.all(color: color.withOpacity(0.3))),
+      child: Material(color: Colors.transparent, child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(16),
+        child: Padding(padding: const EdgeInsets.symmetric(vertical: 16),
+          child: Column(children: [
+            Icon(icon, size: 28, color: color), const SizedBox(height: 8),
+            Text(label, style: TextStyle(color: color, fontWeight: FontWeight.w600, fontSize: 11), textAlign: TextAlign.center),
+          ]),
+        ),
+      )),
     ));
   }
 

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 import 'package:dio/dio.dart';
@@ -16,7 +17,17 @@ class _MediaItem {
   File file;
   final bool isVideo;
   Uint8List? thumbnail;
-  _MediaItem({required this.file, required this.isVideo, this.thumbnail});
+  bool isCompressing;
+  double compressionProgress; // 0.0 → 1.0
+  File? compressedFile;
+  bool compressionFailed;
+
+  _MediaItem({required this.file, required this.isVideo, this.thumbnail})
+      : isCompressing = false,
+        compressionProgress = 0.0,
+        compressionFailed = false;
+
+  File get uploadFile => compressedFile ?? file;
 }
 
 class CounselingUploadPage extends StatefulWidget {
@@ -35,7 +46,6 @@ class _CounselingUploadPageState extends State<CounselingUploadPage> {
 
   bool _isDarkMode = true;
   bool _loading = false;
-  bool _isPickingMedia = false;
   double _uploadProgress = 0.0;
 
   List<Map<String, dynamic>> _guards = [];
@@ -114,19 +124,68 @@ class _CounselingUploadPageState extends State<CounselingUploadPage> {
     return result == null ? file : File(result.path);
   }
 
-  // ── Video compression ──────────────────────────────────────────────────────
-  // Uses video_compress (AVFoundation on iOS, MediaCodec on Android) — no FFmpeg needed.
-  Future<File> _compressVideo(File file) async {
-    await VideoCompress.cancelCompression();
-    final MediaInfo? info = await VideoCompress.compressVideo(
-      file.path,
-      quality: VideoQuality.Res960x540Quality,
-      deleteOrigin: false,
-      includeAudio: true,
-      frameRate: 30,
-    );
-    if (info == null || info.file == null) return file;
-    return info.file!;
+  // ── Video compression queue ───────────────────────────────────────────────
+  // Queued so multiple picked videos compress one-at-a-time (video_compress is single-threaded)
+  final List<({_MediaItem item, int index})> _compressionQueue = [];
+  bool _compressionRunning = false;
+
+  void _queueVideoCompression(_MediaItem item, int index) {
+    if (!mounted) return;
+    setState(() {
+      item.isCompressing = true;
+      item.compressionProgress = 0.01;
+    });
+    _compressionQueue.add((item: item, index: index));
+    if (!_compressionRunning) _runCompressionQueue();
+  }
+
+  Future<void> _runCompressionQueue() async {
+    _compressionRunning = true;
+    while (_compressionQueue.isNotEmpty) {
+      final job = _compressionQueue.removeAt(0);
+      await _doCompressVideo(job.item, job.index);
+    }
+    _compressionRunning = false;
+  }
+
+  Future<void> _doCompressVideo(_MediaItem item, int index) async {
+    Subscription? sub;
+    try {
+      sub = VideoCompress.compressProgress$.subscribe((progress) {
+        if (mounted && index < _mediaItems.length) {
+          setState(() => _mediaItems[index].compressionProgress = (progress / 100.0).clamp(0.01, 0.99));
+        }
+      });
+
+      final MediaInfo? info = await VideoCompress.compressVideo(
+        item.file.path,
+        quality: VideoQuality.Res960x540Quality,
+        deleteOrigin: false,
+        includeAudio: true,
+        frameRate: 30,
+      );
+
+      if (mounted && index < _mediaItems.length) {
+        setState(() {
+          _mediaItems[index].compressedFile = info?.file;
+          _mediaItems[index].isCompressing = false;
+          _mediaItems[index].compressionProgress = 1.0;
+          // Update the pending compression future to resolved
+        });
+        _pendingCompressions.remove(index);
+      }
+    } catch (_) {
+      if (mounted && index < _mediaItems.length) {
+        setState(() {
+          _mediaItems[index].isCompressing = false;
+          _mediaItems[index].compressionFailed = true;
+          _mediaItems[index].compressionProgress = 0.0;
+        });
+        _pendingCompressions.remove(index);
+      }
+    } finally {
+      sub?.unsubscribe();
+    }
   }
 
 
@@ -160,23 +219,17 @@ class _CounselingUploadPageState extends State<CounselingUploadPage> {
   // ── Pick image ─────────────────────────────────────────────────────────────
 
   Future<void> _pickImage(ImageSource source) async {
-    if (_isPickingMedia || _loading) return;
+    if (_loading) return;
     if (!await _requestPermissions(source)) return;
 
-    setState(() => _isPickingMedia = true);
-
     try {
-      final XFile? picked = source == ImageSource.camera
-          ? await _picker.pickImage(source: source)
-          : await _picker.pickImage(source: source);
-
-      setState(() => _isPickingMedia = false);
+      final XFile? picked = await _picker.pickImage(source: source);
       if (picked == null) return;
 
-      // ✅ TRULY INSTANT: add raw file to grid RIGHT NOW before any compression.
       final File rawFile = File(picked.path);
       final item = _MediaItem(file: rawFile, isVideo: false);
       final int itemIndex = _mediaItems.length;
+      // Show immediately in grid
       setState(() => _mediaItems.add(item));
 
       // Compress in background — swaps file silently when done.
@@ -189,7 +242,6 @@ class _CounselingUploadPageState extends State<CounselingUploadPage> {
         }
       }).catchError((_) { _pendingCompressions.remove(itemIndex); });
     } catch (e) {
-      setState(() => _isPickingMedia = false);
       if (!e.toString().toLowerCase().contains('cancel')) _snack('Could not load image');
     }
   }
@@ -197,40 +249,33 @@ class _CounselingUploadPageState extends State<CounselingUploadPage> {
   // ── Pick video ─────────────────────────────────────────────────────────────
 
   Future<void> _pickVideo(ImageSource source) async {
-    if (_isPickingMedia || _loading) return;
+    if (_loading) return;
     if (!await _requestPermissions(source, forVideo: true)) return;
-
-    setState(() => _isPickingMedia = true);
 
     try {
       final XFile? picked = await _picker.pickVideo(source: source, maxDuration: const Duration(minutes: 60));
-      setState(() => _isPickingMedia = false);
       if (picked == null) return;
 
-      // ✅ INSTANT: add raw file immediately — no spinner, no waiting.
       final File rawFile = File(picked.path);
       final item = _MediaItem(file: rawFile, isVideo: true);
       final int itemIndex = _mediaItems.length;
+      // Show immediately in grid — no blocking
       setState(() => _mediaItems.add(item));
 
-      // ✅ Generate thumbnail in background — updates cell when ready.
+      // Generate thumbnail in background
       VideoCompress.getByteThumbnail(rawFile.path, quality: 50).then((bytes) {
         if (mounted && bytes != null && itemIndex < _mediaItems.length) {
           setState(() => _mediaItems[itemIndex].thumbnail = bytes);
         }
       }).catchError((_) {});
 
-      // ✅ Compress in background — no blocking.
-      final Future<File> compressionFuture = _compressVideo(rawFile);
-      _pendingCompressions[itemIndex] = compressionFuture;
-      compressionFuture.then((compressed) {
-        _pendingCompressions.remove(itemIndex);
-        if (mounted && itemIndex < _mediaItems.length) {
-          setState(() => _mediaItems[itemIndex].file = compressed);
-        }
-      }).catchError((_) { _pendingCompressions.remove(itemIndex); });
+      // Compress in background via queue — buttons stay active
+      // Use a completer so submitStatement can await it if needed
+      final completer = Completer<File>();
+      _pendingCompressions[itemIndex] = completer.future;
+      _queueVideoCompression(item, itemIndex);
+      // Resolve completer when compression finishes (polled in submitStatement)
     } catch (e) {
-      setState(() => _isPickingMedia = false);
       if (!e.toString().toLowerCase().contains('cancel')) _snack('Could not load video');
     }
   }
@@ -238,7 +283,7 @@ class _CounselingUploadPageState extends State<CounselingUploadPage> {
   // ── Submit ─────────────────────────────────────────────────────────────────
 
   Future<void> submitStatement() async {
-    if (_loading || _isPickingMedia) return;
+    if (_loading) return;
 
     if (_titleController.text.isEmpty ||
         _descriptionController.text.isEmpty ||
@@ -253,23 +298,22 @@ class _CounselingUploadPageState extends State<CounselingUploadPage> {
 
     try {
       // If background compressions are still running, wait for them first.
-      if (_pendingCompressions.isNotEmpty) {
+      if (_mediaItems.any((m) => m.isCompressing)) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
             content: Text('Finishing video compression, please wait a moment...'),
             backgroundColor: Colors.orange,
-            duration: Duration(seconds: 3),
+            duration: Duration(seconds: 60),
           ));
         }
-        final entries = Map<int, Future<File>>.from(_pendingCompressions);
-        for (final entry in entries.entries) {
-          final compressed = await entry.value;
-          _pendingCompressions.remove(entry.key);
-          if (entry.key < _mediaItems.length) {
-            _mediaItems[entry.key].file = compressed;
-          }
+        final deadline = DateTime.now().add(const Duration(minutes: 5));
+        while (_mediaItems.any((m) => m.isCompressing)) {
+          if (DateTime.now().isAfter(deadline)) break;
+          await Future.delayed(const Duration(milliseconds: 300));
         }
+        if (mounted) ScaffoldMessenger.of(context).clearSnackBars();
       }
+      _pendingCompressions.clear();
 
       final payload = {
         'title': _titleController.text.trim(),
@@ -279,7 +323,7 @@ class _CounselingUploadPageState extends State<CounselingUploadPage> {
         'guardId': _selectedGuardId,
       };
 
-      final List<File> files = _mediaItems.map((m) => m.file).toList();
+      final List<File> files = _mediaItems.map((m) => m.uploadFile).toList();
       await _service.uploadStatementDio(payload, files, (sent, total) {
         if (total > 0 && mounted) setState(() => _uploadProgress = sent / total);
       });
@@ -313,26 +357,22 @@ class _CounselingUploadPageState extends State<CounselingUploadPage> {
   );
 
   Widget _mediaButton({required IconData icon, required String label, required Color color, required VoidCallback onTap}) {
-    final disabled = _isPickingMedia || _loading;
     return Expanded(
-      child: Opacity(
-        opacity: disabled ? 0.4 : 1.0,
-        child: GestureDetector(
-          onTap: disabled ? null : onTap,
-          child: Container(
-            padding: const EdgeInsets.symmetric(vertical: 14),
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(14),
-              color: color.withOpacity(0.1),
-              border: Border.all(color: color.withOpacity(0.3)),
-            ),
-            child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-              Icon(icon, size: 26, color: color),
-              const SizedBox(height: 6),
-              Text(label, textAlign: TextAlign.center,
-                  style: TextStyle(color: color, fontSize: 11, fontWeight: FontWeight.w600)),
-            ]),
+      child: GestureDetector(
+        onTap: _loading ? null : onTap,
+        child: Container(
+          padding: const EdgeInsets.symmetric(vertical: 14),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(14),
+            color: color.withOpacity(0.1),
+            border: Border.all(color: color.withOpacity(0.3)),
           ),
+          child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+            Icon(icon, size: 26, color: color),
+            const SizedBox(height: 6),
+            Text(label, textAlign: TextAlign.center,
+                style: TextStyle(color: color, fontSize: 11, fontWeight: FontWeight.w600)),
+          ]),
         ),
       ),
     );
@@ -521,6 +561,55 @@ class _CounselingUploadPageState extends State<CounselingUploadPage> {
                     builder: (_) => _LocalMediaFullScreen(file: item.file, isVideo: item.isVideo))),
                 child: Stack(fit: StackFit.expand, children: [
                   ClipRRect(borderRadius: BorderRadius.circular(12), child: mediaWidget),
+
+                  // Compression progress bar
+                  if (item.isVideo && item.isCompressing)
+                    Positioned(bottom: 0, left: 0, right: 0,
+                      child: ClipRRect(
+                        borderRadius: const BorderRadius.vertical(bottom: Radius.circular(12)),
+                        child: Column(mainAxisSize: MainAxisSize.min, children: [
+                          Container(
+                            color: Colors.black54,
+                            padding: const EdgeInsets.symmetric(vertical: 2),
+                            child: Center(child: Text(
+                              '${(item.compressionProgress * 100).toStringAsFixed(0)}%',
+                              style: const TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.w600),
+                            )),
+                          ),
+                          LinearProgressIndicator(
+                            value: item.compressionProgress > 0 ? item.compressionProgress : null,
+                            backgroundColor: Colors.black45,
+                            valueColor: const AlwaysStoppedAnimation<Color>(Colors.deepPurpleAccent),
+                            minHeight: 4,
+                          ),
+                        ]),
+                      ),
+                    ),
+
+                  // Compression done badge
+                  if (item.isVideo && !item.isCompressing && item.compressedFile != null)
+                    Positioned(bottom: 6, left: 6,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                        decoration: BoxDecoration(color: Colors.green.withOpacity(0.85), borderRadius: BorderRadius.circular(6)),
+                        child: const Row(mainAxisSize: MainAxisSize.min, children: [
+                          Icon(Icons.check, size: 9, color: Colors.white),
+                          SizedBox(width: 2),
+                          Text('960p', style: TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.w700)),
+                        ]),
+                      ),
+                    ),
+
+                  // Failed badge (uploads raw)
+                  if (item.isVideo && item.compressionFailed)
+                    Positioned(bottom: 6, left: 6,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                        decoration: BoxDecoration(color: Colors.orange.withOpacity(0.85), borderRadius: BorderRadius.circular(6)),
+                        child: const Text('raw', style: TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.w700)),
+                      ),
+                    ),
+
                   Positioned(top: 4, right: 4,
                     child: GestureDetector(
                       onTap: () => setState(() => _mediaItems.removeAt(i)),
@@ -551,7 +640,7 @@ class _CounselingUploadPageState extends State<CounselingUploadPage> {
         color: Colors.transparent,
         child: InkWell(
           borderRadius: BorderRadius.circular(20),
-          onTap: (_loading || _isPickingMedia) ? null : submitStatement,
+          onTap: _loading ? null : submitStatement,
           child: Padding(
             padding: const EdgeInsets.symmetric(vertical: 18),
             child: Center(
