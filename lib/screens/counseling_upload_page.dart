@@ -170,17 +170,20 @@ class _CounselingUploadPageState extends State<CounselingUploadPage> {
     }
     if (picked == null || !mounted) return;
 
-    // Copy to stable temp path
-    final File stableFile = await _copyToTemp(picked.path, ext: 'mp4');
-
-    // ADD TO GRID IMMEDIATELY
-    final item = _MediaItem(file: stableFile, isVideo: true);
+    // ADD TO GRID IMMEDIATELY with original path — no waiting for file copy
+    final item = _MediaItem(file: File(picked.path), isVideo: true);
     final int itemIndex = _mediaItems.length;
     setState(() => _mediaItems.add(item));
 
-    // After frame renders: thumbnail + compression
-    SchedulerBinding.instance.addPostFrameCallback((_) {
+    // After frame renders: stable copy + thumbnail + compression
+    SchedulerBinding.instance.addPostFrameCallback((_) async {
       if (!mounted) return;
+
+      // Copy to stable temp path (avoids path invalidation on some Android devices)
+      final stableFile = await _copyToTemp(picked!.path, ext: 'mp4');
+      if (mounted && itemIndex < _mediaItems.length) {
+        setState(() => _mediaItems[itemIndex].file = stableFile);
+      }
 
       VideoCompress.getByteThumbnail(stableFile.path, quality: 50).then((bytes) {
         if (mounted && bytes != null && itemIndex < _mediaItems.length) {
@@ -188,7 +191,7 @@ class _CounselingUploadPageState extends State<CounselingUploadPage> {
         }
       }).catchError((_) {});
 
-      _queueVideoCompression(item, itemIndex);
+      _queueVideoCompression(_mediaItems[itemIndex], itemIndex);
     });
   }
 

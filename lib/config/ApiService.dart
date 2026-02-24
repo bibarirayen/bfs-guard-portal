@@ -67,35 +67,33 @@ class ApiService {
   // Sends the report payload + all media files (already compressed by report_page.dart)
   // in a single multipart request. Server saves files, stores report, fires email.
   // Progress callback drives the real upload progress bar on the Submit button.
-  Future<void> uploadReportDio(
-      Map<String, dynamic> payload,
-      List<File> files,
-      Function(int sent, int total) onProgress,
-      ) async {
+  Future<void> uploadReportDio(Map<String, dynamic> payload, List<File> files, Function(int, int) onProgress) async {
     final prefs = await SharedPreferences.getInstance();
     final String? token = prefs.getString('jwt');
 
     final dio = Dio();
+    // Long timeouts for large video uploads — prevents timeout on slow connections
     dio.options.connectTimeout = const Duration(seconds: 60);
-    // 60 minutes send — a 5-min 1080p compressed to 720p is ~120 MB.
-    // On the weakest Hawaii LTE (2 Mbps) that's ~8 minutes. 60 min is a safe ceiling.
     dio.options.sendTimeout    = const Duration(minutes: 60);
-    // 10 minutes receive — server needs time to write file to disk and respond.
     dio.options.receiveTimeout = const Duration(minutes: 10);
 
     final formData = FormData();
-    formData.fields.add(MapEntry('payload', jsonEncode(payload)));
 
-    for (final file in files) {
-      final filename  = file.path.split('/').last;
-      final mediaType = _mediaTypeForFile(file.path);
+    // Add JSON payload
+    formData.fields.add(MapEntry('data', jsonEncode(payload['data'])));
+    formData.fields.add(MapEntry('type', payload['type']));
+
+    // Add files with correct MIME types
+    for (final f in files) {
+      final filename  = f.path.split('/').last;
+      final mediaType = _mediaTypeForFile(f.path);
       formData.files.add(MapEntry(
         'files',
-        await MultipartFile.fromFile(file.path, filename: filename, contentType: mediaType),
+        await MultipartFile.fromFile(f.path, filename: filename, contentType: mediaType),
       ));
     }
 
-    final response = await dio.post(
+    await dio.post(
       '${baseUrl}reports/upload',
       data: formData,
       options: Options(
@@ -104,10 +102,6 @@ class ApiService {
       ),
       onSendProgress: onProgress,
     );
-
-    if (response.statusCode != 200 && response.statusCode != 201) {
-      throw Exception('Upload failed: ${response.statusCode}');
-    }
   }
 
   // ─── COUNSELING UPLOAD ────────────────────────────────────────────────────

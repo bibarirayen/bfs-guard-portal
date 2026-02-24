@@ -10,26 +10,20 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:dio/dio.dart';
-import 'package:video_compress/video_compress.dart';
 // flutter_image_compress REMOVED — use imageQuality param on pickImage instead (no crashes)
+import 'package:video_compress/video_compress.dart';
 
 // ─── Media item ───────────────────────────────────────────────────────────────
 class _MediaItem {
   File file;
   final bool isVideo;
-  Uint8List? thumbnail;
-  bool isCompressing;
-  bool compressionFailed;
-  double compressionProgress;
-  File? compressedFile;
 
-  _MediaItem({required this.file, required this.isVideo, this.thumbnail})
-      : isCompressing = false,
-        compressionFailed = false,
-        compressionProgress = 0.0;
+  _MediaItem({
+    required this.file,
+    required this.isVideo,
+  });
 
-  File get uploadFile => compressedFile ?? file;
-  bool get isReady => !isCompressing;
+  File get uploadFile => file;
 }
 
 class ReportPage extends StatefulWidget {
@@ -118,8 +112,7 @@ class _ReportPageState extends State<ReportPage> {
   final ImagePicker _picker = ImagePicker();
 
   // Video compression queue
-  final List<({_MediaItem item, int index})> _compressionQueue = [];
-  bool _compressionRunning = false;
+
 
   // ─── LIFECYCLE ────────────────────────────────────────────────────────────
   @override
@@ -302,37 +295,25 @@ class _ReportPageState extends State<ReportPage> {
   Future<void> _pickVideo(ImageSource source) async {
     if (!await _requestPermissions(source, forVideo: true)) return;
 
-    XFile? picked;
-    try {
-      picked = await _picker.pickVideo(source: source);
-    } catch (_) {
-      return;
-    }
+    final picked = await _picker.pickVideo(source: source);
     if (picked == null || !mounted) return;
 
-    // Copy to a guaranteed stable temp path
-    final File stableFile = await _copyToTemp(picked.path, ext: 'mp4');
-
-    // ADD TO GRID RIGHT NOW
-    final item  = _MediaItem(file: stableFile, isVideo: true);
-    final index = _mediaItems.length;
-    setState(() => _mediaItems.add(item));
-
-    // After the frame renders, kick off thumbnail + compression
-    SchedulerBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-
-      // Thumbnail in background
-      VideoCompress.getByteThumbnail(stableFile.path, quality: 50).then((bytes) {
-        if (mounted && bytes != null && index < _mediaItems.length) {
-          setState(() => _mediaItems[index].thumbnail = bytes);
-        }
-      }).catchError((_) {});
-
-      // Queue video compression
-      _queueVideoCompression(item, index);
+    setState(() {
+      _mediaItems.add(
+        _MediaItem(
+          file: File(picked.path),
+          isVideo: true,
+        ),
+      );
     });
   }
+
+  // ─── VIDEO COMPRESSION QUEUE ──────────────────────────────────────────────
+
+
+
+
+
 
   // Copies any file to temp dir with a timestamped name — guarantees stable path
   Future<File> _copyToTemp(String sourcePath, {required String ext}) async {
@@ -346,61 +327,9 @@ class _ReportPageState extends State<ReportPage> {
   }
 
   // ─── VIDEO COMPRESSION QUEUE ──────────────────────────────────────────────
-  void _queueVideoCompression(_MediaItem item, int index) {
-    if (!mounted) return;
-    setState(() {
-      item.isCompressing = true;
-      item.compressionProgress = 0.01;
-    });
-    _compressionQueue.add((item: item, index: index));
-    if (!_compressionRunning) _runCompressionQueue();
-  }
 
-  Future<void> _runCompressionQueue() async {
-    _compressionRunning = true;
-    while (_compressionQueue.isNotEmpty) {
-      final job = _compressionQueue.removeAt(0);
-      await _doCompress(job.item, job.index);
-    }
-    _compressionRunning = false;
-  }
 
-  Future<void> _doCompress(_MediaItem item, int index) async {
-    Subscription? sub;
-    try {
-      sub = VideoCompress.compressProgress$.subscribe((progress) {
-        if (mounted && index < _mediaItems.length) {
-          setState(() => _mediaItems[index].compressionProgress = (progress / 100.0).clamp(0.01, 0.99));
-        }
-      });
 
-      final info = await VideoCompress.compressVideo(
-        item.file.path,
-        quality: VideoQuality.Res1280x720Quality,
-        deleteOrigin: false,
-        includeAudio: true,
-        frameRate: 30,
-      );
-
-      if (mounted && index < _mediaItems.length) {
-        setState(() {
-          _mediaItems[index].compressedFile      = info?.file;
-          _mediaItems[index].isCompressing       = false;
-          _mediaItems[index].compressionProgress = 1.0;
-        });
-      }
-    } catch (_) {
-      if (mounted && index < _mediaItems.length) {
-        setState(() {
-          _mediaItems[index].isCompressing       = false;
-          _mediaItems[index].compressionFailed   = true;
-          _mediaItems[index].compressionProgress = 0.0;
-        });
-      }
-    } finally {
-      sub?.unsubscribe();
-    }
-  }
 
   // ─── FETCH SITES ──────────────────────────────────────────────────────────
   Future<void> _fetchSites() async {
@@ -446,21 +375,10 @@ class _ReportPageState extends State<ReportPage> {
     setState(() { _isSubmitting = true; _uploadProgress = 0.0; });
 
     try {
-      if (_mediaItems.any((m) => m.isCompressing)) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-            content: Text('Almost ready — finishing video compression...'),
-            backgroundColor: Colors.orange,
-            duration: Duration(seconds: 30),
-          ));
-        }
-        final deadline = DateTime.now().add(const Duration(minutes: 3));
-        while (_mediaItems.any((m) => m.isCompressing)) {
-          if (DateTime.now().isAfter(deadline)) break;
-          await Future.delayed(const Duration(milliseconds: 300));
-        }
-        if (mounted) ScaffoldMessenger.of(context).clearSnackBars();
-      }
+
+
+      // Wait for any in-progress compression before uploading
+
 
       final payload = {
         "type": _selectedReportType,
@@ -472,11 +390,21 @@ class _ReportPageState extends State<ReportPage> {
       };
 
       final filesToUpload = _mediaItems.map((m) => m.uploadFile).toList();
+      for (final m in _mediaItems) {
+        print("Original: ${(await m.file.length()) / (1024 * 1024)} MB");
 
+      }
       if (filesToUpload.isNotEmpty) {
+        for (final f in filesToUpload) {
+          final sizeMB = (await f.length()) / (1024 * 1024);
+          print("FILE: ${f.path} — ${sizeMB.toStringAsFixed(2)} MB");
+        }
+        final stopwatch = Stopwatch()..start();
+
         await api.uploadReportDio(payload, filesToUpload, (sent, total) {
           if (total > 0 && mounted) setState(() => _uploadProgress = sent / total);
         });
+        print("UPLOAD TOOK: ${stopwatch.elapsed}");
       } else {
         final response = await api.post('reports', payload);
         if (response.statusCode != 200 && response.statusCode != 201) {
@@ -573,7 +501,6 @@ class _ReportPageState extends State<ReportPage> {
   // ─── BUILD ────────────────────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
-    final anyCompressing = _mediaItems.any((m) => m.isCompressing);
 
     return Scaffold(
       backgroundColor: _backgroundColor,
@@ -621,16 +548,7 @@ class _ReportPageState extends State<ReportPage> {
                     Icon(Icons.photo_library, color: _primaryColor, size: 20), const SizedBox(width: 8),
                     Text("Attachments", style: TextStyle(color: _textColor, fontSize: 16, fontWeight: FontWeight.w700)),
                     const Spacer(),
-                    if (anyCompressing)
-                      _badge(
-                        child: Row(mainAxisSize: MainAxisSize.min, children: [
-                          const SizedBox(width: 10, height: 10,
-                              child: CircularProgressIndicator(strokeWidth: 1.5, color: Colors.deepPurpleAccent)),
-                          const SizedBox(width: 6),
-                          const Text('Compressing', style: TextStyle(color: Colors.deepPurpleAccent, fontSize: 11, fontWeight: FontWeight.w600)),
-                        ]),
-                        color: Colors.deepPurpleAccent,
-                      ),
+
                   ]),
                   const SizedBox(height: 6),
                   Text("Videos auto-compress to 720p while you fill the form",
@@ -669,8 +587,7 @@ class _ReportPageState extends State<ReportPage> {
                           ? Column(mainAxisSize: MainAxisSize.min, children: [
                         Text(
                           _uploadProgress > 0
-                              ? 'Uploading... ${(_uploadProgress * 100).toStringAsFixed(0)}%'
-                              : anyCompressing ? 'Finishing compression...' : 'Preparing...',
+                              ? 'Uploading... ${(_uploadProgress * 100).toStringAsFixed(0)}%' : 'Preparing...',
                           style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 16),
                         ),
                         const SizedBox(height: 10),
@@ -714,17 +631,13 @@ class _ReportPageState extends State<ReportPage> {
 
         Widget thumb;
         if (item.isVideo) {
-          thumb = item.thumbnail != null
-              ? Stack(fit: StackFit.expand, children: [
-            Image.memory(item.thumbnail!, fit: BoxFit.cover),
-            const Center(child: Icon(Icons.play_circle_fill, size: 36, color: Colors.white,
-                shadows: [Shadow(blurRadius: 8, color: Colors.black54)])),
-          ])
-              : Container(
+          thumb = Container(
             color: const Color(0xFF1a1a2e),
-            child: const Center(child: Icon(Icons.videocam, size: 36, color: Colors.white54)),
+            child: const Center(
+              child: Icon(Icons.videocam, size: 36, color: Colors.white54),
+            ),
           );
-        } else {
+        }else {
           thumb = Image.file(
             item.file,
             fit: BoxFit.cover,
@@ -738,57 +651,14 @@ class _ReportPageState extends State<ReportPage> {
         return Stack(fit: StackFit.expand, children: [
           ClipRRect(borderRadius: BorderRadius.circular(12), child: thumb),
 
-          if (item.isVideo && item.isCompressing)
-            Positioned(bottom: 0, left: 0, right: 0,
-              child: ClipRRect(
-                borderRadius: const BorderRadius.vertical(bottom: Radius.circular(12)),
-                child: Column(mainAxisSize: MainAxisSize.min, children: [
-                  Container(color: Colors.black54, padding: const EdgeInsets.symmetric(vertical: 2),
-                    child: Center(child: Text(
-                      '${(item.compressionProgress * 100).toStringAsFixed(0)}%',
-                      style: const TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.w600),
-                    )),
-                  ),
-                  LinearProgressIndicator(
-                    value: item.compressionProgress > 0 ? item.compressionProgress : null,
-                    backgroundColor: Colors.black45,
-                    valueColor: const AlwaysStoppedAnimation<Color>(Colors.deepPurpleAccent),
-                    minHeight: 4,
-                  ),
-                ]),
-              ),
-            ),
 
-          if (item.isVideo && !item.isCompressing && item.compressedFile != null)
-            Positioned(bottom: 6, left: 6,
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
-                decoration: BoxDecoration(color: Colors.green.withOpacity(0.85), borderRadius: BorderRadius.circular(8)),
-                child: const Row(mainAxisSize: MainAxisSize.min, children: [
-                  Icon(Icons.check, size: 10, color: Colors.white),
-                  SizedBox(width: 3),
-                  Text('720p', style: TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.w700)),
-                ]),
-              ),
-            ),
-
-          if (item.isVideo && item.compressionFailed)
-            Positioned(bottom: 6, left: 6,
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
-                decoration: BoxDecoration(color: Colors.orange.withOpacity(0.85), borderRadius: BorderRadius.circular(8)),
-                child: const Text('raw', style: TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.w700)),
-              ),
-            ),
-
-          Positioned(top: 6, right: 6,
+          Positioned(top: 4, right: 4,
             child: GestureDetector(
               onTap: () => setState(() => _mediaItems.removeAt(i)),
               child: Container(
-                padding: const EdgeInsets.all(4),
-                decoration: BoxDecoration(color: Colors.red, shape: BoxShape.circle,
-                    boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.3), blurRadius: 4)]),
-                child: const Icon(Icons.close, size: 16, color: Colors.white),
+                padding: const EdgeInsets.all(3),
+                decoration: const BoxDecoration(color: Colors.red, shape: BoxShape.circle),
+                child: const Icon(Icons.close, size: 14, color: Colors.white),
               ),
             ),
           ),
