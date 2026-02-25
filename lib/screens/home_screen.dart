@@ -658,40 +658,67 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver{
   }
 
   Future<void> _stopShift() async {
-    print('🛑 Stopping location tracking...');
-    _liveLocationService.stopTracking();
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final assignmentId = prefs.getInt('assignmentId');
+      final guardId = prefs.getInt('userId');
 
-    if (!_liveLocationService.isTracking) {
-      print('✅ Location tracking stopped successfully');
-    } else {
-      print('⚠️ Warning: Location tracking may still be active');
+      if (assignmentId == null || guardId == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Assignment or Guard ID not found")),
+        );
+        return;
+      }
+
+      final apiService = ApiService();
+
+      final response = await apiService.put(
+        "assignments/stop/$assignmentId/$guardId",
+        {}, // no body required
+      );
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+
+        print("🛑 Shift stopped at: ${data["stoppedAt"]}");
+        print("⏱ Total hours: ${data["totalHours"]}");
+
+        // 1️⃣ Stop GPS tracking
+        _liveLocationService.stopTracking();
+
+        // 2️⃣ Clear saved shift data
+        await prefs.setBool('shift_active', false);
+        await prefs.remove('active_assignment_id');
+        await prefs.remove('active_guard_id');
+
+        setState(() {
+          _assignmentActive = false;
+          _shiftEnded = true;
+          _shiftStarted = false;
+          _canStopShift = false;
+        });
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              "Shift stopped successfully\nTotal hours: ${data["totalHours"]}",
+            ),
+            backgroundColor: Colors.green,
+          ),
+        );
+      } else {
+        final data = jsonDecode(response.body);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(data['error'] ?? "Failed to stop shift"),
+          ),
+        );
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("Error stopping shift: $e")),
+      );
     }
-
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool('shift_active', false);
-    await prefs.remove('shift_active');
-    await prefs.remove('active_assignment_id');
-    await prefs.remove('active_guard_id');
-
-    setState(() {
-      _assignmentActive = false;
-      _shiftEnded = true;
-      _shiftStarted = false;
-    });
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Row(
-          children: [
-            Icon(Icons.check_circle, color: Colors.white),
-            SizedBox(width: 8),
-            Text('Shift ended - GPS tracking stopped'),
-          ],
-        ),
-        backgroundColor: Colors.green,
-        duration: Duration(seconds: 3),
-      ),
-    );
   }
 
   // ─────────────────────────────────────────────────────────────────────────

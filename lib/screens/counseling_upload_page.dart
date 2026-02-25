@@ -2,32 +2,30 @@ import 'dart:io';
 import 'dart:typed_data';
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/scheduler.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:video_player/video_player.dart';
 import 'package:video_compress/video_compress.dart';
+import 'package:video_thumbnail/video_thumbnail.dart';
 import '../services/counseling_service.dart';
-// flutter_image_compress REMOVED — use imageQuality param on pickImage instead (no crashes)
 
 /// Holds a media file + optional pre-generated video thumbnail bytes.
 class _MediaItem {
   File file;
   final bool isVideo;
-  Uint8List? thumbnail;
-  bool isCompressing;
-  double compressionProgress;
-  File? compressedFile;
-  bool compressionFailed;
+  Uint8List? videoThumb;
+  bool thumbLoading;
 
-  _MediaItem({required this.file, required this.isVideo, this.thumbnail})
-      : isCompressing = false,
-        compressionProgress = 0.0,
-        compressionFailed = false;
+  _MediaItem({
+    required this.file,
+    required this.isVideo,
+    this.videoThumb,
+    this.thumbLoading = false,
+  });
 
-  File get uploadFile => compressedFile ?? file;
+  File get uploadFile => file;
 }
 
 class CounselingUploadPage extends StatefulWidget {
@@ -38,14 +36,14 @@ class CounselingUploadPage extends StatefulWidget {
 }
 
 class _CounselingUploadPageState extends State<CounselingUploadPage> {
-  final _titleController = TextEditingController();
+  final _titleController       = TextEditingController();
   final _descriptionController = TextEditingController();
-  final _categoryController = TextEditingController();
-  final _service = CounselingService();
-  final _picker = ImagePicker();
+  final _categoryController    = TextEditingController();
+  final _service               = CounselingService();
+  final _picker                = ImagePicker();
 
   bool _isDarkMode = true;
-  bool _loading = false;
+  bool _loading    = false;
   double _uploadProgress = 0.0;
 
   List<Map<String, dynamic>> _guards = [];
@@ -53,20 +51,20 @@ class _CounselingUploadPageState extends State<CounselingUploadPage> {
   int? _supervisorId;
   List<_MediaItem> _mediaItems = [];
 
-  // Video compression queue
-  final List<({_MediaItem item, int index})> _compressionQueue = [];
-  bool _compressionRunning = false;
+  // ── Picking lock (blocks all buttons while OS picker is open / file loading) ──
+  bool _isPickingMedia = false;
 
   // ── Theme ──────────────────────────────────────────────────────────────────
-  Color get _backgroundColor => _isDarkMode ? const Color(0xFF0F172A) : const Color(0xFFF8FAFC);
-  Color get _textColor => _isDarkMode ? Colors.white : const Color(0xFF1E293B);
-  Color get _cardColor => _isDarkMode ? const Color(0xFF1E293B) : Colors.white;
-  Color get _borderColor => _isDarkMode ? const Color(0xFF334155) : const Color(0xFFE2E8F0);
+  Color get _backgroundColor    => _isDarkMode ? const Color(0xFF0F172A) : const Color(0xFFF8FAFC);
+  Color get _textColor          => _isDarkMode ? Colors.white : const Color(0xFF1E293B);
+  Color get _cardColor          => _isDarkMode ? const Color(0xFF1E293B) : Colors.white;
+  Color get _borderColor        => _isDarkMode ? const Color(0xFF334155) : const Color(0xFFE2E8F0);
   Color get _secondaryTextColor => _isDarkMode ? Colors.grey[400]! : Colors.grey[600]!;
-  Color get _primaryColor => const Color(0xFF4F46E5);
-  Color get _accentColor => const Color(0xFF7C73FF);
-  Color get _inputFill => _isDarkMode ? const Color(0xFF2D3748) : Colors.grey.shade50;
+  Color get _primaryColor       => const Color(0xFF4F46E5);
+  Color get _accentColor        => const Color(0xFF7C73FF);
+  Color get _inputFill          => _isDarkMode ? const Color(0xFF2D3748) : Colors.grey.shade50;
 
+  // ── Lifecycle ──────────────────────────────────────────────────────────────
   @override
   void initState() {
     super.initState();
@@ -102,27 +100,92 @@ class _CounselingUploadPageState extends State<CounselingUploadPage> {
 
   // ── Permissions ────────────────────────────────────────────────────────────
   Future<bool> _requestPermissions(ImageSource source, {bool forVideo = false}) async {
-    if (Platform.isIOS) return true;
+    if (Platform.isIOS) return _requestPermissionsIOS(source, forVideo: forVideo);
+    return _requestPermissionsAndroid(source, forVideo: forVideo);
+  }
 
+  Future<bool> _requestPermissionsIOS(ImageSource source, {bool forVideo = false}) async {
     if (source == ImageSource.camera) {
       if (!(await Permission.camera.request()).isGranted) {
-        _snack('Camera permission required');
+        _showPermissionDeniedDialog('Camera Permission Required',
+            'Camera access is needed to take photos/videos.', showSettings: true);
         return false;
       }
       if (forVideo && !(await Permission.microphone.request()).isGranted) {
-        _snack('Microphone permission required for video');
+        _showPermissionDeniedDialog('Microphone Permission Required',
+            'Microphone access is required to record video with audio.', showSettings: true);
         return false;
       }
       return true;
     }
-
-    if (await Permission.photos.isGranted || await Permission.storage.isGranted) return true;
-    final s = await Permission.photos.request();
-    if (!s.isGranted) {
-      _snack(forVideo ? 'Video library permission required' : 'Photo library permission required');
+    final status = await Permission.photos.request();
+    if (status.isDenied || status.isPermanentlyDenied) {
+      _showPermissionDeniedDialog('Photo Library Permission Required',
+          'Go to Settings → App → Photos → "All Photos".', showSettings: true);
       return false;
     }
     return true;
+  }
+
+  Future<bool> _requestPermissionsAndroid(ImageSource source, {bool forVideo = false}) async {
+    if (source == ImageSource.camera) {
+      if (!(await Permission.camera.request()).isGranted) {
+        _snack('Camera permission is required.'); return false;
+      }
+      if (forVideo && !(await Permission.microphone.request()).isGranted) {
+        _snack('Microphone permission is required.'); return false;
+      }
+      return true;
+    }
+    final sdk = await _getAndroidSdkVersion();
+    final perm = sdk >= 33 ? (forVideo ? Permission.videos : Permission.photos) : Permission.storage;
+    final status = await perm.request();
+    if (!status.isGranted) {
+      status.isPermanentlyDenied
+          ? _showPermissionDeniedDialog('Permission Blocked', 'Open App Settings to enable.', showSettings: true)
+          : _snack('Permission is required.');
+      return false;
+    }
+    return true;
+  }
+
+  int? _cachedSdkVersion;
+  Future<int> _getAndroidSdkVersion() async {
+    if (_cachedSdkVersion != null) return _cachedSdkVersion!;
+    try {
+      final match = RegExp(r'Android (\d+)').firstMatch(Platform.operatingSystemVersion);
+      if (match != null) {
+        final v = int.tryParse(match.group(1) ?? '');
+        if (v != null) {
+          _cachedSdkVersion = {14:34,13:33,12:32,11:30,10:29,9:28}[v] ?? (v >= 13 ? 33 : 28);
+          return _cachedSdkVersion!;
+        }
+      }
+    } catch (_) {}
+    return _cachedSdkVersion = 30;
+  }
+
+  void _showPermissionDeniedDialog(String title, String msg, {bool showSettings = false}) {
+    if (!mounted) return;
+    showDialog(context: context, builder: (_) => AlertDialog(
+      backgroundColor: _cardColor,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      title: Row(children: [
+        const Icon(Icons.lock, color: Colors.redAccent, size: 22), const SizedBox(width: 8),
+        Expanded(child: Text(title, style: TextStyle(color: _textColor, fontSize: 16, fontWeight: FontWeight.w700))),
+      ]),
+      content: Text(msg, style: TextStyle(color: _secondaryTextColor, fontSize: 14, height: 1.5)),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(context),
+            child: Text('Cancel', style: TextStyle(color: _secondaryTextColor))),
+        if (showSettings) ElevatedButton(
+          onPressed: () { Navigator.pop(context); openAppSettings(); },
+          style: ElevatedButton.styleFrom(backgroundColor: _primaryColor,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))),
+          child: const Text('Open Settings', style: TextStyle(color: Colors.white)),
+        ),
+      ],
+    ));
   }
 
   // ── Copy to stable temp path ───────────────────────────────────────────────
@@ -136,119 +199,127 @@ class _CounselingUploadPageState extends State<CounselingUploadPage> {
     }
   }
 
-  // ── Pick image ─────────────────────────────────────────────────────────────
-  // THE FIX: imageQuality: 85 replaces flutter_image_compress — zero crashes
+  // ── Pick image — locked, stable path, imageQuality replaces flutter_image_compress ──
   Future<void> _pickImage(ImageSource source) async {
-    if (_loading) return;
+    if (_isPickingMedia || _loading) return;
     if (!await _requestPermissions(source)) return;
 
-    XFile? picked;
+    setState(() => _isPickingMedia = true);
     try {
-      picked = await _picker.pickImage(source: source, imageQuality: 85);
-    } catch (_) {
-      return;
+      XFile? picked;
+      try {
+        picked = await _picker.pickImage(source: source, imageQuality: 85);
+      } catch (_) { return; }
+      if (picked == null || !mounted) return;
+
+      final File stableFile = await _copyToTemp(picked.path, ext: 'jpg');
+      setState(() => _mediaItems.add(_MediaItem(file: stableFile, isVideo: false)));
+    } finally {
+      if (mounted) setState(() => _isPickingMedia = false);
     }
-    if (picked == null || !mounted) return;
-
-    // Copy to stable temp path
-    final File stableFile = await _copyToTemp(picked.path, ext: 'jpg');
-
-    // ADD TO GRID IMMEDIATELY
-    setState(() => _mediaItems.add(_MediaItem(file: stableFile, isVideo: false)));
   }
 
-  // ── Pick video ─────────────────────────────────────────────────────────────
+  // ── Pick video from gallery — locked, shows immediately, thumb async ───────
   Future<void> _pickVideo(ImageSource source) async {
-    if (_loading) return;
+    if (_isPickingMedia || _loading) return;
     if (!await _requestPermissions(source, forVideo: true)) return;
 
-    XFile? picked;
+    setState(() => _isPickingMedia = true);
     try {
-      picked = await _picker.pickVideo(source: source, maxDuration: const Duration(minutes: 60));
-    } catch (_) {
-      return;
-    }
-    if (picked == null || !mounted) return;
+      final picked = await _picker.pickVideo(source: source);
+      if (picked == null || !mounted) return;
 
-    // ADD TO GRID IMMEDIATELY with original path — no waiting for file copy
-    final item = _MediaItem(file: File(picked.path), isVideo: true);
-    final int itemIndex = _mediaItems.length;
-    setState(() => _mediaItems.add(item));
-
-    // After frame renders: stable copy + thumbnail + compression
-    SchedulerBinding.instance.addPostFrameCallback((_) async {
-      if (!mounted) return;
-
-      // Copy to stable temp path (avoids path invalidation on some Android devices)
-      final stableFile = await _copyToTemp(picked!.path, ext: 'mp4');
-      if (mounted && itemIndex < _mediaItems.length) {
-        setState(() => _mediaItems[itemIndex].file = stableFile);
-      }
-
-      VideoCompress.getByteThumbnail(stableFile.path, quality: 50).then((bytes) {
-        if (mounted && bytes != null && itemIndex < _mediaItems.length) {
-          setState(() => _mediaItems[itemIndex].thumbnail = bytes);
-        }
-      }).catchError((_) {});
-
-      _queueVideoCompression(_mediaItems[itemIndex], itemIndex);
-    });
-  }
-
-  // ── Video compression queue ────────────────────────────────────────────────
-  void _queueVideoCompression(_MediaItem item, int index) {
-    if (!mounted) return;
-    setState(() {
-      item.isCompressing = true;
-      item.compressionProgress = 0.01;
-    });
-    _compressionQueue.add((item: item, index: index));
-    if (!_compressionRunning) _runCompressionQueue();
-  }
-
-  Future<void> _runCompressionQueue() async {
-    _compressionRunning = true;
-    while (_compressionQueue.isNotEmpty) {
-      final job = _compressionQueue.removeAt(0);
-      await _doCompressVideo(job.item, job.index);
-    }
-    _compressionRunning = false;
-  }
-
-  Future<void> _doCompressVideo(_MediaItem item, int index) async {
-    Subscription? sub;
-    try {
-      sub = VideoCompress.compressProgress$.subscribe((progress) {
-        if (mounted && index < _mediaItems.length) {
-          setState(() => _mediaItems[index].compressionProgress = (progress / 100.0).clamp(0.01, 0.99));
-        }
-      });
-
-      final MediaInfo? info = await VideoCompress.compressVideo(
-        item.file.path,
-        quality: VideoQuality.Res960x540Quality,
-        deleteOrigin: false,
-        includeAudio: true,
-        frameRate: 30,
-      );
-
-      if (mounted && index < _mediaItems.length) {
-        setState(() {
-          _mediaItems[index].compressedFile = info?.file;
-          _mediaItems[index].isCompressing = false;
-          _mediaItems[index].compressionProgress = 1.0;
-        });
-      }
-    } catch (_) {
-      if (mounted && index < _mediaItems.length) {
-        setState(() {
-          _mediaItems[index].isCompressing = false;
-          _mediaItems[index].compressionFailed = true;
-          _mediaItems[index].compressionProgress = 0.0;
-        });
-      }
+      final item = _MediaItem(file: File(picked.path), isVideo: true, thumbLoading: true);
+      setState(() => _mediaItems.add(item));
+      _generateThumb(item);
     } finally {
-      sub?.unsubscribe();
+      if (mounted) setState(() => _isPickingMedia = false);
+    }
+  }
+
+  // ── Pick video from camera — quality sheet first, then locked ─────────────
+  Future<void> _pickVideoCamera() async {
+    if (_isPickingMedia || _loading) return;
+
+    final quality = await showModalBottomSheet<VideoQuality>(
+      context: context,
+      backgroundColor: _cardColor,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (_) => Padding(
+        padding: const EdgeInsets.fromLTRB(20, 12, 20, 36),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Center(child: Container(
+              width: 36, height: 4,
+              decoration: BoxDecoration(color: _borderColor, borderRadius: BorderRadius.circular(2)),
+            )),
+            const SizedBox(height: 16),
+            Text("Select Video Quality", style: TextStyle(color: _textColor, fontSize: 16, fontWeight: FontWeight.w700)),
+            Text("Higher quality = larger file & slower upload", style: TextStyle(color: _secondaryTextColor, fontSize: 12)),
+            const SizedBox(height: 16),
+            _qualityTile(Icons.sd,           Colors.green,      "Low",    "~360p · Smallest file, fastest upload", VideoQuality.LowQuality),
+            _qualityTile(Icons.hd,           Colors.orange,     "Medium", "~480p · Good balance",                  VideoQuality.MediumQuality),
+            _qualityTile(Icons.high_quality, Colors.blueAccent, "High",   "~720p · Recommended for evidence",      VideoQuality.HighestQuality),
+          ],
+        ),
+      ),
+    );
+
+    if (quality == null || !mounted) return;
+    if (!await _requestPermissions(ImageSource.camera, forVideo: true)) return;
+
+    setState(() => _isPickingMedia = true);
+    try {
+      final picked = await _picker.pickVideo(
+        source: ImageSource.camera,
+        preferredCameraDevice: CameraDevice.rear,
+        maxDuration: const Duration(minutes: 30),
+      );
+      if (picked == null || !mounted) return;
+
+      final item = _MediaItem(file: File(picked.path), isVideo: true, thumbLoading: true);
+      setState(() => _mediaItems.add(item));
+      _generateThumb(item);
+    } finally {
+      if (mounted) setState(() => _isPickingMedia = false);
+    }
+  }
+
+  Widget _qualityTile(IconData icon, Color color, String label, String sub, VideoQuality quality) {
+    return ListTile(
+      contentPadding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+      leading: Container(
+        width: 42, height: 42,
+        decoration: BoxDecoration(color: color.withOpacity(0.12), borderRadius: BorderRadius.circular(10)),
+        child: Icon(icon, color: color, size: 22),
+      ),
+      title: Text(label, style: TextStyle(color: _textColor, fontWeight: FontWeight.w600, fontSize: 14)),
+      subtitle: Text(sub, style: TextStyle(color: _secondaryTextColor, fontSize: 12)),
+      trailing: Icon(Icons.arrow_forward_ios, color: _secondaryTextColor, size: 14),
+      onTap: () => Navigator.pop(context, quality),
+    );
+  }
+
+  // ── Thumbnail generation (async, never blocks UI) ─────────────────────────
+  Future<void> _generateThumb(_MediaItem item) async {
+    try {
+      final bytes = await VideoThumbnail.thumbnailData(
+        video: item.file.path,
+        imageFormat: ImageFormat.JPEG,
+        maxWidth: 300,
+        quality: 70,
+      );
+      if (!mounted) return;
+      setState(() {
+        item.videoThumb   = bytes;
+        item.thumbLoading = false;
+      });
+    } catch (_) {
+      if (mounted) setState(() => item.thumbLoading = false);
     }
   }
 
@@ -268,28 +339,12 @@ class _CounselingUploadPageState extends State<CounselingUploadPage> {
     setState(() { _loading = true; _uploadProgress = 0.0; });
 
     try {
-      if (_mediaItems.any((m) => m.isCompressing)) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-            content: Text('Finishing video compression, please wait...'),
-            backgroundColor: Colors.orange,
-            duration: Duration(seconds: 60),
-          ));
-        }
-        final deadline = DateTime.now().add(const Duration(minutes: 5));
-        while (_mediaItems.any((m) => m.isCompressing)) {
-          if (DateTime.now().isAfter(deadline)) break;
-          await Future.delayed(const Duration(milliseconds: 300));
-        }
-        if (mounted) ScaffoldMessenger.of(context).clearSnackBars();
-      }
-
       final payload = {
-        'title': _titleController.text.trim(),
-        'description': _descriptionController.text.trim(),
-        'category': _categoryController.text.trim(),
+        'title':        _titleController.text.trim(),
+        'description':  _descriptionController.text.trim(),
+        'category':     _categoryController.text.trim(),
         'supervisorId': _supervisorId,
-        'guardId': _selectedGuardId,
+        'guardId':      _selectedGuardId,
       };
 
       final List<File> files = _mediaItems.map((m) => m.uploadFile).toList();
@@ -318,29 +373,45 @@ class _CounselingUploadPageState extends State<CounselingUploadPage> {
     labelText: label,
     labelStyle: TextStyle(color: _secondaryTextColor, fontWeight: FontWeight.w500),
     filled: true, fillColor: _inputFill,
-    border: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: BorderSide(color: _borderColor)),
+    border:        OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: BorderSide(color: _borderColor)),
     enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: BorderSide(color: _borderColor)),
     focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: BorderSide(color: _primaryColor, width: 2)),
   );
 
-  Widget _mediaButton({required IconData icon, required String label, required Color color, required VoidCallback onTap}) {
+  // Locked-aware media button — all four buttons grey + spinner when picking
+  Widget _mediaButton({
+    required IconData icon,
+    required String label,
+    required Color color,
+    required VoidCallback onTap,
+  }) {
+    final bool locked = _isPickingMedia || _loading;
     return Expanded(
-      child: GestureDetector(
-        onTap: _loading ? null : onTap,
-        child: Container(
-          padding: const EdgeInsets.symmetric(vertical: 14),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(14),
-            color: color.withOpacity(0.1),
-            border: Border.all(color: color.withOpacity(0.3)),
-          ),
-          child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-            Icon(icon, size: 26, color: color),
-            const SizedBox(height: 6),
-            Text(label, textAlign: TextAlign.center,
-                style: TextStyle(color: color, fontSize: 11, fontWeight: FontWeight.w600)),
-          ]),
+      child: Container(
+        margin: const EdgeInsets.symmetric(horizontal: 3),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(14),
+          color:  locked ? Colors.grey.withOpacity(0.08) : color.withOpacity(0.1),
+          border: Border.all(color: locked ? Colors.grey.withOpacity(0.2) : color.withOpacity(0.3)),
         ),
+        child: Material(color: Colors.transparent, child: InkWell(
+          onTap: locked ? null : onTap,
+          borderRadius: BorderRadius.circular(14),
+          child: Padding(padding: const EdgeInsets.symmetric(vertical: 14),
+            child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+              locked
+                  ? SizedBox(width: 26, height: 26,
+                  child: CircularProgressIndicator(strokeWidth: 2.5, color: color.withOpacity(0.4)))
+                  : Icon(icon, size: 26, color: color),
+              const SizedBox(height: 6),
+              Text(label, textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: locked ? Colors.grey.withOpacity(0.4) : color,
+                    fontSize: 11, fontWeight: FontWeight.w600,
+                  )),
+            ]),
+          ),
+        )),
       ),
     );
   }
@@ -353,64 +424,59 @@ class _CounselingUploadPageState extends State<CounselingUploadPage> {
       child: Scaffold(
         backgroundColor: _backgroundColor,
         body: SafeArea(
-          child: Stack(
-            children: [
-              SingleChildScrollView(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Text('Upload Counseling Statement',
-                        style: TextStyle(color: _textColor, fontSize: 22, fontWeight: FontWeight.bold)),
-                    const SizedBox(height: 20),
-                    _buildFormCard(),
-                    const SizedBox(height: 20),
-                    _buildAttachmentsCard(),
-                    const SizedBox(height: 30),
-                    _buildSubmitButton(),
-                    const SizedBox(height: 40),
-                  ],
-                ),
-              ),
+          child: Stack(children: [
+            SingleChildScrollView(
+              padding: const EdgeInsets.all(16),
+              child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                Text('Upload Counseling Statement',
+                    style: TextStyle(color: _textColor, fontSize: 22, fontWeight: FontWeight.bold)),
+                const SizedBox(height: 20),
+                _buildFormCard(),
+                const SizedBox(height: 20),
+                _buildAttachmentsCard(),
+                const SizedBox(height: 30),
+                _buildSubmitButton(),
+                const SizedBox(height: 40),
+              ]),
+            ),
 
-              if (_loading)
-                Container(
-                  color: Colors.black54,
-                  child: Center(
-                    child: Container(
-                      margin: const EdgeInsets.symmetric(horizontal: 40),
-                      padding: const EdgeInsets.all(28),
-                      decoration: BoxDecoration(
-                        color: _cardColor,
-                        borderRadius: BorderRadius.circular(20),
-                        border: Border.all(color: _borderColor),
-                      ),
-                      child: Column(mainAxisSize: MainAxisSize.min, children: [
-                        Text(
-                          _uploadProgress > 0
-                              ? 'Uploading... ${(_uploadProgress * 100).toStringAsFixed(0)}%'
-                              : 'Preparing...',
-                          style: TextStyle(color: _textColor, fontSize: 16, fontWeight: FontWeight.w600),
-                        ),
-                        const SizedBox(height: 20),
-                        ClipRRect(
-                          borderRadius: BorderRadius.circular(6),
-                          child: LinearProgressIndicator(
-                            value: _uploadProgress > 0 ? _uploadProgress : null,
-                            backgroundColor: _borderColor,
-                            valueColor: AlwaysStoppedAnimation<Color>(_primaryColor),
-                            minHeight: 8,
-                          ),
-                        ),
-                        const SizedBox(height: 12),
-                        Text('Please wait, do not close the app',
-                            style: TextStyle(color: _secondaryTextColor, fontSize: 12)),
-                      ]),
+            if (_loading)
+              Container(
+                color: Colors.black54,
+                child: Center(
+                  child: Container(
+                    margin: const EdgeInsets.symmetric(horizontal: 40),
+                    padding: const EdgeInsets.all(28),
+                    decoration: BoxDecoration(
+                      color: _cardColor,
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(color: _borderColor),
                     ),
+                    child: Column(mainAxisSize: MainAxisSize.min, children: [
+                      Text(
+                        _uploadProgress > 0
+                            ? 'Uploading... ${(_uploadProgress * 100).toStringAsFixed(0)}%'
+                            : 'Preparing...',
+                        style: TextStyle(color: _textColor, fontSize: 16, fontWeight: FontWeight.w600),
+                      ),
+                      const SizedBox(height: 20),
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(6),
+                        child: LinearProgressIndicator(
+                          value: _uploadProgress > 0 ? _uploadProgress : null,
+                          backgroundColor: _borderColor,
+                          valueColor: AlwaysStoppedAnimation<Color>(_primaryColor),
+                          minHeight: 8,
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      Text('Please wait, do not close the app',
+                          style: TextStyle(color: _secondaryTextColor, fontSize: 12)),
+                    ]),
                   ),
                 ),
-            ],
-          ),
+              ),
+          ]),
         ),
       ),
     );
@@ -446,7 +512,6 @@ class _CounselingUploadPageState extends State<CounselingUploadPage> {
   }
 
   Widget _buildAttachmentsCard() {
-    final anyCompressing = _mediaItems.any((m) => m.isCompressing);
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
@@ -456,40 +521,37 @@ class _CounselingUploadPageState extends State<CounselingUploadPage> {
           Icon(Icons.photo_library, color: _primaryColor, size: 20),
           const SizedBox(width: 8),
           Text('Attachments', style: TextStyle(color: _textColor, fontWeight: FontWeight.bold, fontSize: 16)),
-          const Spacer(),
-          if (anyCompressing)
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-              decoration: BoxDecoration(
-                color: Colors.deepPurpleAccent.withOpacity(0.15),
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: Colors.deepPurpleAccent.withOpacity(0.4)),
-              ),
-              child: const Row(mainAxisSize: MainAxisSize.min, children: [
-                SizedBox(width: 10, height: 10,
-                    child: CircularProgressIndicator(strokeWidth: 1.5, color: Colors.deepPurpleAccent)),
-                SizedBox(width: 5),
-                Text('Compressing', style: TextStyle(color: Colors.deepPurpleAccent, fontSize: 10, fontWeight: FontWeight.w600)),
-              ]),
-            ),
         ]),
         const SizedBox(height: 8),
-        Text('Tap any thumbnail to preview full-screen',
-            style: TextStyle(color: _secondaryTextColor, fontSize: 12)),
+        // Tip banner — same style as report_page
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+          decoration: BoxDecoration(
+            color: Colors.amber.withOpacity(0.1),
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: Colors.amber.withOpacity(0.3)),
+          ),
+          child: Row(children: [
+            const Icon(Icons.info_outline, color: Colors.amber, size: 15),
+            const SizedBox(width: 8),
+            Expanded(child: Text(
+              "Set camera quality to 720p or 1080p before recording for faster uploads",
+              style: TextStyle(color: Colors.amber.shade300, fontSize: 12),
+            )),
+          ]),
+        ),
         const SizedBox(height: 16),
 
+        // 4 media buttons — locked together while any pick is in progress
         Row(children: [
           _mediaButton(icon: Icons.photo_library_rounded, label: 'Gallery\nPhoto',
-              color: _primaryColor, onTap: () => _pickImage(ImageSource.gallery)),
-          const SizedBox(width: 8),
-          _mediaButton(icon: Icons.camera_alt_rounded, label: 'Camera\nPhoto',
-              color: const Color(0xFF3B82F6), onTap: () => _pickImage(ImageSource.camera)),
-          const SizedBox(width: 8),
-          _mediaButton(icon: Icons.video_library, label: 'Gallery\nVideo',
-              color: Colors.orange, onTap: () => _pickVideo(ImageSource.gallery)),
-          const SizedBox(width: 8),
-          _mediaButton(icon: Icons.videocam, label: 'Record\nVideo',
-              color: Colors.redAccent, onTap: () => _pickVideo(ImageSource.camera)),
+              color: _primaryColor,                    onTap: () => _pickImage(ImageSource.gallery)),
+          _mediaButton(icon: Icons.camera_alt_rounded,   label: 'Camera\nPhoto',
+              color: const Color(0xFF3B82F6),           onTap: () => _pickImage(ImageSource.camera)),
+          _mediaButton(icon: Icons.video_library,        label: 'Gallery\nVideo',
+              color: Colors.orange,                     onTap: () => _pickVideo(ImageSource.gallery)),
+          _mediaButton(icon: Icons.videocam,             label: 'Record\nVideo',
+              color: Colors.redAccent,                  onTap: _pickVideoCamera),
         ]),
 
         if (_mediaItems.isNotEmpty) ...[
@@ -497,103 +559,83 @@ class _CounselingUploadPageState extends State<CounselingUploadPage> {
           Text('${_mediaItems.length} file${_mediaItems.length != 1 ? 's' : ''} selected',
               style: TextStyle(color: _secondaryTextColor, fontSize: 12)),
           const SizedBox(height: 8),
-          GridView.builder(
-            shrinkWrap: true,
-            physics: const NeverScrollableScrollPhysics(),
-            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: 3, crossAxisSpacing: 10, mainAxisSpacing: 10),
-            itemCount: _mediaItems.length,
-            itemBuilder: (_, i) {
-              final item = _mediaItems[i];
-
-              Widget mediaWidget;
-              if (item.isVideo) {
-                mediaWidget = item.thumbnail != null
-                    ? Stack(fit: StackFit.expand, children: [
-                  Image.memory(item.thumbnail!, fit: BoxFit.cover),
-                  const Center(child: Icon(Icons.play_circle_fill, color: Colors.white, size: 38,
-                      shadows: [Shadow(blurRadius: 8, color: Colors.black54)])),
-                ])
-                    : Container(
-                  color: const Color(0xFF1a1a2e),
-                  child: const Center(child: Icon(Icons.videocam, color: Colors.white54, size: 36)),
-                );
-              } else {
-                mediaWidget = Image.file(item.file, fit: BoxFit.cover,
-                    errorBuilder: (_, __, ___) => Container(color: _borderColor,
-                        child: Icon(Icons.broken_image, color: _secondaryTextColor)));
-              }
-
-              return GestureDetector(
-                onTap: () => Navigator.of(context).push(MaterialPageRoute(
-                    builder: (_) => _LocalMediaFullScreen(file: item.file, isVideo: item.isVideo))),
-                child: Stack(fit: StackFit.expand, children: [
-                  ClipRRect(borderRadius: BorderRadius.circular(12), child: mediaWidget),
-
-                  // Compression progress bar
-                  if (item.isVideo && item.isCompressing)
-                    Positioned(bottom: 0, left: 0, right: 0,
-                      child: ClipRRect(
-                        borderRadius: const BorderRadius.vertical(bottom: Radius.circular(12)),
-                        child: Column(mainAxisSize: MainAxisSize.min, children: [
-                          Container(
-                            color: Colors.black54,
-                            padding: const EdgeInsets.symmetric(vertical: 2),
-                            child: Center(child: Text(
-                              '${(item.compressionProgress * 100).toStringAsFixed(0)}%',
-                              style: const TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.w600),
-                            )),
-                          ),
-                          LinearProgressIndicator(
-                            value: item.compressionProgress > 0 ? item.compressionProgress : null,
-                            backgroundColor: Colors.black45,
-                            valueColor: const AlwaysStoppedAnimation<Color>(Colors.deepPurpleAccent),
-                            minHeight: 4,
-                          ),
-                        ]),
-                      ),
-                    ),
-
-                  // Done badge
-                  if (item.isVideo && !item.isCompressing && item.compressedFile != null)
-                    Positioned(bottom: 6, left: 6,
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
-                        decoration: BoxDecoration(color: Colors.green.withOpacity(0.85), borderRadius: BorderRadius.circular(6)),
-                        child: const Row(mainAxisSize: MainAxisSize.min, children: [
-                          Icon(Icons.check, size: 9, color: Colors.white),
-                          SizedBox(width: 2),
-                          Text('960p', style: TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.w700)),
-                        ]),
-                      ),
-                    ),
-
-                  // Failed badge
-                  if (item.isVideo && item.compressionFailed)
-                    Positioned(bottom: 6, left: 6,
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
-                        decoration: BoxDecoration(color: Colors.orange.withOpacity(0.85), borderRadius: BorderRadius.circular(6)),
-                        child: const Text('raw', style: TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.w700)),
-                      ),
-                    ),
-
-                  Positioned(top: 4, right: 4,
-                    child: GestureDetector(
-                      onTap: () => setState(() => _mediaItems.removeAt(i)),
-                      child: Container(
-                        padding: const EdgeInsets.all(3),
-                        decoration: const BoxDecoration(color: Colors.red, shape: BoxShape.circle),
-                        child: const Icon(Icons.close, size: 14, color: Colors.white),
-                      ),
-                    ),
-                  ),
-                ]),
-              );
-            },
-          ),
+          _buildGrid(),
         ],
       ]),
+    );
+  }
+
+  Widget _buildGrid() {
+    return GridView.builder(
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+          crossAxisCount: 3, crossAxisSpacing: 10, mainAxisSpacing: 10),
+      itemCount: _mediaItems.length,
+      itemBuilder: (_, i) {
+        final item = _mediaItems[i];
+
+        Widget thumb;
+        if (item.isVideo) {
+          if (item.thumbLoading) {
+            thumb = Container(
+              color: const Color(0xFF1a1a2e),
+              child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+                const Icon(Icons.videocam, size: 28, color: Colors.white38),
+                const SizedBox(height: 8),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(4),
+                    child: LinearProgressIndicator(
+                      backgroundColor: Colors.white12,
+                      valueColor: AlwaysStoppedAnimation<Color>(_primaryColor),
+                      minHeight: 4,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 4),
+                const Text("Loading...", style: TextStyle(color: Colors.white38, fontSize: 10)),
+              ]),
+            );
+          } else if (item.videoThumb != null) {
+            thumb = Stack(fit: StackFit.expand, children: [
+              Image.memory(item.videoThumb!, fit: BoxFit.cover),
+              const Center(child: Icon(Icons.play_circle_fill, color: Colors.white, size: 38,
+                  shadows: [Shadow(blurRadius: 8, color: Colors.black54)])),
+            ]);
+          } else {
+            thumb = Container(
+              color: const Color(0xFF1a1a2e),
+              child: const Center(child: Icon(Icons.videocam, color: Colors.white54, size: 36)),
+            );
+          }
+        } else {
+          thumb = Image.file(item.file, fit: BoxFit.cover,
+              errorBuilder: (_, __, ___) => Container(
+                color: Colors.grey[800],
+                child: const Center(child: Icon(Icons.image, color: Colors.white54, size: 36)),
+              ));
+        }
+
+        return GestureDetector(
+          onTap: () => Navigator.of(context).push(MaterialPageRoute(
+              builder: (_) => _LocalMediaFullScreen(file: item.file, isVideo: item.isVideo))),
+          child: Stack(fit: StackFit.expand, children: [
+            ClipRRect(borderRadius: BorderRadius.circular(12), child: thumb),
+            Positioned(top: 4, right: 4,
+              child: GestureDetector(
+                onTap: () => setState(() => _mediaItems.removeAt(i)),
+                child: Container(
+                  padding: const EdgeInsets.all(3),
+                  decoration: const BoxDecoration(color: Colors.red, shape: BoxShape.circle),
+                  child: const Icon(Icons.close, size: 14, color: Colors.white),
+                ),
+              ),
+            ),
+          ]),
+        );
+      },
     );
   }
 
@@ -611,14 +653,12 @@ class _CounselingUploadPageState extends State<CounselingUploadPage> {
           onTap: _loading ? null : submitStatement,
           child: Padding(
             padding: const EdgeInsets.symmetric(vertical: 18),
-            child: Center(
-              child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-                const Icon(Icons.send_rounded, color: Colors.white, size: 20),
-                const SizedBox(width: 10),
-                const Text('Submit Statement',
-                    style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 18)),
-              ]),
-            ),
+            child: Center(child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+              const Icon(Icons.send_rounded, color: Colors.white, size: 20),
+              const SizedBox(width: 10),
+              const Text('Submit Statement',
+                  style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 18)),
+            ])),
           ),
         ),
       ),
@@ -626,9 +666,7 @@ class _CounselingUploadPageState extends State<CounselingUploadPage> {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Full-screen viewer for LOCAL files
-// ─────────────────────────────────────────────────────────────────────────────
+// ── Full-screen viewer for local files ────────────────────────────────────────
 class _LocalMediaFullScreen extends StatefulWidget {
   final File file;
   final bool isVideo;
@@ -664,13 +702,16 @@ class _LocalMediaFullScreenState extends State<_LocalMediaFullScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.black,
-      appBar: AppBar(backgroundColor: Colors.black,
-          iconTheme: const IconThemeData(color: Colors.white),
-          title: Text(widget.isVideo ? 'Video Preview' : 'Photo Preview',
-              style: const TextStyle(color: Colors.white))),
+      appBar: AppBar(
+        backgroundColor: Colors.black,
+        iconTheme: const IconThemeData(color: Colors.white),
+        title: Text(widget.isVideo ? 'Video Preview' : 'Photo Preview',
+            style: const TextStyle(color: Colors.white)),
+      ),
       body: Center(child: widget.isVideo ? _video() : _image()),
       floatingActionButton: widget.isVideo && _ready
-          ? FloatingActionButton(backgroundColor: Colors.white24,
+          ? FloatingActionButton(
+          backgroundColor: Colors.white24,
           onPressed: () => setState(() =>
           _ctrl!.value.isPlaying ? _ctrl!.pause() : _ctrl!.play()),
           child: Icon(_ctrl!.value.isPlaying ? Icons.pause : Icons.play_arrow, color: Colors.white))

@@ -70,7 +70,7 @@ class ApiService {
   Future<void> uploadReportDio(Map<String, dynamic> payload, List<File> files, Function(int, int) onProgress) async {
     final prefs = await SharedPreferences.getInstance();
     final String? token = prefs.getString('jwt');
-
+    print("JWT TOKEN: $token");
     final dio = Dio();
     // Long timeouts for large video uploads — prevents timeout on slow connections
     dio.options.connectTimeout = const Duration(seconds: 60);
@@ -80,8 +80,9 @@ class ApiService {
     final formData = FormData();
 
     // Add JSON payload
-    formData.fields.add(MapEntry('data', jsonEncode(payload['data'])));
-    formData.fields.add(MapEntry('type', payload['type']));
+    formData.fields.add(
+      MapEntry('payload', jsonEncode(payload)),
+    );
 
     // Add files with correct MIME types
     for (final f in files) {
@@ -98,7 +99,6 @@ class ApiService {
       data: formData,
       options: Options(
         headers: {if (token != null) 'Authorization': 'Bearer $token'},
-        contentType: 'multipart/form-data',
       ),
       onSendProgress: onProgress,
     );

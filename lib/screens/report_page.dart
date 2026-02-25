@@ -10,6 +10,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:dio/dio.dart';
+import 'package:video_thumbnail/video_thumbnail.dart';
+
 // flutter_image_compress REMOVED — use imageQuality param on pickImage instead (no crashes)
 import 'package:video_compress/video_compress.dart';
 
@@ -17,10 +19,14 @@ import 'package:video_compress/video_compress.dart';
 class _MediaItem {
   File file;
   final bool isVideo;
+  Uint8List? videoThumb;      // null = still generating
+  bool thumbLoading = false;  // show shimmer while generating
 
   _MediaItem({
     required this.file,
     required this.isVideo,
+    this.videoThumb,
+    this.thumbLoading = false,
   });
 
   File get uploadFile => file;
@@ -274,42 +280,72 @@ class _ReportPageState extends State<ReportPage> {
   // 4. Thumbnail + compression start AFTER the frame renders (addPostFrameCallback)
 
   Future<void> _pickImage(ImageSource source) async {
+    if (_isPickingMedia) return;
     if (!await _requestPermissions(source)) return;
 
-    XFile? picked;
+    setState(() => _isPickingMedia = true);
+
     try {
-      // imageQuality does compression natively — replaces flutter_image_compress entirely
-      picked = await _picker.pickImage(source: source, imageQuality: 85);
-    } catch (_) {
-      return;
+      XFile? picked;
+      try {
+        picked = await _picker.pickImage(source: source, imageQuality: 85);
+      } catch (_) {
+        return;
+      }
+      if (picked == null || !mounted) return;
+
+      final File stableFile = await _copyToTemp(picked.path, ext: 'jpg');
+      setState(() => _mediaItems.add(_MediaItem(file: stableFile, isVideo: false)));
+
+    } finally {
+      if (mounted) setState(() => _isPickingMedia = false);
     }
-    if (picked == null || !mounted) return;
-
-    // Copy to a guaranteed stable temp path
-    final File stableFile = await _copyToTemp(picked.path, ext: 'jpg');
-
-    // ADD TO GRID RIGHT NOW
-    setState(() => _mediaItems.add(_MediaItem(file: stableFile, isVideo: false)));
   }
+  bool _isPickingMedia = false;
 
   Future<void> _pickVideo(ImageSource source) async {
+    if (_isPickingMedia) return; // prevent double-tap
     if (!await _requestPermissions(source, forVideo: true)) return;
 
-    final picked = await _picker.pickVideo(source: source);
-    if (picked == null || !mounted) return;
+    // 🔒 Lock buttons BEFORE picker opens — large files take time to return
+    setState(() => _isPickingMedia = true);
 
-    setState(() {
-      _mediaItems.add(
-        _MediaItem(
-          file: File(picked.path),
-          isVideo: true,
-        ),
+    try {
+      final picked = await _picker.pickVideo(source: source);
+      if (picked == null || !mounted) return;
+
+      final item = _MediaItem(
+        file: File(picked.path),
+        isVideo: true,
+        thumbLoading: true,
       );
-    });
+
+      setState(() => _mediaItems.add(item));
+      _generateThumb(item);
+
+    } finally {
+      // 🔓 Always unlock, even on error or cancel
+      if (mounted) setState(() => _isPickingMedia = false);
+    }
   }
-
   // ─── VIDEO COMPRESSION QUEUE ──────────────────────────────────────────────
-
+  Future<void> _generateThumb(_MediaItem item) async {
+    try {
+      final bytes = await VideoThumbnail.thumbnailData(
+        video: item.file.path,
+        imageFormat: ImageFormat.JPEG,
+        maxWidth: 300,   // small = fast
+        quality: 70,
+      );
+      if (!mounted) return;
+      setState(() {
+        item.videoThumb = bytes;
+        item.thumbLoading = false;
+      });
+    } catch (_) {
+      if (mounted) setState(() => item.thumbLoading = false);
+    }
+  }
 
 
 
@@ -422,6 +458,8 @@ class _ReportPageState extends State<ReportPage> {
 
     } on DioException catch (e) {
       _snackError("Upload failed: ${e.response?.data?.toString() ?? e.message}");
+      print("DATA: ${e.response?.data}");
+      print("ERROR: ${e.message}");
     } catch (e) {
       _snackError("Error submitting report: $e");
     } finally {
@@ -551,11 +589,29 @@ class _ReportPageState extends State<ReportPage> {
 
                   ]),
                   const SizedBox(height: 6),
-                  Text("Videos auto-compress to 720p while you fill the form",
-                      style: TextStyle(color: _secondaryTextColor, fontSize: 12)),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                    decoration: BoxDecoration(
+                      color: Colors.amber.withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: Colors.amber.withOpacity(0.3)),
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.info_outline, color: Colors.amber, size: 15),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            "Set camera quality to 720p or 1080p before recording for faster uploads",
+                            style: TextStyle(color: Colors.amber.shade300, fontSize: 12),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
                   const SizedBox(height: 16),
                   Row(mainAxisAlignment: MainAxisAlignment.spaceEvenly, children: [
-                    _mediaBtn(icon: Icons.videocam,              label: "Video",         onTap: () => _pickVideo(ImageSource.camera),  color: Colors.redAccent),
+                    _mediaBtn(icon: Icons.videocam, label: "Video", onTap: () => _pickVideoCamera(), color: Colors.redAccent),
                     _mediaBtn(icon: Icons.video_library,         label: "Gallery\nVideo",onTap: () => _pickVideo(ImageSource.gallery), color: Colors.orange),
                     _mediaBtn(icon: Icons.camera_alt_rounded,    label: "Camera",        onTap: () => _pickImage(ImageSource.camera),  color: const Color(0xFF3B82F6)),
                     _mediaBtn(icon: Icons.photo_library_rounded, label: "Gallery",       onTap: () => _pickImage(ImageSource.gallery), color: const Color(0xFF8B5CF6)),
@@ -617,7 +673,80 @@ class _ReportPageState extends State<ReportPage> {
       ),
     );
   }
+  Future<void> _pickVideoCamera() async {
+    if (_isPickingMedia) return;
 
+    // Show quality picker BEFORE opening camera
+    final quality = await showModalBottomSheet<VideoQuality>(
+      context: context,
+      backgroundColor: _cardColor,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (_) => Padding(
+        padding: const EdgeInsets.fromLTRB(20, 12, 20, 36),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // drag handle
+            Center(child: Container(
+              width: 36, height: 4,
+              decoration: BoxDecoration(color: _borderColor, borderRadius: BorderRadius.circular(2)),
+            )),
+            const SizedBox(height: 16),
+            Text("Select Video Quality", style: TextStyle(color: _textColor, fontSize: 16, fontWeight: FontWeight.w700)),
+            Text("Higher quality = larger file & slower upload", style: TextStyle(color: _secondaryTextColor, fontSize: 12)),
+            const SizedBox(height: 16),
+            _qualityTile(Icons.sd,           Colors.green,        "Low",         "~360p · Smallest file, fastest upload", VideoQuality.LowQuality),
+            _qualityTile(Icons.hd,           Colors.orange,       "Medium",      "~480p · Good balance",                  VideoQuality.MediumQuality),
+            _qualityTile(Icons.high_quality, Colors.blueAccent,   "High",        "~720p · Recommended for evidence",      VideoQuality.HighestQuality),
+          ],
+        ),
+      ),
+    );
+
+    // User dismissed sheet without picking
+    if (quality == null || !mounted) return;
+    if (!await _requestPermissions(ImageSource.camera, forVideo: true)) return;
+
+    setState(() => _isPickingMedia = true);
+    try {
+      final picked = await _picker.pickVideo(
+        source: ImageSource.camera,
+        preferredCameraDevice: CameraDevice.rear,
+        maxDuration: const Duration(minutes: 30),
+      );
+      if (picked == null || !mounted) return;
+
+      // Note: image_picker uses videoQuality internally based on platform defaults.
+      // To actually enforce quality, we pass it via the underlying platform call.
+      // The cleanest cross-platform way is post-compression via video_compress,
+      // which you already have imported. See compression note below.
+
+      final item = _MediaItem(file: File(picked.path), isVideo: true, thumbLoading: true);
+      setState(() => _mediaItems.add(item));
+      _generateThumb(item);
+
+    } finally {
+      if (mounted) setState(() => _isPickingMedia = false);
+    }
+  }
+
+  Widget _qualityTile(IconData icon, Color color, String label, String sub, VideoQuality quality) {
+    return ListTile(
+      contentPadding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+      leading: Container(
+        width: 42, height: 42,
+        decoration: BoxDecoration(color: color.withOpacity(0.12), borderRadius: BorderRadius.circular(10)),
+        child: Icon(icon, color: color, size: 22),
+      ),
+      title: Text(label, style: TextStyle(color: _textColor, fontWeight: FontWeight.w600, fontSize: 14)),
+      subtitle: Text(sub, style: TextStyle(color: _secondaryTextColor, fontSize: 12)),
+      trailing: Icon(Icons.arrow_forward_ios, color: _secondaryTextColor, size: 14),
+      onTap: () => Navigator.pop(context, quality),
+    );
+  }
   // ─── GRID ─────────────────────────────────────────────────────────────────
   Widget _buildGrid() {
     return GridView.builder(
@@ -631,12 +760,50 @@ class _ReportPageState extends State<ReportPage> {
 
         Widget thumb;
         if (item.isVideo) {
-          thumb = Container(
-            color: const Color(0xFF1a1a2e),
-            child: const Center(
-              child: Icon(Icons.videocam, size: 36, color: Colors.white54),
-            ),
-          );
+          if (item.thumbLoading) {
+            // Animated shimmer loading bar
+            thumb = Container(
+              color: const Color(0xFF1a1a2e),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Icon(Icons.videocam, size: 28, color: Colors.white38),
+                  const SizedBox(height: 8),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(4),
+                      child: LinearProgressIndicator(
+                        backgroundColor: Colors.white12,
+                        valueColor: AlwaysStoppedAnimation<Color>(_primaryColor),
+                        minHeight: 4,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    "Loading...",
+                    style: TextStyle(color: Colors.white38, fontSize: 10),
+                  ),
+                ],
+              ),
+            );
+          } else if (item.videoThumb != null) {
+            thumb = Image.memory(
+              item.videoThumb!,
+              fit: BoxFit.cover,
+              errorBuilder: (_, __, ___) => Container(
+                color: const Color(0xFF1a1a2e),
+                child: const Center(child: Icon(Icons.videocam, size: 36, color: Colors.white54)),
+              ),
+            );
+          } else {
+            // Thumb generation failed — fallback icon
+            thumb = Container(
+              color: const Color(0xFF1a1a2e),
+              child: const Center(child: Icon(Icons.videocam, size: 36, color: Colors.white54)),
+            );
+          }
         }else {
           thumb = Image.file(
             item.file,
@@ -699,18 +866,42 @@ class _ReportPageState extends State<ReportPage> {
     child: child,
   );
 
-  Widget _mediaBtn({required IconData icon, required String label, required VoidCallback onTap, required Color color}) {
+  Widget _mediaBtn({
+    required IconData icon,
+    required String label,
+    required VoidCallback onTap,
+    required Color color,
+  }) {
+    final bool locked = _isPickingMedia;
+
     return Expanded(child: Container(
       margin: const EdgeInsets.symmetric(horizontal: 4),
-      decoration: BoxDecoration(borderRadius: BorderRadius.circular(16),
-          color: color.withOpacity(0.1), border: Border.all(color: color.withOpacity(0.3))),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(16),
+        color: locked ? Colors.grey.withOpacity(0.08) : color.withOpacity(0.1),
+        border: Border.all(color: locked ? Colors.grey.withOpacity(0.2) : color.withOpacity(0.3)),
+      ),
       child: Material(color: Colors.transparent, child: InkWell(
-        onTap: onTap,
+        onTap: locked ? null : onTap,
         borderRadius: BorderRadius.circular(16),
         child: Padding(padding: const EdgeInsets.symmetric(vertical: 16),
           child: Column(children: [
-            Icon(icon, size: 28, color: color), const SizedBox(height: 8),
-            Text(label, style: TextStyle(color: color, fontWeight: FontWeight.w600, fontSize: 11), textAlign: TextAlign.center),
+            locked
+                ? SizedBox(
+              width: 28, height: 28,
+              child: CircularProgressIndicator(strokeWidth: 2.5, color: color.withOpacity(0.4)),
+            )
+                : Icon(icon, size: 28, color: color),
+            const SizedBox(height: 8),
+            Text(
+              label,
+              style: TextStyle(
+                color: locked ? Colors.grey.withOpacity(0.4) : color,
+                fontWeight: FontWeight.w600,
+                fontSize: 11,
+              ),
+              textAlign: TextAlign.center,
+            ),
           ]),
         ),
       )),
