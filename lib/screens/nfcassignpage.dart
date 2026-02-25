@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter_nfc_kit/flutter_nfc_kit.dart';
+import 'package:geolocator/geolocator.dart';
 import 'package:ndef/record.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../config/ApiService.dart';
@@ -56,7 +57,62 @@ class _NfcAssignPageState extends State<NfcAssignPage> {
       );
     }
   }
+  Future<void> setCurrentLocation(int stopId) async {
+    try {
+      bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!serviceEnabled) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Location services are disabled')),
+        );
+        return;
+      }
 
+      LocationPermission permission = await Geolocator.checkPermission();
+
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+      }
+
+      if (permission == LocationPermission.denied ||
+          permission == LocationPermission.deniedForever) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Location permission denied')),
+        );
+        return;
+      }
+
+      Position position = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.high,
+      );
+
+      final response = await apiService.put(
+        'stops/$stopId/location',
+        {
+          'latitude': position.latitude,
+          'longitude': position.longitude,
+        },
+      );
+
+      if (response.statusCode == 200) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Stop location updated successfully!'),
+            backgroundColor: Colors.green,
+          ),
+        );
+
+        fetchStops(); // refresh UI
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Backend error: ${response.statusCode}')),
+        );
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to get location: $e')),
+      );
+    }
+  }
   Future<void> assignNfc(int stopId) async {
     final availability = await FlutterNfcKit.nfcAvailability;
     if (availability != NFCAvailability.available) {
@@ -355,6 +411,26 @@ class _NfcAssignPageState extends State<NfcAssignPage> {
                                 ),
                                 padding: const EdgeInsets.symmetric(
                                     horizontal: 10, vertical: 8),
+                              ),
+                            ),
+                            const SizedBox(width: 6),
+
+                            ElevatedButton.icon(
+                              onPressed: () => setCurrentLocation(stop['id']),
+                              icon: const Icon(Icons.my_location, size: 16),
+                              label: const Text(
+                                'Set GPS',
+                                style: TextStyle(color: Colors.white, fontSize: 13),
+                              ),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: Colors.green,
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 10,
+                                  vertical: 8,
+                                ),
                               ),
                             ),
                           ],

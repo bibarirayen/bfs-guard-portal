@@ -55,7 +55,8 @@
 	<!-- Triggered when: Guard scans NFC checkpoint tags -->
 	<key>NFCReaderUsageDescription</key>
     <string>BFS Guard Portal uses NFC to scan and assign checkpoint tags during security patrols.</string>
-
+    <key>NSLocationWhenInUseUsageDescription</key>
+    <string>BFS Guard Portal needs location access to set stop GPS coordinates.</string>
     <key>com.apple.developer.nfc.readersession.formats</key>
     <array>
     	<string>TAG</string>
