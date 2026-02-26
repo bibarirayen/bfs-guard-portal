@@ -1,6 +1,9 @@
 import 'dart:io';
+import 'package:crossplatformblackfabric/screens/late_arrivals_page.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import '../main.dart'; // imports navigatorKey
 
 final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
 FlutterLocalNotificationsPlugin();
@@ -42,8 +45,15 @@ Future<void> setupFlutterNotifications() async {
 
   await flutterLocalNotificationsPlugin.initialize(
     initializationSettings,
+    // ✅ When user taps a local notification (foreground), navigate if it's a late alert
     onDidReceiveNotificationResponse: (NotificationResponse response) {
       print('📱 [NOTIFICATIONS] Tapped: ${response.payload}');
+      final payload = response.payload ?? '';
+      if (payload.contains('LATE_GUARD') || payload.contains('late')) {
+        navigatorKey.currentState?.push(
+          MaterialPageRoute(builder: (_) => const LateArrivalsPage()),
+        );
+      }
     },
   );
 
@@ -82,8 +92,9 @@ Future<void> setupFlutterNotifications() async {
     RemoteNotification? notification = message.notification;
     if (notification != null) {
       // Only manually show notifications on Android
-      // iOS handles this automatically via setForegroundNotificationPresentationOptions
       if (Platform.isAndroid) {
+        // ✅ Pass the message type as payload so tap handler knows where to go
+        final String payload = message.data['type'] ?? '';
         flutterLocalNotificationsPlugin.show(
           notification.hashCode,
           notification.title,
@@ -96,25 +107,40 @@ Future<void> setupFlutterNotifications() async {
               icon: '@mipmap/ic_launcher',
             ),
           ),
-          payload: message.data.toString(),
+          payload: payload,
         );
       }
-      // iOS: Do NOT manually show - Firebase handles it automatically
-      // because we set setForegroundNotificationPresentationOptions above
+      // iOS: handled automatically via setForegroundNotificationPresentationOptions
     }
   });
 
-  // Handle notification taps
+  // ✅ Handle notification tap when app is in background (not terminated)
   FirebaseMessaging.onMessageOpenedApp.listen((RemoteMessage message) {
     print('📱 [NOTIFICATIONS] App opened from notification');
+    final type = message.data['type'] ?? '';
+    if (type == 'LATE_GUARD') {
+      navigatorKey.currentState?.push(
+        MaterialPageRoute(builder: (_) => const LateArrivalsPage()),
+      );
+    }
   });
 
+  // ✅ Handle notification tap when app was fully terminated
   RemoteMessage? initialMessage = await FirebaseMessaging.instance.getInitialMessage();
   if (initialMessage != null) {
     print('📱 [NOTIFICATIONS] App launched from notification');
+    final type = initialMessage.data['type'] ?? '';
+    if (type == 'LATE_GUARD') {
+      // Delay slightly to ensure navigator is ready after app startup
+      Future.delayed(const Duration(seconds: 1), () {
+        navigatorKey.currentState?.push(
+          MaterialPageRoute(builder: (_) => const LateArrivalsPage()),
+        );
+      });
+    }
   }
 
-  // Get FCM token - THIS IS THE CRITICAL PART
+  // Get FCM token
   print('🔑 [NOTIFICATIONS] Attempting to get FCM token...');
   try {
     String? token = await FirebaseMessaging.instance.getToken();

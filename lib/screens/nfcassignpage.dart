@@ -23,14 +23,15 @@ class _NfcAssignPageState extends State<NfcAssignPage> {
   bool scanning = false;
   bool _isDarkMode = true;
 
-  Color get backgroundColor => _isDarkMode ? Color(0xFF0F172A) : Color(0xFFF8FAFC);
-  Color get textColor => _isDarkMode ? Colors.white : Color(0xFF1E293B);
-  Color get cardColor => _isDarkMode ? Color(0xFF1E293B) : Colors.white;
-  Color get borderColor => _isDarkMode ? Color(0xFF334155) : Color(0xFFE2E8F0);
-  Color get secondaryTextColor => _isDarkMode ? Colors.white : Colors.white;
-  Color get primaryColor => _isDarkMode ? Color(0xFF4F46E5) : Color(0xFF3B82F6);
-  Color get dangerColor => Color(0xFFEF4444);
-  Color get warningColor => Color(0xFFF59E0B);
+  // ─── theme ───────────────────────────────────────────────────────────────
+  Color get backgroundColor    => _isDarkMode ? const Color(0xFF0F172A) : const Color(0xFFF8FAFC);
+  Color get textColor          => _isDarkMode ? Colors.white             : const Color(0xFF1E293B);
+  Color get cardColor          => _isDarkMode ? const Color(0xFF1E293B)  : Colors.white;
+  Color get borderColor        => _isDarkMode ? const Color(0xFF334155)  : const Color(0xFFE2E8F0);
+  Color get secondaryTextColor => _isDarkMode ? Colors.grey[400]!        : Colors.grey[600]!;
+  Color get primaryColor       => const Color(0xFF4F46E5);
+  Color get dangerColor        => const Color(0xFFEF4444);
+  Color get warningColor       => const Color(0xFFF59E0B);
 
   @override
   void initState() {
@@ -43,111 +44,73 @@ class _NfcAssignPageState extends State<NfcAssignPage> {
       final response = await apiService.get('stops');
       if (response.statusCode == 200) {
         final data = List<Map<String, dynamic>>.from(jsonDecode(response.body));
-        setState(() {
-          stops = data;
-          loading = false;
-        });
+        setState(() { stops = data; loading = false; });
       } else {
         throw Exception('Failed to fetch stops');
       }
     } catch (e) {
       setState(() => loading = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error fetching stops: $e')),
-      );
+      _snack('Error fetching stops: $e', isError: true);
     }
   }
+
   Future<void> setCurrentLocation(int stopId) async {
     try {
       bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
-      if (!serviceEnabled) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Location services are disabled')),
-        );
-        return;
-      }
+      if (!serviceEnabled) { _snack('Location services are disabled', isError: true); return; }
 
       LocationPermission permission = await Geolocator.checkPermission();
-
       if (permission == LocationPermission.denied) {
         permission = await Geolocator.requestPermission();
       }
-
       if (permission == LocationPermission.denied ||
           permission == LocationPermission.deniedForever) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Location permission denied')),
-        );
+        _snack('Location permission denied', isError: true);
         return;
       }
 
       Position position = await Geolocator.getCurrentPosition(
-        desiredAccuracy: LocationAccuracy.high,
-      );
+          desiredAccuracy: LocationAccuracy.high);
 
-      final response = await apiService.put(
-        'stops/$stopId/location',
-        {
-          'latitude': position.latitude,
-          'longitude': position.longitude,
-        },
-      );
+      final response = await apiService.put('stops/$stopId/location', {
+        'latitude': position.latitude,
+        'longitude': position.longitude,
+      });
 
       if (response.statusCode == 200) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Stop location updated successfully!'),
-            backgroundColor: Colors.green,
-          ),
-        );
-
-        fetchStops(); // refresh UI
+        _snack('Stop location updated!');
+        fetchStops();
       } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Backend error: ${response.statusCode}')),
-        );
+        _snack('Backend error: ${response.statusCode}', isError: true);
       }
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to get location: $e')),
-      );
+      _snack('Failed to get location: $e', isError: true);
     }
   }
+
   Future<void> assignNfc(int stopId) async {
     final availability = await FlutterNfcKit.nfcAvailability;
     if (availability != NFCAvailability.available) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('NFC is not available on this device')),
-      );
+      _snack('NFC not available on this device', isError: true);
       return;
     }
 
     setState(() => scanning = true);
     String? nfcTagId;
 
-    NFCTag? tag;
-
     try {
-      tag = await FlutterNfcKit.poll(
+      final tag = await FlutterNfcKit.poll(
         timeout: const Duration(seconds: 20),
         iosMultipleTagMessage: 'Multiple tags detected. Present only one tag.',
         iosAlertMessage: 'Hold your iPhone near the NFC tag to assign it.',
       );
-
       nfcTagId = tag.id;
 
       await FlutterNfcKit.writeNDEFRecords([
         TextRecord(language: 'en', text: stopId.toString()),
       ]);
 
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('NFC tag assigned successfully!'),
-            backgroundColor: Colors.green,
-          ),
-        );
-      }
+      if (mounted) _snack('NFC tag assigned!');
     } catch (e) {
       String errMsg = 'Error scanning NFC tag.';
       final errStr = e.toString().toLowerCase();
@@ -160,52 +123,34 @@ class _NfcAssignPageState extends State<NfcAssignPage> {
       } else if (errStr.contains('ndef')) {
         errMsg = 'Tag may not support NDEF.';
       }
-
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(errMsg)),
-        );
-      }
+      if (mounted) _snack(errMsg, isError: true);
     } finally {
-      try {
-        await FlutterNfcKit.finish(); // Always finish session, even on cancel
-      } catch (_) {}
+      try { await FlutterNfcKit.finish(); } catch (_) {}
       if (mounted) setState(() => scanning = false);
     }
 
-    // Send to backend if we actually got a tag
     if (nfcTagId != null) {
       try {
-        final response = await apiService.post(
-          'stops/$stopId/nfc',
-          {'nfcTagId': nfcTagId},
-        );
-
+        final response = await apiService.post('stops/$stopId/nfc', {'nfcTagId': nfcTagId});
         if (response.statusCode != 200 && mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Backend error: ${response.statusCode}')),
-          );
+          _snack('Backend error: ${response.statusCode}', isError: true);
         }
       } catch (e) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Failed to save NFC tag: $e')),
-          );
-        }
+        if (mounted) _snack('Failed to save NFC tag: $e', isError: true);
       }
     }
   }
 
-
   Future<void> resetNfc(int stopId) async {
-    // Confirm before resetting
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: cardColor,
-        title: Text('Reset NFC Tag', style: TextStyle(color: textColor)),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Text('Reset NFC Tag',
+            style: TextStyle(color: textColor, fontWeight: FontWeight.bold)),
         content: Text(
-          'This will erase the NFC tag data and unlink it from this stop. Hold the tag near your phone when ready.',
+          'This will erase the NFC tag data and unlink it from this stop.',
           style: TextStyle(color: secondaryTextColor),
         ),
         actions: [
@@ -226,9 +171,7 @@ class _NfcAssignPageState extends State<NfcAssignPage> {
 
     final availability = await FlutterNfcKit.nfcAvailability;
     if (availability != NFCAvailability.available) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('NFC is not available on this device')),
-      );
+      _snack('NFC not available', isError: true);
       return;
     }
 
@@ -237,58 +180,27 @@ class _NfcAssignPageState extends State<NfcAssignPage> {
     try {
       await FlutterNfcKit.poll(
         timeout: const Duration(seconds: 20),
-        iosMultipleTagMessage: 'Multiple tags detected. Present only one tag.',
         iosAlertMessage: 'Hold your iPhone near the NFC tag to reset it.',
       );
-
       await Future.delayed(const Duration(milliseconds: 150));
-
-      // Write an empty Text record to overwrite existing data
-      await FlutterNfcKit.writeNDEFRecords([
-        TextRecord(
-          language: 'en',
-          text: '',
-        ),
-      ]);
-
+      await FlutterNfcKit.writeNDEFRecords([TextRecord(language: 'en', text: '')]);
       await FlutterNfcKit.finish(iosAlertMessage: 'NFC tag reset successfully!');
 
-      // Clear nfcTagId in the backend (set to null)
-      final response = await apiService.post(
-        'stops/$stopId/nfc',
-        {'nfcTagId': null},
-      );
-
+      final response = await apiService.post('stops/$stopId/nfc', {'nfcTagId': null});
       if (response.statusCode == 200) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('NFC tag reset successfully!'),
-              backgroundColor: Colors.orange,
-            ),
-          );
-        }
+        if (mounted) _snack('NFC tag reset!');
       } else {
         throw Exception('Backend error: ${response.statusCode}');
       }
     } catch (e) {
-      try {
-        await FlutterNfcKit.finish(iosErrorMessage: 'Failed to reset NFC tag.');
-      } catch (_) {}
-
+      try { await FlutterNfcKit.finish(iosErrorMessage: 'Failed to reset NFC tag.'); } catch (_) {}
       if (mounted) {
-        String errorMsg = 'Error resetting NFC tag. Please try again.';
+        String errorMsg = 'Error resetting NFC tag.';
         final errStr = e.toString().toLowerCase();
-        if (errStr.contains('timeout')) {
-          errorMsg = 'Timed out. Bring the tag closer and try again.';
-        } else if (errStr.contains('user cancel') || errStr.contains('cancelled')) {
-          errorMsg = 'Reset cancelled.';
-        } else if (errStr.contains('tag connection lost')) {
-          errorMsg = 'Tag moved away too quickly. Hold it steady and retry.';
-        }
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(errorMsg)),
-        );
+        if (errStr.contains('timeout')) errorMsg = 'Timed out. Hold tag steady.';
+        else if (errStr.contains('user cancel') || errStr.contains('cancelled')) errorMsg = 'Reset cancelled.';
+        else if (errStr.contains('tag connection lost')) errorMsg = 'Tag moved away. Hold steady.';
+        _snack(errorMsg, isError: true);
       }
     } finally {
       if (mounted) setState(() => scanning = false);
@@ -299,9 +211,17 @@ class _NfcAssignPageState extends State<NfcAssignPage> {
     final prefs = await SharedPreferences.getInstance();
     await prefs.clear();
     Navigator.pushReplacement(
-      context,
-      MaterialPageRoute(builder: (_) => const LoginScreen()),
-    );
+        context, MaterialPageRoute(builder: (_) => const LoginScreen()));
+  }
+
+  void _snack(String msg, {bool isError = false}) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(msg),
+      backgroundColor: isError ? Colors.redAccent : Colors.green,
+      behavior: SnackBarBehavior.floating,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+    ));
   }
 
   @override
@@ -311,155 +231,282 @@ class _NfcAssignPageState extends State<NfcAssignPage> {
       appBar: AppBar(
         backgroundColor: cardColor,
         elevation: 0,
-        title: const Text(
-          'Assign NFC Tags',
-          style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+        title: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(6),
+              decoration: BoxDecoration(
+                color: primaryColor.withOpacity(0.15),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Icon(Icons.nfc, color: primaryColor, size: 18),
+            ),
+            const SizedBox(width: 10),
+            Text('Assign NFC Tags',
+                style: TextStyle(
+                    color: textColor,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 18)),
+          ],
         ),
         actions: [
-          IconButton(
-            icon: Icon(Icons.logout, color: dangerColor),
-            onPressed: _logout,
+          // Theme toggle
+          GestureDetector(
+            onTap: () => setState(() => _isDarkMode = !_isDarkMode),
+            child: Container(
+              margin: const EdgeInsets.only(right: 8),
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: backgroundColor,
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: borderColor),
+              ),
+              child: Image.asset(
+                'assets/applogo.png',
+                height: 22,
+                width: 22,
+                color: _isDarkMode ? null : const Color(0xFF1E293B),
+                colorBlendMode: _isDarkMode ? null : BlendMode.srcIn,
+              ),
+            ),
+          ),
+          // Logout
+          Container(
+            margin: const EdgeInsets.only(right: 12),
+            child: IconButton(
+              icon: Icon(Icons.logout_rounded, color: dangerColor),
+              onPressed: _logout,
+              tooltip: 'Sign Out',
+            ),
           ),
         ],
       ),
       body: loading
-          ? const Center(child: CircularProgressIndicator())
-          : SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            children: [
-              Expanded(
-                child: ListView.builder(
-                  itemCount: stops.length,
-                  itemBuilder: (context, index) {
-                    final stop = stops[index];
-                    return Card(
-                      margin: const EdgeInsets.symmetric(vertical: 8),
-                      color: cardColor,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(15),
-                        side: BorderSide(color: borderColor),
+          ? Center(child: CircularProgressIndicator(color: primaryColor))
+          : Column(
+        children: [
+          // ── header stats bar ─────────────────────────────────────
+          Container(
+            margin: const EdgeInsets.all(16),
+            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+            decoration: BoxDecoration(
+              color: cardColor,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: borderColor),
+            ),
+            child: Row(
+              children: [
+                Icon(Icons.location_on_rounded,
+                    color: primaryColor, size: 20),
+                const SizedBox(width: 10),
+                Text(
+                  '${stops.length} checkpoint${stops.length != 1 ? 's' : ''} loaded',
+                  style: TextStyle(
+                      color: textColor,
+                      fontWeight: FontWeight.w600,
+                      fontSize: 14),
+                ),
+                const Spacer(),
+                if (scanning)
+                  Row(
+                    children: [
+                      SizedBox(
+                        width: 14,
+                        height: 14,
+                        child: CircularProgressIndicator(
+                            color: primaryColor, strokeWidth: 2),
                       ),
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 16, vertical: 12),
-                        child: Row(
-                          children: [
-                            // Stop info
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment:
-                                CrossAxisAlignment.start,
+                      const SizedBox(width: 8),
+                      Text('Scanning...',
+                          style: TextStyle(
+                              color: primaryColor,
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600)),
+                    ],
+                  ),
+              ],
+            ),
+          ),
+
+          // ── stop list ─────────────────────────────────────────────
+          Expanded(
+            child: ListView.builder(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              itemCount: stops.length,
+              itemBuilder: (context, index) {
+                final stop = stops[index];
+                final hasNfc = stop['nfcTagId'] != null &&
+                    stop['nfcTagId'].toString().isNotEmpty;
+                final hasGps = stop['latitude'] != null;
+
+                return Container(
+                  margin: const EdgeInsets.only(bottom: 10),
+                  decoration: BoxDecoration(
+                    color: cardColor,
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(color: borderColor),
+                  ),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 14, vertical: 12),
+                    child: Row(
+                      children: [
+                        // ── stop info ─────────────────────────────
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                stop['name'] ?? 'Unnamed Stop',
+                                style: TextStyle(
+                                  color: textColor,
+                                  fontWeight: FontWeight.w700,
+                                  fontSize: 14,
+                                ),
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                stop['siteName'] ?? '–',
+                                style: TextStyle(
+                                    color: secondaryTextColor,
+                                    fontSize: 12),
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              const SizedBox(height: 6),
+                              // Status badges
+                              Row(
                                 children: [
-                                  Text(
-                                    stop['name'] ?? 'Unnamed Stop',
-                                    style: TextStyle(
-                                      color: textColor,
-                                      fontWeight: FontWeight.w600,
-                                      fontSize: 15,
-                                    ),
+                                  _badge(
+                                    hasNfc ? 'NFC ✓' : 'No NFC',
+                                    hasNfc
+                                        ? const Color(0xFF10B981)
+                                        : const Color(0xFF475569),
                                   ),
-                                  const SizedBox(height: 4),
-                                  Text(
-                                    'Site: ${stop['siteName'] ?? '-'}',
-                                    style: TextStyle(
-                                        color: secondaryTextColor,
-                                        fontSize: 13),
+                                  const SizedBox(width: 6),
+                                  _badge(
+                                    hasGps ? 'GPS ✓' : 'No GPS',
+                                    hasGps
+                                        ? const Color(0xFF3B82F6)
+                                        : const Color(0xFF475569),
                                   ),
                                 ],
                               ),
-                            ),
-                            const SizedBox(width: 8),
-                            // Assign button
-                            ElevatedButton.icon(
-                              onPressed: scanning
+                            ],
+                          ),
+                        ),
+
+                        const SizedBox(width: 10),
+
+                        // ── action buttons (icon only, compact) ───
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            _actionIconBtn(
+                              icon: Icons.nfc_rounded,
+                              color: primaryColor,
+                              tooltip: 'Assign NFC',
+                              onTap: scanning
                                   ? null
                                   : () => assignNfc(stop['id']),
-                              icon: const Icon(Icons.nfc, size: 16),
-                              label: Text(
-                                scanning ? '...' : 'Assign',
-                                style: const TextStyle(
-                                    color: Colors.white, fontSize: 13),
-                              ),
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: primaryColor,
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(10),
-                                ),
-                                padding: const EdgeInsets.symmetric(
-                                    horizontal: 10, vertical: 8),
-                              ),
                             ),
-                            const SizedBox(width: 6),
-                            // Reset button
-                            ElevatedButton.icon(
-                              onPressed: scanning
+                            const SizedBox(width: 8),
+                            _actionIconBtn(
+                              icon: Icons.refresh_rounded,
+                              color: warningColor,
+                              tooltip: 'Reset NFC',
+                              onTap: scanning
                                   ? null
                                   : () => resetNfc(stop['id']),
-                              icon: const Icon(Icons.delete_outline,
-                                  size: 16),
-                              label: const Text(
-                                'Reset',
-                                style: TextStyle(
-                                    color: Colors.white, fontSize: 13),
-                              ),
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: warningColor,
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(10),
-                                ),
-                                padding: const EdgeInsets.symmetric(
-                                    horizontal: 10, vertical: 8),
-                              ),
                             ),
-                            const SizedBox(width: 6),
-
-                            ElevatedButton.icon(
-                              onPressed: () => setCurrentLocation(stop['id']),
-                              icon: const Icon(Icons.my_location, size: 16),
-                              label: const Text(
-                                'Set GPS',
-                                style: TextStyle(color: Colors.white, fontSize: 13),
-                              ),
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: Colors.green,
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(10),
-                                ),
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 10,
-                                  vertical: 8,
-                                ),
-                              ),
+                            const SizedBox(width: 8),
+                            _actionIconBtn(
+                              icon: Icons.my_location_rounded,
+                              color: const Color(0xFF10B981),
+                              tooltip: 'Set GPS',
+                              onTap: () => setCurrentLocation(stop['id']),
                             ),
                           ],
                         ),
-                      ),
-                    );
-                  },
-                ),
-              ),
-              const SizedBox(height: 16),
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton.icon(
-                  onPressed: _logout,
-                  icon: const Icon(Icons.logout, color: Colors.white),
-                  label: const Text('Sign Out'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: dangerColor,
-                    padding: const EdgeInsets.symmetric(vertical: 16),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
+                      ],
                     ),
+                  ),
+                );
+              },
+            ),
+          ),
+
+          // ── sign out button ───────────────────────────────────────
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+            child: SizedBox(
+              width: double.infinity,
+              height: 50,
+              child: ElevatedButton.icon(
+                onPressed: _logout,
+                icon: const Icon(Icons.logout_rounded,
+                    color: Colors.white, size: 18),
+                label: const Text('Sign Out',
+                    style: TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w700)),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: dangerColor,
+                  elevation: 0,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14),
                   ),
                 ),
               ),
-              const SizedBox(height: 16),
-            ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ── compact icon button ───────────────────────────────────────────────────
+  Widget _actionIconBtn({
+    required IconData icon,
+    required Color color,
+    required String tooltip,
+    VoidCallback? onTap,
+  }) {
+    return Tooltip(
+      message: tooltip,
+      child: GestureDetector(
+        onTap: onTap,
+        child: AnimatedOpacity(
+          opacity: onTap == null ? 0.4 : 1.0,
+          duration: const Duration(milliseconds: 200),
+          child: Container(
+            width: 40,
+            height: 40,
+            decoration: BoxDecoration(
+              color: color.withOpacity(0.12),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: color.withOpacity(0.3), width: 1),
+            ),
+            child: Icon(icon, color: color, size: 18),
           ),
         ),
+      ),
+    );
+  }
+
+  // ── status badge ──────────────────────────────────────────────────────────
+  Widget _badge(String label, Color color) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.12),
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: color.withOpacity(0.3)),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+            color: color, fontSize: 10, fontWeight: FontWeight.w600),
       ),
     );
   }

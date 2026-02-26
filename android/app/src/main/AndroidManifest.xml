@@ -1,83 +1,84 @@
+<?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="com.blackfabricsecurity.crossplatformblackfabric">
 
-    <!-- ============================================ -->
-    <!-- INTERNET & NETWORK PERMISSIONS -->
-    <!-- ============================================ -->
-    <!-- Required for API calls and network communication -->
+    <!-- ============================================================ -->
+    <!-- INTERNET                                                       -->
+    <!-- ============================================================ -->
     <uses-permission android:name="android.permission.INTERNET"/>
 
-    <!-- ============================================ -->
-    <!-- LOCATION PERMISSIONS -->
-    <!-- ============================================ -->
-    <!-- Required for tracking guard location during shifts -->
+    <!-- ============================================================ -->
+    <!-- LOCATION                                                       -->
+    <!-- ============================================================ -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>
     <!-- Background location for shift tracking (Android 10+) -->
     <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION"/>
 
-    <!-- ============================================ -->
-    <!-- FOREGROUND SERVICE PERMISSIONS -->
-    <!-- ============================================ -->
-    <!-- Required for background location tracking (Android 8+) -->
+    <!-- ============================================================ -->
+    <!-- FOREGROUND SERVICE (background GPS)                           -->
+    <!-- ============================================================ -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
-    <!-- Required for location foreground service (Android 14+) -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION"/>
 
-    <!-- ============================================ -->
-    <!-- CAMERA & MEDIA PERMISSIONS -->
-    <!-- ============================================ -->
-    <!-- Camera access for photos and videos in reports -->
+    <!-- ============================================================ -->
+    <!-- CAMERA & AUDIO                                                 -->
+    <!-- ============================================================ -->
     <uses-permission android:name="android.permission.CAMERA"/>
-    <!-- Microphone for video recording with audio -->
     <uses-permission android:name="android.permission.RECORD_AUDIO"/>
 
-    <!-- ============================================ -->
-    <!-- STORAGE PERMISSIONS -->
-    <!-- ============================================ -->
-    <!-- Legacy storage for Android 12 and below -->
-    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
-    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
+    <!-- ============================================================ -->
+    <!-- STORAGE / MEDIA GALLERY                                        -->
+    <!--                                                                -->
+    <!-- Android ≤ 12 (SDK ≤ 32): READ/WRITE_EXTERNAL_STORAGE          -->
+    <!-- Android 13+ (SDK 33+):   READ_MEDIA_IMAGES + READ_MEDIA_VIDEO -->
+    <!-- Android 14+ (SDK 34+):   READ_MEDIA_VISUAL_USER_SELECTED      -->
+    <!--   (lets users pick specific photos without full access)        -->
+    <!-- ============================================================ -->
 
-    <!-- Granular media permissions for Android 13+ -->
+    <!-- Legacy (Android 12 and below) -->
+    <uses-permission
+        android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="32"/>
+    <uses-permission
+        android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="29"/>
+
+    <!-- Android 13+ granular media permissions -->
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES"/>
     <uses-permission android:name="android.permission.READ_MEDIA_VIDEO"/>
 
-    <!-- ============================================ -->
-    <!-- NOTIFICATION PERMISSIONS -->
-    <!-- ============================================ -->
-    <!-- Push notifications for shift updates and alerts (Android 13+) -->
+    <!-- Android 14+ partial photo access (Photo Picker fallback) -->
+    <uses-permission android:name="android.permission.READ_MEDIA_VISUAL_USER_SELECTED"/>
+
+    <!-- ============================================================ -->
+    <!-- NOTIFICATIONS (Android 13+)                                   -->
+    <!-- ============================================================ -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
 
-    <!-- ============================================ -->
-    <!-- NFC PERMISSIONS -->
-    <!-- ============================================ -->
-    <!-- NFC for checkpoint tag assignment -->
+    <!-- ============================================================ -->
+    <!-- NFC                                                            -->
+    <!-- android:required="false" → app installs on non-NFC phones too -->
+    <!-- ============================================================ -->
     <uses-permission android:name="android.permission.NFC"/>
     <uses-feature
         android:name="android.hardware.nfc"
-        android:required="true"/>
+        android:required="false"/>
 
-    <!-- ============================================ -->
-    <!-- OTHER PERMISSIONS -->
-    <!-- ============================================ -->
-    <!-- Keep app active during shifts -->
+    <!-- ============================================================ -->
+    <!-- SYSTEM                                                         -->
+    <!-- ============================================================ -->
     <uses-permission android:name="android.permission.WAKE_LOCK"/>
-    <!-- Vibration for notification alerts -->
     <uses-permission android:name="android.permission.VIBRATE"/>
 
-    <!-- ============================================ -->
-    <!-- QUERIES FOR URL LAUNCHER -->
-    <!-- ============================================ -->
-    <!-- Required for opening external URLs, phone, email -->
+    <!-- ============================================================ -->
+    <!-- URL LAUNCHER QUERIES                                           -->
+    <!-- ============================================================ -->
     <queries>
-        <!-- Text processing -->
         <intent>
             <action android:name="android.intent.action.PROCESS_TEXT"/>
             <data android:mimeType="text/plain"/>
         </intent>
-
-        <!-- HTTP/HTTPS URLs -->
         <intent>
             <action android:name="android.intent.action.VIEW"/>
             <data android:scheme="http"/>
@@ -86,26 +87,28 @@
             <action android:name="android.intent.action.VIEW"/>
             <data android:scheme="https"/>
         </intent>
-
-        <!-- Phone calls -->
         <intent>
             <action android:name="android.intent.action.DIAL"/>
             <data android:scheme="tel"/>
         </intent>
-
-        <!-- Email -->
         <intent>
             <action android:name="android.intent.action.SENDTO"/>
             <data android:scheme="mailto"/>
         </intent>
     </queries>
 
-    <!-- ============================================ -->
-    <!-- APPLICATION CONFIGURATION -->
-    <!-- ============================================ -->
+    <!-- ============================================================ -->
+    <!-- APPLICATION                                                    -->
+    <!-- ============================================================ -->
     <application
         android:label="BFS Guard Portal"
-        android:icon="@mipmap/ic_launcher">
+        android:icon="@mipmap/ic_launcher"
+        android:requestLegacyExternalStorage="true">
+        <!--
+          android:requestLegacyExternalStorage="true"
+          Needed for Android 10 (API 29) devices to access media files
+          the old way before scoped storage became mandatory.
+        -->
 
         <!-- Main Activity -->
         <activity
@@ -127,7 +130,7 @@
             </intent-filter>
         </activity>
 
-        <!-- Flutter embedding version -->
+        <!-- Flutter embedding -->
         <meta-data
             android:name="flutterEmbedding"
             android:value="2"/>

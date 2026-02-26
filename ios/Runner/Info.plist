@@ -2,76 +2,61 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<!-- ============================================ -->
-	<!-- LOCATION PERMISSIONS -->
-	<!-- ============================================ -->
-	<!-- Triggered when: Guard starts a shift and location tracking begins -->
+
+	<!-- ============================================================ -->
+	<!-- LOCATION PERMISSIONS                                          -->
+	<!-- ============================================================ -->
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>BFS Guard Portal needs your location to track your position during active security shifts and verify checkpoint visits.</string>
 
-	<!-- Triggered when: App requests "Always Allow" for background tracking -->
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
 	<string>BFS Guard Portal requires continuous location access to monitor your patrol routes and ensure your safety during security shifts, even when the app is in the background.</string>
 
-	<!-- Legacy iOS location permission (iOS 10 and below) -->
+	<!-- Legacy iOS 10 and below -->
 	<key>NSLocationAlwaysUsageDescription</key>
 	<string>Location access is essential for tracking guard patrol routes and ensuring safety during security shifts.</string>
 
-	<!-- CRITICAL for iOS 14+ background location tracking -->
-	<key>NSLocationTemporaryUsageDescriptionDictionary</key>
-	<dict>
-		<key>ShiftTracking</key>
-		<string>Your location is needed to track your security patrol route during active shifts for safety and accountability.</string>
-	</dict>
-
-	<!-- ============================================ -->
-	<!-- CAMERA PERMISSION -->
-	<!-- ============================================ -->
-	<!-- Triggered when: Guard takes photo/video for report or counseling statement -->
+	<!-- ============================================================ -->
+	<!-- CAMERA                                                        -->
+	<!-- ============================================================ -->
 	<key>NSCameraUsageDescription</key>
-	<string>BFS Guard Portal needs camera access to capture photos and videos for incident reports, scan QR codes at checkpoints, and document counseling statements.</string>
+	<string>BFS Guard Portal needs camera access to capture photos and videos for incident reports and counseling statements.</string>
 
-	<!-- ============================================ -->
-	<!-- PHOTO LIBRARY PERMISSIONS -->
-	<!-- ============================================ -->
-	<!-- Triggered when: Guard selects photos from library for reports -->
+	<!-- ============================================================ -->
+	<!-- PHOTO LIBRARY                                                 -->
+	<!-- ============================================================ -->
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>BFS Guard Portal needs access to your photo library to attach images to incident reports and counseling statements.</string>
 
-	<!-- Triggered when: App wants to save photos to library (optional, for future use) -->
 	<key>NSPhotoLibraryAddUsageDescription</key>
-	<string>BFS Guard Portal needs permission to save photos from reports to your photo library.</string>
+	<string>BFS Guard Portal needs permission to save report photos to your photo library.</string>
 
-	<!-- ============================================ -->
-	<!-- MICROPHONE PERMISSION -->
-	<!-- ============================================ -->
-	<!-- Triggered when: Guard records video with audio for reports -->
+	<!-- ============================================================ -->
+	<!-- MICROPHONE                                                    -->
+	<!-- ============================================================ -->
 	<key>NSMicrophoneUsageDescription</key>
-	<string>BFS Guard Portal needs microphone access to record videos with audio for detailed incident reports and counseling documentation.</string>
+	<string>BFS Guard Portal needs microphone access to record videos with audio for incident reports and counseling statements.</string>
 
-	<!-- ============================================ -->
-	<!-- NFC PERMISSION -->
-	<!-- ============================================ -->
-	<!-- Triggered when: Guard scans NFC checkpoint tags -->
+	<!-- ============================================================ -->
+	<!-- NFC                                                           -->
+	<!-- ============================================================ -->
 	<key>NFCReaderUsageDescription</key>
-    <string>BFS Guard Portal uses NFC to scan and assign checkpoint tags during security patrols.</string>
-    <key>NSLocationWhenInUseUsageDescription</key>
-    <string>BFS Guard Portal needs location access to set stop GPS coordinates.</string>
-    <key>com.apple.developer.nfc.readersession.formats</key>
-    <array>
-    	<string>TAG</string>
-    </array>
-	<!-- ============================================ -->
-	<!-- NOTIFICATION PERMISSION -->
-	<!-- ============================================ -->
-	<!-- Triggered when: App requests permission to send notifications -->
-	<!-- Note: This is a legacy key, but still recommended for compatibility -->
+	<string>BFS Guard Portal uses NFC to scan and assign checkpoint tags during security patrols.</string>
+
+	<key>com.apple.developer.nfc.readersession.formats</key>
+	<array>
+		<string>TAG</string>
+	</array>
+
+	<!-- ============================================================ -->
+	<!-- NOTIFICATIONS (legacy key for older iOS)                     -->
+	<!-- ============================================================ -->
 	<key>NSUserNotificationUsageDescription</key>
 	<string>BFS Guard Portal sends important notifications for shift assignments, safety alerts, and real-time updates.</string>
 
-	<!-- ============================================ -->
-	<!-- APP BASIC CONFIGURATION -->
-	<!-- ============================================ -->
+	<!-- ============================================================ -->
+	<!-- BUNDLE CONFIGURATION                                          -->
+	<!-- ============================================================ -->
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 
@@ -105,61 +90,45 @@
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 
-	<!-- ============================================ -->
-	<!-- UI CONFIGURATION -->
-	<!-- ============================================ -->
+	<!-- ============================================================ -->
+	<!-- UI CONFIGURATION                                              -->
+	<!-- ============================================================ -->
 	<key>UILaunchStoryboardName</key>
 	<string>LaunchScreen</string>
 
 	<key>UIMainStoryboardFile</key>
 	<string>Main</string>
 
-	<!-- Supported orientations for iPhone -->
+	<!-- Portrait only — security app, no landscape needed -->
 	<key>UISupportedInterfaceOrientations</key>
 	<array>
 		<string>UIInterfaceOrientationPortrait</string>
-		<string>UIInterfaceOrientationLandscapeLeft</string>
-		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
 
-	<!-- Supported orientations for iPad -->
 	<key>UISupportedInterfaceOrientations~ipad</key>
 	<array>
 		<string>UIInterfaceOrientationPortrait</string>
 		<string>UIInterfaceOrientationPortraitUpsideDown</string>
-		<string>UIInterfaceOrientationLandscapeLeft</string>
-		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
 
-	<!-- ============================================ -->
-	<!-- BACKGROUND MODES -->
-	<!-- ============================================ -->
-	<!-- Required for: Location tracking during shifts, Push notifications -->
+	<!-- ============================================================ -->
+	<!-- BACKGROUND MODES                                              -->
+	<!-- ============================================================ -->
 	<key>UIBackgroundModes</key>
 	<array>
-		<!-- Background location updates -->
 		<string>location</string>
-		<!-- Background fetch for updates -->
 		<string>fetch</string>
-		<!-- Push notifications -->
 		<string>remote-notification</string>
 	</array>
 
-	<!-- ============================================ -->
-	<!-- PERFORMANCE & COMPATIBILITY -->
-	<!-- ============================================ -->
+	<!-- ============================================================ -->
+	<!-- PERFORMANCE                                                   -->
+	<!-- ============================================================ -->
 	<key>CADisableMinimumFrameDurationOnPhone</key>
 	<true/>
 
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
-
-	<!-- ============================================ -->
-	<!-- NETWORK SECURITY -->
-	<!-- ============================================ -->
-	<!-- WARNING: Allows HTTP connections (not secure) -->
-	<!-- RECOMMENDED: Remove this for production and use HTTPS only -->
-	<!-- Keep only if your API endpoints require HTTP -->
 
 </dict>
 </plist>

@@ -12,6 +12,9 @@ import 'services/notifications.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:http/http.dart' as http;
 
+// ✅ Global navigator key — lets notifications navigate without a BuildContext
+final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
+
 // Replace with your backend URL
 const String backendUrl = 'https://api.blackfabricsecurity.com/api/errors/log';
 
@@ -100,6 +103,7 @@ class BlackFabricApp extends StatelessWidget {
     return MaterialApp(
       title: 'Black Fabric Security',
       debugShowCheckedModeBanner: false,
+      navigatorKey: navigatorKey, // ✅ needed for notification navigation
       theme: ThemeData(
         primarySwatch: Colors.blue,
       ),

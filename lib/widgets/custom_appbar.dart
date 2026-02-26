@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+/// A stateful wrapper so the dark/light toggle persists correctly
+/// when the appbar is rebuilt on any screen.
 class CustomAppBar extends StatelessWidget implements PreferredSizeWidget {
   final String title;
   final bool isDarkMode;
@@ -14,15 +16,17 @@ class CustomAppBar extends StatelessWidget implements PreferredSizeWidget {
 
   @override
   Widget build(BuildContext context) {
-    Color textColor = isDarkMode ? Colors.white : Colors.black;
-    Color secondaryTextColor = isDarkMode ? Colors.grey[400]! : Colors.grey[600]!;
-    Color cardColor = isDarkMode ? Color(0xFF1E293B) : Colors.white;
-    Color borderColor = isDarkMode ? Color(0xFF334155) : Color(0xFFE2E8F0);
+    final Color textColor       = isDarkMode ? Colors.white           : const Color(0xFF1E293B);
+    final Color subTextColor    = isDarkMode ? Colors.grey[400]!      : Colors.grey[600]!;
+    final Color cardColor       = isDarkMode ? const Color(0xFF1E293B): Colors.white;
+    final Color borderColor     = isDarkMode ? const Color(0xFF334155): const Color(0xFFE2E8F0);
+    final Color bgColor         = isDarkMode ? const Color(0xFF0F172A): const Color(0xFFF8FAFC);
 
     return AppBar(
       centerTitle: false,
       elevation: 0,
-      backgroundColor: Colors.transparent,
+      backgroundColor: bgColor,       // ← matches page background on every screen
+      surfaceTintColor: Colors.transparent,
       title: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -30,15 +34,15 @@ class CustomAppBar extends StatelessWidget implements PreferredSizeWidget {
             title,
             style: TextStyle(
               color: textColor,
-              fontSize: 24,
+              fontSize: 22,
               fontWeight: FontWeight.w800,
             ),
           ),
           Text(
-            "Security Guard Portal",
+            'Security Guard Portal',
             style: TextStyle(
-              color: secondaryTextColor,
-              fontSize: 12,
+              color: subTextColor,
+              fontSize: 11,
               fontWeight: FontWeight.w500,
             ),
           ),
@@ -60,20 +64,20 @@ class CustomAppBar extends StatelessWidget implements PreferredSizeWidget {
               border: Border.all(color: borderColor, width: 1),
             ),
             child: Image.asset(
-              isDarkMode
-                  ? 'assets/applogo.png'
-                  : 'assets/applogo.png',
+              'assets/applogo.png',
               height: 28,
               width: 28,
               fit: BoxFit.contain,
+              // ── Fix: never show white logo on white background ──
+              color: isDarkMode ? null : const Color(0xFF1E293B),
+              colorBlendMode: isDarkMode ? null : BlendMode.srcIn,
             ),
           ),
         ),
       ],
-
     );
   }
 
   @override
-  Size get preferredSize => Size.fromHeight(kToolbarHeight);
+  Size get preferredSize => const Size.fromHeight(kToolbarHeight);
 }

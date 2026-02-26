@@ -26,6 +26,7 @@ import 'package:crossplatformblackfabric/screens/dispatch_contacts_page.dart';
 import 'package:crossplatformblackfabric/screens/counseling_upload_page.dart';
 import 'package:crossplatformblackfabric/screens/counseling_list_page.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:crossplatformblackfabric/screens/Late_Arrivals_page.dart';
 
 class HomeScreen extends StatefulWidget {
   final String guardName;
@@ -83,7 +84,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver{
     "Shifts",
     "Dispatch Contacts",
     "Counseling List",
-    "New Counseling Report"
+    "New Counseling Report",
+    "Late Arrivals",   // ← ADD (index 10)
+
   ];
 
   // GPS tracking variables
@@ -1330,7 +1333,59 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver{
                   ),
                 ),
               ),
+              if (_isSupervisor)
 
+                Row(
+                children: [
+                  Expanded(
+                    child: GestureDetector(
+                      onTap: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => const LateArrivalsPage(),
+                          ),
+                        );
+                      },
+                      child: Container(
+                        padding: const EdgeInsets.all(16),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFEF4444).withOpacity(0.1),
+                          borderRadius: BorderRadius.circular(16),
+                          border: Border.all(
+                              color: const Color(0xFFEF4444).withOpacity(0.3)),
+                        ),
+                        child: Row(
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.all(8),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFEF4444).withOpacity(0.15),
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              child: const Icon(Icons.warning_amber_rounded,
+                                  color: Color(0xFFEF4444), size: 22),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Text(
+                                "Late\nArrivals",
+                                style: TextStyle(
+                                  color: _textColor,
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 13,
+                                ),
+                              ),
+                            ),
+                            const Icon(Icons.arrow_forward_ios,
+                                size: 14, color: Color(0xFFEF4444)),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
               const SizedBox(height: 12),
 
               Column(
@@ -1380,6 +1435,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver{
                         const SizedBox(height: 12),
                       ],
                     ),
+
                   const SizedBox(height: 12),
                   Row(
                     children: [
@@ -1391,13 +1447,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver{
                         ),
                       ),
                       const SizedBox(width: 12),
-                      Expanded(
-                        child: _buildSimpleActionButton(
-                          Icons.settings_outlined,
-                          "Settings\n& Profile",
-                          const Color(0xFF6B7280),
-                        ),
-                      ),
+
                     ],
                   ),
                 ],
