@@ -12,7 +12,6 @@
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
 	<string>BFS Guard Portal requires continuous location access to monitor your patrol routes and ensure your safety during security shifts, even when the app is in the background.</string>
 
-	<!-- Legacy iOS 10 and below -->
 	<key>NSLocationAlwaysUsageDescription</key>
 	<string>Location access is essential for tracking guard patrol routes and ensuring safety during security shifts.</string>
 
@@ -35,7 +34,7 @@
 	<!-- MICROPHONE                                                    -->
 	<!-- ============================================================ -->
 	<key>NSMicrophoneUsageDescription</key>
-	<string>BFS Guard Portal needs microphone access to record videos with audio for incident reports and counseling statements.</string>
+	<string>BFS Guard Portal needs microphone access to record videos with audio for incident reports.</string>
 
 	<!-- ============================================================ -->
 	<!-- NFC                                                           -->
@@ -49,7 +48,7 @@
 	</array>
 
 	<!-- ============================================================ -->
-	<!-- NOTIFICATIONS (legacy key for older iOS)                     -->
+	<!-- NOTIFICATIONS                                                 -->
 	<!-- ============================================================ -->
 	<key>NSUserNotificationUsageDescription</key>
 	<string>BFS Guard Portal sends important notifications for shift assignments, safety alerts, and real-time updates.</string>
@@ -91,24 +90,23 @@
 	<true/>
 
 	<!-- ============================================================ -->
-	<!-- UI CONFIGURATION                                              -->
+	<!-- ORIENTATIONS                                                  -->
+	<!--                                                               -->
+	<!-- iPhone: portrait only (security app, no landscape needed)    -->
+	<!-- iPad:   ALL 4 required by Apple for multitasking support     -->
 	<!-- ============================================================ -->
-	<key>UILaunchStoryboardName</key>
-	<string>LaunchScreen</string>
-
-	<key>UIMainStoryboardFile</key>
-	<string>Main</string>
-
-	<!-- Portrait only — security app, no landscape needed -->
 	<key>UISupportedInterfaceOrientations</key>
 	<array>
 		<string>UIInterfaceOrientationPortrait</string>
 	</array>
 
+	<!-- ⚠️ Apple REQUIRES all 4 for iPad multitasking — do not remove any -->
 	<key>UISupportedInterfaceOrientations~ipad</key>
 	<array>
 		<string>UIInterfaceOrientationPortrait</string>
 		<string>UIInterfaceOrientationPortraitUpsideDown</string>
+		<string>UIInterfaceOrientationLandscapeLeft</string>
+		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
 
 	<!-- ============================================================ -->
@@ -122,8 +120,14 @@
 	</array>
 
 	<!-- ============================================================ -->
-	<!-- PERFORMANCE                                                   -->
+	<!-- UI CONFIGURATION                                              -->
 	<!-- ============================================================ -->
+	<key>UILaunchStoryboardName</key>
+	<string>LaunchScreen</string>
+
+	<key>UIMainStoryboardFile</key>
+	<string>Main</string>
+
 	<key>CADisableMinimumFrameDurationOnPhone</key>
 	<true/>
 
