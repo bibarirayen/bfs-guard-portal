@@ -12,13 +12,11 @@ import 'services/notifications.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:http/http.dart' as http;
 
-// ✅ Global navigator key — lets notifications navigate without a BuildContext
+// Global navigator key — lets notifications navigate without a BuildContext
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
-// Replace with your backend URL
 const String backendUrl = 'https://api.blackfabricsecurity.com/api/errors/log';
 
-// Save error locally
 Future<void> logErrorLocally(String message) async {
   try {
     final directory = await getApplicationDocumentsDirectory();
@@ -29,7 +27,6 @@ Future<void> logErrorLocally(String message) async {
   }
 }
 
-// Send error to backend API
 Future<void> logErrorRemote(String message, {String stack = ''}) async {
   try {
     final url = Uri.parse(backendUrl);
@@ -43,7 +40,6 @@ Future<void> logErrorRemote(String message, {String stack = ''}) async {
   }
 }
 
-// Unified error logger
 Future<void> logError(String message, {String stack = ''}) async {
   await logErrorLocally(message);
   await logErrorRemote(message, stack: stack);
@@ -52,20 +48,17 @@ Future<void> logError(String message, {String stack = ''}) async {
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Catch Flutter framework errors
   FlutterError.onError = (details) {
     FlutterError.dumpErrorToConsole(details);
     FirebaseCrashlytics.instance.recordFlutterError(details);
     logError(details.exceptionAsString(), stack: details.stack.toString());
   };
 
-  // Catch all async errors
   runZonedGuarded(() async {
     try {
       await Firebase.initializeApp();
-      FirebaseCrashlytics.instance.log("App started");
+      FirebaseCrashlytics.instance.log('App started');
 
-      // Request notifications
       NotificationSettings settings =
       await FirebaseMessaging.instance.requestPermission(
         alert: true,
@@ -75,19 +68,14 @@ void main() async {
       print('User granted permission: ${settings.authorizationStatus}');
       await setupFlutterNotifications();
 
-      // Clear SharedPreferences (optional)
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.clear();
+      // ✅ REMOVED: prefs.clear() was here — it was wiping saved email/password
+      //    on every single app launch. Do NOT add it back.
 
     } catch (e, stack) {
-      // Catch initialization errors
       logError('Initialization error: $e', stack: stack.toString());
     }
 
-    // Launch app
-    runApp(BlackFabricApp());
-
-    // Extra safety: log synchronous errors right after app launch
+    runApp(const BlackFabricApp());
     logError('App launched successfully');
   }, (error, stack) {
     print('Caught by runZonedGuarded: $error');
@@ -96,18 +84,19 @@ void main() async {
   });
 }
 
-
 class BlackFabricApp extends StatelessWidget {
+  const BlackFabricApp({super.key});
+
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'Black Fabric Security',
       debugShowCheckedModeBanner: false,
-      navigatorKey: navigatorKey, // ✅ needed for notification navigation
+      navigatorKey: navigatorKey,
       theme: ThemeData(
         primarySwatch: Colors.blue,
       ),
-      home: LoginScreen(),
+      home: const LoginScreen(),
     );
   }
 }

@@ -311,7 +311,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
               ],
             ),
           ),
-          Icon(Icons.chevron_right, color: secondaryTextColor, size: 20),
         ],
       ),
     );

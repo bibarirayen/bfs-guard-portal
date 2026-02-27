@@ -399,13 +399,28 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver{
           int.parse(startParts[1]),
         );
 
+        // ✅ FIX: For overnight shifts (e.g. 22:00–02:00), endTime < startTime.
+        // The end is on the NEXT calendar day — add 1 day to endDateTime.
+        // Without this fix, endDateTime is 20 hours in the past relative to
+        // startDateTime, making _canStartShift always false.
+        final endHour   = int.parse(endParts[0]);
+        final endMin    = int.parse(endParts[1]);
+        final startHour = int.parse(startParts[0]);
+        final startMin  = int.parse(startParts[1]);
+        final isOvernightShift =
+            (endHour * 60 + endMin) <= (startHour * 60 + startMin);
+
         endDateTime = DateTime.utc(
           shiftDate.year,
           shiftDate.month,
           shiftDate.day,
-          int.parse(endParts[0]),
-          int.parse(endParts[1]),
+          endHour,
+          endMin,
         );
+
+        if (isOvernightShift) {
+          endDateTime = endDateTime!.add(const Duration(days: 1));
+        }
 
         _shiftStartDateTime = startDateTime;
         _shiftEndDateTime = endDateTime;
@@ -413,6 +428,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver{
         shiftTime = "$start - $end";
 
         Duration shiftDuration = endDateTime!.difference(startDateTime!);
+        // shiftDuration is now always positive (overnight-safe)
         double hours = shiftDuration.inMinutes / 60;
         formattedHours = hours >= 1
             ? "${hours.toStringAsFixed(1)}h"
@@ -1334,8 +1350,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver{
                 ),
               ),
               if (_isSupervisor)
+                const SizedBox(height: 12),
 
-                Row(
+              Row(
                 children: [
                   Expanded(
                     child: GestureDetector(
@@ -1369,7 +1386,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver{
                             const SizedBox(width: 12),
                             Expanded(
                               child: Text(
-                                "Late\nArrivals",
+                                "Late Arrivals",
                                 style: TextStyle(
                                   color: _textColor,
                                   fontWeight: FontWeight.bold,

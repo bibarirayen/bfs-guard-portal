@@ -136,11 +136,11 @@ class _ConfigurePasswordScreenState extends State<ConfigurePasswordScreen> {
                     ),
                     const SizedBox(height: 8),
                     Text(
-                      "I agree to receive emergency security SMS alerts from Black Fabric Security regarding my protected account or monitored location. "
-                          "Message frequency varies based on security activity. "
-                          "Standard message and data rates may apply. "
-                          "Reply STOP to opt out at any time. Reply HELP for assistance. "
-                          "My mobile number will not be sold or shared for promotional or marketing purposes.",
+                      "By checking this box, I expressly consent to receive emergency security SMS text messages from Black Fabric Security related to my protected account or monitored property."
+                          "Message frequency may vary based on security activity. Standard message and data rates may apply. "
+                          "You may reply STOP at any time to opt out of SMS messages. Reply HELP for assistance."
+                          "Your mobile phone number and consent will not be sold, rented, or shared with third parties for promotional or marketing purposes."
+                          "This SMS consent is separate from any email or other communication preferences.",
                       style: TextStyle(fontSize: 12, color: Colors.grey.shade600, height: 1.5),
                     ),
                     const SizedBox(height: 14),
@@ -166,10 +166,7 @@ class _ConfigurePasswordScreenState extends State<ConfigurePasswordScreen> {
                           child: GestureDetector(
                             onTap: () => setState(() => _smsConsentChecked = !_smsConsentChecked),
                             child: const Text(
-                              "I agree to receive emergency SMS alerts from Black Fabric Security. "
-                                  "Message frequency may vary. Standard message and data rates may apply. "
-                                  "Reply STOP to opt out. Reply HELP for assistance. "
-                                  "Your mobile information will not be sold or shared for marketing purposes.",
+                              "I agree to receive emergency SMS alerts from Black Fabric Security under the terms stated above.",
                               style: TextStyle(fontSize: 12, color: Color(0xFF374151), height: 1.6),
                             ),
                           ),
