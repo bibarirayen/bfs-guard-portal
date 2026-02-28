@@ -49,29 +49,19 @@ class CustomAppBar extends StatelessWidget implements PreferredSizeWidget {
         ],
       ),
       actions: [
-        GestureDetector(
-          onTap: () {
-            if (onThemeChanged != null) {
-              onThemeChanged!(!isDarkMode);
-            }
-          },
-          child: Container(
-            margin: const EdgeInsets.only(right: 16),
-            padding: const EdgeInsets.all(8),
-            decoration: BoxDecoration(
-              color: cardColor,
-              borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: borderColor, width: 1),
-            ),
-            child: Image.asset(
-              'assets/applogo.png',
-              height: 28,
-              width: 28,
-              fit: BoxFit.contain,
-              // ── Fix: never show white logo on white background ──
-              color: isDarkMode ? null : const Color(0xFF1E293B),
-              colorBlendMode: isDarkMode ? null : BlendMode.srcIn,
-            ),
+        Container(
+          margin: const EdgeInsets.only(right: 16),
+          padding: const EdgeInsets.all(8),
+          decoration: BoxDecoration(
+            color: cardColor,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: borderColor, width: 1),
+          ),
+          child: Image.asset(
+            'assets/tt.png',
+            height: 28,
+            width: 28,
+            fit: BoxFit.contain,
           ),
         ),
       ],
