@@ -119,11 +119,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver{
     super.initState();
     WidgetsBinding.instance.addObserver(this); // ✅ listen for app resume
     WidgetsBinding.instance.addPostFrameCallback((_) async {
-      final ok = await _ensureLocationPermission();
-      if (!ok) {
-        // After dialog closes (user went to settings), re-check on resume
-        // handled by didChangeAppLifecycleState
-      }
+      // First: ask notification + camera + photos + mic (one by one)
+      await _requestAllPermissions();
+      // Then: ask location (separate flow, needs its own dialog handling)
+      await Future.delayed(const Duration(milliseconds: 500));
+      await _ensureLocationPermission();
     });
     Future<void> _requestNotificationPermission() async {
       if (await Permission.notification.isDenied) {
@@ -159,7 +159,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver{
     };
     // ────────────────────────────────────────────────────────────────────────
 
-    _requestAllPermissions();
 
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       await Future.delayed(const Duration(seconds: 1));
@@ -758,14 +757,31 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver{
   // ─────────────────────────────────────────────────────────────────────────
 
   Future<void> _requestAllPermissions() async {
-    final cameraStatus = await Permission.camera.request();
-    if (!cameraStatus.isGranted) print('Camera permission denied');
+    // Step 1: Notifications first (most important, shown prominently)
+    if (await Permission.notification.isDenied) {
+      await Permission.notification.request();
+      await Future.delayed(const Duration(milliseconds: 600));
+    }
 
-    final photosStatus = await Permission.photos.request();
-    if (!photosStatus.isGranted) print('Photos permission denied');
+    // Step 2: Location (While In Use first, then Always is handled by _ensureLocationPermission)
+    // Already handled by the addPostFrameCallback below — skip here
 
-    final micStatus = await Permission.microphone.request();
-    if (!micStatus.isGranted) print('Microphone permission denied');
+    // Step 3: Camera
+    if (await Permission.camera.isDenied) {
+      await Permission.camera.request();
+      await Future.delayed(const Duration(milliseconds: 600));
+    }
+
+    // Step 4: Photos
+    if (await Permission.photos.isDenied) {
+      await Permission.photos.request();
+      await Future.delayed(const Duration(milliseconds: 600));
+    }
+
+    // Step 5: Microphone
+    if (await Permission.microphone.isDenied) {
+      await Permission.microphone.request();
+    }
   }
 
   Future<void> _getCurrentPosition() async {
