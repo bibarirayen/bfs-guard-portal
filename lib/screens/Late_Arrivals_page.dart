@@ -70,9 +70,13 @@ class _LateArrivalsPageState extends State<LateArrivalsPage> {
   String _formatTime(String? raw) {
     if (raw == null || raw.isEmpty) return '--:--';
     try {
-      // raw is "HH:mm:ss" from LocalTime
       final parts = raw.split(':');
-      return '${parts[0]}:${parts[1]}';
+      int hour = int.parse(parts[0]);
+      final int minute = int.parse(parts[1]);
+      final String period = hour >= 12 ? 'PM' : 'AM';
+      hour = hour % 12;
+      if (hour == 0) hour = 12;
+      return '${hour}:${minute.toString().padLeft(2, '0')} $period';
     } catch (_) {
       return raw;
     }

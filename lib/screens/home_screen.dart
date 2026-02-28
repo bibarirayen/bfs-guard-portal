@@ -6,6 +6,7 @@ import 'package:crossplatformblackfabric/screens/report_list_page.dart';
 import 'package:crossplatformblackfabric/screens/vacation_request_page.dart';
 import 'package:crossplatformblackfabric/services/shift_service.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -318,7 +319,18 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver{
   // ─────────────────────────────────────────────────────────────────────────
   // Dashboard load — FIX 2: uncommented GPS-stop block
   // ─────────────────────────────────────────────────────────────────────────
-
+// ─────────────────────────────────────────────────────────────────────────
+// AM/PM converter: "HH:MM" or "HH:MM:SS" → "h:MM AM/PM"
+// ─────────────────────────────────────────────────────────────────────────
+  String _toAmPm(String timeStr) {
+    final parts = timeStr.split(':');
+    int hour   = int.parse(parts[0]);
+    int minute = int.parse(parts[1]);
+    final period = hour >= 12 ? 'PM' : 'AM';
+    int displayHour = hour % 12;
+    if (displayHour == 0) displayHour = 12;
+    return '$displayHour:${minute.toString().padLeft(2, '0')} $period';
+  }
   Future<void> _loadDashboard() async {
     try {
       final dashboardService = DashboardService();
@@ -425,14 +437,15 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver{
         _shiftStartDateTime = startDateTime;
         _shiftEndDateTime = endDateTime;
 
-        shiftTime = "$start - $end";
+        shiftTime = "${_toAmPm(start)} - ${_toAmPm(end)}";
 
         Duration shiftDuration = endDateTime!.difference(startDateTime!);
         // shiftDuration is now always positive (overnight-safe)
         double hours = shiftDuration.inMinutes / 60;
-        formattedHours = hours >= 1
-            ? "${hours.toStringAsFixed(1)}h"
-            : "${shiftDuration.inMinutes} min";
+        final totalMins = shiftDuration.inMinutes;
+        final h = totalMins ~/ 60;
+        final m = totalMins % 60;
+        formattedHours = h > 0 ? "${h}h ${m}m" : "${m}m";
 
         await prefs.setInt('assignmentId', data["assignmentId"]);
         _hasAssignment = prefs.getInt('assignmentId') != null;
@@ -957,11 +970,47 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver{
             Text("Name: ${_supervisorName ?? "N/A"}",
                 style: TextStyle(color: _textColor)),
             const SizedBox(height: 8),
-            Text("Email: ${_supervisorEmail ?? "N/A"}",
-                style: TextStyle(color: _textColor)),
+            Row(
+              children: [
+                Expanded(
+                  child: Text("Email: ${_supervisorEmail ?? "N/A"}",
+                      style: TextStyle(color: _textColor)),
+                ),
+                if (_supervisorEmail != null)
+                  IconButton(
+                    icon: Icon(Icons.copy, size: 16, color: _secondaryTextColor),
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(),
+                    onPressed: () {
+                      Clipboard.setData(ClipboardData(text: _supervisorEmail!));
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text("Email copied"), duration: Duration(seconds: 1)),
+                      );
+                    },
+                  ),
+              ],
+            ),
             const SizedBox(height: 8),
-            Text("Phone: ${_supervisorPhone ?? "N/A"}",
-                style: TextStyle(color: _textColor)),
+            Row(
+              children: [
+                Expanded(
+                  child: Text("Phone: ${_supervisorPhone ?? "N/A"}",
+                      style: TextStyle(color: _textColor)),
+                ),
+                if (_supervisorPhone != null)
+                  IconButton(
+                    icon: Icon(Icons.copy, size: 16, color: _secondaryTextColor),
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(),
+                    onPressed: () {
+                      Clipboard.setData(ClipboardData(text: _supervisorPhone!));
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text("Phone copied"), duration: Duration(seconds: 1)),
+                      );
+                    },
+                  ),
+              ],
+            ),
           ],
         ),
         actions: [

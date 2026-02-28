@@ -12,8 +12,7 @@
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
 	<string>BFS Guard Portal requires continuous location access to monitor your patrol routes and ensure your safety during security shifts, even when the app is in the background.</string>
 
-	<key>NSLocationAlwaysUsageDescription</key>
-	<string>Location access is essential for tracking guard patrol routes and ensuring safety during security shifts.</string>
+
 
 	<!-- ============================================================ -->
 	<!-- CAMERA                                                        -->
@@ -42,16 +41,8 @@
 	<key>NFCReaderUsageDescription</key>
 	<string>BFS Guard Portal uses NFC to scan and assign checkpoint tags during security patrols.</string>
 
-	<key>com.apple.developer.nfc.readersession.formats</key>
-	<array>
-		<string>TAG</string>
-	</array>
 
-	<!-- ============================================================ -->
-	<!-- NOTIFICATIONS                                                 -->
-	<!-- ============================================================ -->
-	<key>NSUserNotificationUsageDescription</key>
-	<string>BFS Guard Portal sends important notifications for shift assignments, safety alerts, and real-time updates.</string>
+
 
 	<!-- ============================================================ -->
 	<!-- BUNDLE CONFIGURATION                                          -->
@@ -115,7 +106,6 @@
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>location</string>
-		<string>fetch</string>
 		<string>remote-notification</string>
 	</array>
 

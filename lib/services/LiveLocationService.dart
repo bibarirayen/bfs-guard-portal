@@ -135,7 +135,7 @@ class LiveLocationService {
         ? AppleSettings(
       accuracy: LocationAccuracy.bestForNavigation,
       activityType: ActivityType.otherNavigation,
-      distanceFilter: 3,
+      distanceFilter: 0,
       pauseLocationUpdatesAutomatically: false, // CRITICAL
       showBackgroundLocationIndicator: true,    // Blue bar on iOS
       allowBackgroundLocationUpdates: true,
@@ -286,7 +286,10 @@ class LiveLocationService {
         stompClient == null ||
         !stompClient!.connected ||
         _lastPosition == null) return;
-
+    if (stompClient == null || !stompClient!.connected) {
+      _connectWebSocket(userId, assignmentId);
+      return; // will send on next GPS event after reconnect
+    }
     _lastSentTime = DateTime.now();
 
     stompClient!.send(

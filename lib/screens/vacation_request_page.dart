@@ -92,7 +92,15 @@ class _VacationRequestPageState extends State<VacationRequestPage> {
       _fetchMyVacations();
     }
   }
-
+  String _formatDate(String? raw) {
+    if (raw == null || raw.isEmpty) return '–';
+    try {
+      final parts = raw.split('-');
+      return '${parts[1]}/${parts[2]}/${parts[0]}';
+    } catch (_) {
+      return raw ?? '–';
+    }
+  }
   // ================= MODAL (FIXED) =================
   void _openAddModal() {
     showModalBottomSheet(
@@ -255,7 +263,7 @@ class _VacationRequestPageState extends State<VacationRequestPage> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            "${v['dateFrom']} → ${v['dateTo']}",
+                            "${_formatDate(v['dateFrom'])} → ${_formatDate(v['dateTo'])}",
                             style: TextStyle(
                               color: _textColor,
                               fontWeight: FontWeight.w600,

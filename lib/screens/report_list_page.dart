@@ -23,6 +23,86 @@ class _ReportListPageState extends State<ReportListPage> {
   Color get _secondaryTextColor => _isDarkMode ? Colors.grey[400]! : Colors.grey[600]!;
   Color get _iconColor => _isDarkMode ? const Color(0xFF64B5F6) : const Color(0xFF2196F3);
 
+  // ─────────────────────────────────────────────────────────────────────────
+  // Smart formatter — auto-detects and reformats any date/time/datetime string
+  //
+  // Handles:
+  //   "2026-02-27"            → "02/27/2026"
+  //   "27/02/2026"            → "02/27/2026"
+  //   "14:30"                 → "2:30 PM"
+  //   "14:30:00"              → "2:30 PM"
+  //   "2026-02-27T14:30:00"   → "02/27/2026 2:30 PM"
+  //   Anything else           → returned unchanged
+  // ─────────────────────────────────────────────────────────────────────────
+  String _smartFormat(String? raw) {
+    if (raw == null || raw.isEmpty) return raw ?? '';
+
+    // ── ISO datetime "2026-02-27T14:30:00[...]" ───────────────────────────
+    if (raw.contains('T')) {
+      final parts = raw.split('T');
+      final datePart = parts[0];
+      // strip milliseconds/timezone from time part
+      final timePart = parts[1].replaceAll(RegExp(r'[.\[Z].*'), '');
+      return '${_fmtDate(datePart)} ${_fmtTime(timePart)}';
+    }
+
+    // ── Date-only "YYYY-MM-DD" ─────────────────────────────────────────────
+    if (RegExp(r'^\d{4}-\d{2}-\d{2}$').hasMatch(raw)) return _fmtDate(raw);
+
+    // ── "DD/MM/YYYY" or "MM/DD/YYYY" (we treat as D/M/Y and flip) ─────────
+    if (RegExp(r'^\d{1,2}/\d{1,2}/\d{4}$').hasMatch(raw)) return _fmtDate(raw);
+
+    // ── Time-only "HH:MM" or "HH:MM:SS" ───────────────────────────────────
+    if (RegExp(r'^\d{1,2}:\d{2}(:\d{2})?$').hasMatch(raw.trim())) return _fmtTime(raw.trim());
+
+    // Already formatted or unknown → return as-is
+    return raw;
+  }
+
+  /// Reformats a date string → "MM/DD/YYYY"
+  String _fmtDate(String s) {
+    try {
+      // "YYYY-MM-DD"
+      final iso = RegExp(r'^(\d{4})-(\d{2})-(\d{2})$').firstMatch(s);
+      if (iso != null) {
+        return '${iso.group(2)}/${iso.group(3)}/${iso.group(1)}';
+      }
+      // "DD/MM/YYYY" → flip to MM/DD/YYYY
+      final dmy = RegExp(r'^(\d{1,2})/(\d{1,2})/(\d{4})$').firstMatch(s);
+      if (dmy != null) {
+        final a = dmy.group(1)!.padLeft(2, '0');
+        final b = dmy.group(2)!.padLeft(2, '0');
+        final y = dmy.group(3)!;
+        // If a > 12 it must be the day, so result is b/a/y
+        return int.parse(a) > 12 ? '$b/$a/$y' : '$a/$b/$y';
+      }
+    } catch (_) {}
+    return s;
+  }
+
+  /// Reformats a time string → "h:MM AM/PM"
+  String _fmtTime(String s) {
+    try {
+      if (s.toUpperCase().contains('AM') || s.toUpperCase().contains('PM')) return s;
+
+      // Handle full datetime string containing a time part (e.g. "2026-02-27T14:30:00")
+      final timeOnly = s.contains('T') ? s.split('T')[1].replaceAll(RegExp(r'[.\[Z].*'), '') : s.trim();
+
+      final match = RegExp(r'^(\d{1,2}):(\d{2})(?::\d{2})?$').firstMatch(timeOnly);
+      if (match != null) {
+        int hour   = int.parse(match.group(1)!);
+        int minute = int.parse(match.group(2)!);
+        final period = hour >= 12 ? 'PM' : 'AM';
+        int display = hour % 12;
+        if (display == 0) display = 12;
+        return '$display:${minute.toString().padLeft(2, '0')} $period';
+      }
+    } catch (_) {}
+    return s;
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+
   @override
   void initState() {
     super.initState();
@@ -126,16 +206,32 @@ class _ReportListPageState extends State<ReportListPage> {
                 Text(report.type,
                     style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: _textColor)),
                 Divider(color: _borderColor),
-                _infoRow("Date", report.dateEntered),
+                // ✅ dateEntered formatted
+                _infoRow("Date", _smartFormat(report.dateEntered)),
                 _infoRow("Client", report.client),
                 _infoRow("Site", report.site),
                 _infoRow("Officer", report.officer),
                 const SizedBox(height: 12),
                 Text("Details", style: TextStyle(fontWeight: FontWeight.bold, color: _textColor)),
+                // ✅ every raw field value auto-formatted
                 ...report.raw.entries
                     .where((e) => !['id', 'type', 'client', 'site', 'officer', 'images', 'dateEntered']
                     .contains(e.key))
-                    .map((e) => _infoRow(e.key.replaceAll('_', ' '), e.value.toString())),
+                    .map((e) {
+                  final key = e.key.toLowerCase();
+                  final isTimeField = key.contains('time') || key.contains('hour');
+                  String? rawVal = e.value?.toString();
+                  String? formatted;
+
+                  if (isTimeField && rawVal != null && rawVal.isNotEmpty) {
+                    // Force time formatting regardless of what _smartFormat detects
+                    formatted = _fmtTime(rawVal);
+                  } else {
+                    formatted = _smartFormat(rawVal);
+                  }
+
+                  return _infoRow(e.key.replaceAll('_', ' '), formatted);
+                }),
                 if (report.images.isNotEmpty) ...[
                   const SizedBox(height: 16),
                   Text("Media", style: TextStyle(fontWeight: FontWeight.bold, color: _textColor)),
@@ -251,10 +347,12 @@ class _ReportListPageState extends State<ReportListPage> {
                           overflow: TextOverflow.ellipsis),
                       const SizedBox(height: 4),
                       Text(
-                          "${report.site ?? 'No Site'} • ${report.dateEntered ?? 'No Date'}",
-                          style: TextStyle(color: _secondaryTextColor, fontSize: 13),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis),
+                        // ✅ formatted date on card preview
+                        "${report.site ?? 'No Site'} • ${_smartFormat(report.dateEntered) ?? 'No Date'}",
+                        style: TextStyle(color: _secondaryTextColor, fontSize: 13),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
                       if (report.client != null && report.client!.isNotEmpty) ...[
                         const SizedBox(height: 4),
                         Text("Client: ${report.client!}",
@@ -458,7 +556,7 @@ class _ReportListPageState extends State<ReportListPage> {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Full-screen viewer — network URLs from backend
+// Full-screen viewer
 // ─────────────────────────────────────────────────────────────────────────────
 class _MediaFullScreenPage extends StatefulWidget {
   final String url;
