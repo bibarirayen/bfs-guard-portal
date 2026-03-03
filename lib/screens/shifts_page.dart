@@ -10,6 +10,7 @@ import 'package:awesome_dialog/awesome_dialog.dart';
 
 import '../config/ApiService.dart';
 import '../widgets/custom_appbar.dart';
+import 'home_screen.dart';
 
 class ShiftsPage extends StatefulWidget {
   const ShiftsPage({super.key});
@@ -438,8 +439,12 @@ class _ShiftsPageState extends State<ShiftsPage> {
                                   desc:
                                   'You will be contacted by email for the details',
                                   btnOkOnPress: () {
-                                    Navigator.pop(ctx);
-                                    _fetchShifts();
+                                    Navigator.of(context).pushAndRemoveUntil(
+                                      MaterialPageRoute(
+                                        builder: (_) => const HomeScreen(),
+                                      ),
+                                          (route) => false,
+                                    );
                                   },
                                 ).show();
                               } else if (response.statusCode == 409) {

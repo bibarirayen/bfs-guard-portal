@@ -125,6 +125,107 @@ class _ReportPageState extends State<ReportPage> {
   void initState() {
     super.initState();
     _fetchSites();
+    _requestAllMediaPermissions();
+  }
+
+  // Called on page open — shows system dialogs the FIRST time only.
+  // After first ask, system won't show the dialog again — _checkPermission handles that.
+  Future<void> _requestAllMediaPermissions() async {
+    await Permission.camera.request();
+    await Permission.microphone.request();
+    if (Platform.isIOS) {
+      await Permission.photos.request();
+    } else {
+      final sdk = await _getAndroidSdkInt();
+      if (sdk >= 33) {
+        await Permission.photos.request();
+        await Permission.videos.request();
+      } else {
+        await Permission.storage.request();
+      }
+    }
+  }
+
+  // Called at EVERY button tap.
+  // - If not yet asked: calls .request() → system dialog appears.
+  // - If already granted / limited: passes through immediately.
+  // - If denied or permanently denied: shows our Settings dialog.
+  //   (iOS/Android won't re-show system dialog after first denial — Settings is the only option.)
+  Future<bool> _checkPermission(Permission perm, String label) async {
+    PermissionStatus status = await perm.status;
+
+    // Never asked yet on this device → show system dialog now
+    if (status.isDenied) {
+      status = await perm.request();
+    }
+
+    // Granted or limited (iOS "Select Photos") → OK
+    if (status.isGranted || status == PermissionStatus.limited) return true;
+
+    // Denied or permanently denied → only option is Settings
+    if (!mounted) return false;
+
+    bool openedSettings = false;
+    await showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: _cardColor,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Row(children: [
+          const Icon(Icons.lock_outline, color: Colors.redAccent, size: 22),
+          const SizedBox(width: 8),
+          Expanded(child: Text(
+            '$label Permission Required',
+            style: TextStyle(color: _textColor, fontSize: 16, fontWeight: FontWeight.w700),
+          )),
+        ]),
+        content: Text(
+          Platform.isIOS
+              ? 'Please go to Settings → Privacy → $label and enable access for this app.'
+              : 'Please go to App Settings → Permissions → $label and enable access.',
+          style: TextStyle(color: _secondaryTextColor, fontSize: 14, height: 1.5),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: Text('Not Now', style: TextStyle(color: _secondaryTextColor)),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              Navigator.pop(ctx);
+              openedSettings = true;
+              await openAppSettings();
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: _primaryColor,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            ),
+            child: const Text('Open Settings', style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+
+    // If the user went to Settings and came back, re-check the permission.
+    // Android caches the old status — we must query fresh after returning.
+    if (openedSettings) {
+      final refreshed = await perm.status;
+      if (refreshed.isGranted || refreshed == PermissionStatus.limited) return true;
+    }
+
+    return false;
+  }
+
+  Future<int> _getAndroidSdkInt() async {
+    try {
+      final match = RegExp(r'Android (\d+)').firstMatch(Platform.operatingSystemVersion);
+      if (match != null) {
+        final v = int.tryParse(match.group(1) ?? '');
+        if (v != null) return {14:34,13:33,12:32,11:30,10:29,9:28}[v] ?? (v >= 13 ? 33 : 28);
+      }
+    } catch (_) {}
+    return 30;
   }
 
   @override
@@ -177,71 +278,8 @@ class _ReportPageState extends State<ReportPage> {
   }
 
   // ─── PERMISSIONS ──────────────────────────────────────────────────────────
-  Future<bool> _requestPermissions(ImageSource source, {bool forVideo = false}) async {
-    if (Platform.isIOS) return _requestPermissionsIOS(source, forVideo: forVideo);
-    return _requestPermissionsAndroid(source, forVideo: forVideo);
-  }
 
-  Future<bool> _requestPermissionsIOS(ImageSource source, {bool forVideo = false}) async {
-    if (source == ImageSource.camera) {
-      if (!(await Permission.camera.request()).isGranted) {
-        _showPermissionDeniedDialog('Camera Permission Required',
-            'Camera access is needed to take photos/videos for reports.', showSettings: true);
-        return false;
-      }
-      if (forVideo && !(await Permission.microphone.request()).isGranted) {
-        _showPermissionDeniedDialog('Microphone Permission Required',
-            'Microphone access is required to record video with audio.', showSettings: true);
-        return false;
-      }
-      return true;
-    }
-    final status = await Permission.photos.request();
-    if (status.isDenied || status.isPermanentlyDenied) {
-      _showPermissionDeniedDialog('Photo Library Permission Required',
-          'Go to Settings → BFS Guard Portal → Photos → "All Photos".', showSettings: true);
-      return false;
-    }
-    return true;
-  }
 
-  Future<bool> _requestPermissionsAndroid(ImageSource source, {bool forVideo = false}) async {
-    if (source == ImageSource.camera) {
-      if (!(await Permission.camera.request()).isGranted) {
-        _snackError('Camera permission is required.'); return false;
-      }
-      if (forVideo && !(await Permission.microphone.request()).isGranted) {
-        _snackError('Microphone permission is required.'); return false;
-      }
-      return true;
-    }
-    final sdk = await _getAndroidSdkVersion();
-    final perm = sdk >= 33 ? (forVideo ? Permission.videos : Permission.photos) : Permission.storage;
-    final status = await perm.request();
-    if (!status.isGranted) {
-      status.isPermanentlyDenied
-          ? _showPermissionDeniedDialog('Permission Blocked', 'Open App Settings to enable.', showSettings: true)
-          : _snackError('Permission is required.');
-      return false;
-    }
-    return true;
-  }
-
-  int? _cachedSdkVersion;
-  Future<int> _getAndroidSdkVersion() async {
-    if (_cachedSdkVersion != null) return _cachedSdkVersion!;
-    try {
-      final match = RegExp(r'Android (\d+)').firstMatch(Platform.operatingSystemVersion);
-      if (match != null) {
-        final v = int.tryParse(match.group(1) ?? '');
-        if (v != null) {
-          _cachedSdkVersion = {14:34,13:33,12:32,11:30,10:29,9:28}[v] ?? (v >= 13 ? 33 : 28);
-          return _cachedSdkVersion!;
-        }
-      }
-    } catch (_) {}
-    return _cachedSdkVersion = 30;
-  }
 
   void _snackError(String msg) {
     if (!mounted) return;
@@ -281,22 +319,23 @@ class _ReportPageState extends State<ReportPage> {
 
   Future<void> _pickImage(ImageSource source) async {
     if (_isPickingMedia) return;
-    if (!await _requestPermissions(source)) return;
+
+    if (source == ImageSource.camera) {
+      if (!await _checkPermission(Permission.camera, 'Camera')) return;
+    } else {
+      final perm = Platform.isIOS
+          ? Permission.photos
+          : (await _getAndroidSdkInt() >= 33 ? Permission.photos : Permission.storage);
+      if (!await _checkPermission(perm, 'Photos')) return;
+    }
 
     setState(() => _isPickingMedia = true);
-
     try {
       XFile? picked;
-      try {
-        picked = await _picker.pickImage(source: source, imageQuality: 85);
-      } catch (_) {
-        return;
-      }
+      try { picked = await _picker.pickImage(source: source, imageQuality: 85); } catch (_) { return; }
       if (picked == null || !mounted) return;
-
       final File stableFile = await _copyToTemp(picked.path, ext: 'jpg');
       setState(() => _mediaItems.add(_MediaItem(file: stableFile, isVideo: false)));
-
     } finally {
       if (mounted) setState(() => _isPickingMedia = false);
     }
@@ -304,27 +343,26 @@ class _ReportPageState extends State<ReportPage> {
   bool _isPickingMedia = false;
 
   Future<void> _pickVideo(ImageSource source) async {
-    if (_isPickingMedia) return; // prevent double-tap
-    if (!await _requestPermissions(source, forVideo: true)) return;
+    if (_isPickingMedia) return;
 
-    // 🔒 Lock buttons BEFORE picker opens — large files take time to return
+    if (source == ImageSource.camera) {
+      if (!await _checkPermission(Permission.camera, 'Camera')) return;
+      if (!await _checkPermission(Permission.microphone, 'Microphone')) return;
+    } else {
+      final perm = Platform.isIOS
+          ? Permission.photos
+          : (await _getAndroidSdkInt() >= 33 ? Permission.videos : Permission.storage);
+      if (!await _checkPermission(perm, 'Photos & Videos')) return;
+    }
+
     setState(() => _isPickingMedia = true);
-
     try {
       final picked = await _picker.pickVideo(source: source);
       if (picked == null || !mounted) return;
-
-      final item = _MediaItem(
-        file: File(picked.path),
-        isVideo: true,
-        thumbLoading: true,
-      );
-
+      final item = _MediaItem(file: File(picked.path), isVideo: true, thumbLoading: true);
       setState(() => _mediaItems.add(item));
       _generateThumb(item);
-
     } finally {
-      // 🔓 Always unlock, even on error or cancel
       if (mounted) setState(() => _isPickingMedia = false);
     }
   }
@@ -708,7 +746,8 @@ class _ReportPageState extends State<ReportPage> {
 
     // User dismissed sheet without picking
     if (quality == null || !mounted) return;
-    if (!await _requestPermissions(ImageSource.camera, forVideo: true)) return;
+    if (!await _checkPermission(Permission.camera, 'Camera')) return;
+    if (!await _checkPermission(Permission.microphone, 'Microphone')) return;
 
     setState(() => _isPickingMedia = true);
     try {

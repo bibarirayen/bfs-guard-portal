@@ -175,9 +175,13 @@ class _LoginScreenState extends State<LoginScreen>
             ),
           );
         }
-      } else if (response.statusCode == 401) {
+      }
+      else if (response.statusCode == 401) {
         _showSnack('Invalid password', isError: true);
-      } else if (response.statusCode == 404) {
+      }
+      else if (response.statusCode == 403) {
+        _showSnack('Account is deactivated. Contact administrator.', isError: true);
+      }else if (response.statusCode == 404) {
         _showSnack('User not found', isError: true);
       } else {
         _showSnack('Error: ${response.body}', isError: true);
