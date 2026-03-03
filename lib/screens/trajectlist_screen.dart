@@ -28,7 +28,19 @@ class _TrajectListPageState extends State<TrajectListPage> {
   bool isLoading = true;
   bool _isDarkMode = true;
   Timer? _refreshTimer;
+  DateTime? _serverNow;
 
+  Future<DateTime> _getServerNow() async {
+    try {
+      final response = await ApiService().get('auth/server-time');
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        final parsed = DateTime.parse(data['now'].toString().split('[')[0]);
+        return parsed.subtract(const Duration(hours: 10)); // Hawaii time
+      }
+    } catch (_) {}
+    return DateTime.now().toUtc().subtract(const Duration(hours: 10)); // fallback
+  }
   Color get backgroundColor =>
       _isDarkMode ? const Color(0xFF0F172A) : const Color(0xFFF8FAFC);
   Color get textColor =>
@@ -65,11 +77,14 @@ class _TrajectListPageState extends State<TrajectListPage> {
         if (mounted) setState(() => isLoading = false);
         return;
       }
-      final data =
-      await ShiftService().getAssignmentTrajectories(assignmentId);
+      final results = await Future.wait([
+        ShiftService().getAssignmentTrajectories(assignmentId),
+        _getServerNow(),
+      ]);
       if (!mounted) return;
       setState(() {
-        trajects = data.map((t) {
+        _serverNow = results[1] as DateTime;
+        trajects = (results[0] as List<AssignmentTrajectory>).map((t) {
           t.instanceKey = '${t.id}';
           return t;
         }).toList();
@@ -343,7 +358,7 @@ class _TrajectListPageState extends State<TrajectListPage> {
                       const SizedBox(width: 12),
                       Icon(Icons.event_outlined,
                           size: 13,
-                          color: traject.expiresAt!.isBefore(DateTime.now())
+                          color:traject.expiresAt!.isBefore(_serverNow ?? DateTime.now())
                               ? Colors.red
                               : secondaryTextColor),
                       const SizedBox(width: 4),
@@ -351,7 +366,7 @@ class _TrajectListPageState extends State<TrajectListPage> {
                         _formatExpiry(traject.expiresAt!),
                         style: TextStyle(
                           color:
-                          traject.expiresAt!.isBefore(DateTime.now())
+                          traject.expiresAt!.isBefore(_serverNow ?? DateTime.now())
                               ? Colors.red
                               : secondaryTextColor,
                           fontSize: 12,
@@ -371,7 +386,7 @@ class _TrajectListPageState extends State<TrajectListPage> {
   }
 
   String _formatExpiry(DateTime dt) {
-    final now = DateTime.now();
+    final now = _serverNow ?? DateTime.now().toUtc().subtract(const Duration(hours: 10));
     final diff = dt.difference(now);
     if (diff.isNegative) return 'Expired';
     if (diff.inHours < 1) return 'Expires in ${diff.inMinutes}m';
