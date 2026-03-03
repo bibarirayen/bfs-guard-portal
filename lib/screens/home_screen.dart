@@ -295,35 +295,17 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   /// microphone, and the initial location "While In Use" dialog).
   /// Does NOT touch the "Always" location requirement — that comes after.
   Future<void> _requestAllPermissions() async {
-    // Notifications
+    // Only request permissions needed at launch.
+    // Camera, photos, microphone are requested contextually when the user
+    // taps the relevant button — Apple guideline 5.1.1.
+
+    // Notifications — needed immediately for shift alerts
     if (await Permission.notification.isDenied) {
       await Permission.notification.request();
       await Future.delayed(const Duration(milliseconds: 600));
     }
 
-    // Camera
-    if (await Permission.camera.isDenied) {
-      await Permission.camera.request();
-      await Future.delayed(const Duration(milliseconds: 600));
-    }
-
-    // Photos — check status first; never re-request if already granted or limited
-    final photoStatus = await Permission.photos.status;
-    if (photoStatus.isDenied) {
-      await Permission.photos.request();
-      await Future.delayed(const Duration(milliseconds: 600));
-    }
-    // Note: PermissionStatus.limited means "Select Photos" was chosen — that's fine,
-    // we don't re-request it here. The gallery picker will still work.
-
-    // Microphone
-    if (await Permission.microphone.isDenied) {
-      await Permission.microphone.request();
-      await Future.delayed(const Duration(milliseconds: 600));
-    }
-
-    // Location — request "While In Use" first (system dialog).
-    // "Always" is handled separately by _enforceAlwaysPermission.
+    // Location — "While In Use" first; "Always" handled by _enforceAlwaysPermission
     LocationPermission locationPerm = await Geolocator.checkPermission();
     if (locationPerm == LocationPermission.denied) {
       locationPerm = await Geolocator.requestPermission();
@@ -1495,7 +1477,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       onTap: () {
         if (label.contains("Vacation")) {
           _onItemTapped(5);
-        } else if (label.contains("Shifts")) {
+        } else if (label.contains("Shift\nMarketplace")) {
           _onItemTapped(6);
         } else if (label.contains("Dispatch")) {
           _onItemTapped(7);

@@ -132,7 +132,26 @@ class _NfcAssignPageState extends State<NfcAssignPage> {
     if (nfcTagId != null) {
       try {
         final response = await apiService.post('stops/$stopId/nfc', {'nfcTagId': nfcTagId});
-        if (response.statusCode != 200 && mounted) {
+        if (response.statusCode == 409 && mounted) {
+          final body = jsonDecode(response.body);
+          final conflictStopName = body['stopName'] ?? 'another stop';
+          final confirm = await _showConflictModal(conflictStopName);
+          if (confirm == true && mounted) {
+            final forceResponse = await apiService.post(
+              'stops/$stopId/nfc',
+              {'nfcTagId': nfcTagId, 'force': 'true'},
+            );
+            if (forceResponse.statusCode == 200 && mounted) {
+              _snack('NFC tag reassigned!');
+              fetchStops();
+            } else if (mounted) {
+              _snack('Backend error: ${forceResponse.statusCode}', isError: true);
+            }
+          }
+        } else if (response.statusCode == 200 && mounted) {
+          _snack('NFC tag assigned!');
+          fetchStops();
+        } else if (mounted) {
           _snack('Backend error: ${response.statusCode}', isError: true);
         }
       } catch (e) {
@@ -140,6 +159,7 @@ class _NfcAssignPageState extends State<NfcAssignPage> {
       }
     }
   }
+
 
   Future<void> resetNfc(int stopId) async {
     final confirmed = await showDialog<bool>(
@@ -223,7 +243,70 @@ class _NfcAssignPageState extends State<NfcAssignPage> {
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
     ));
   }
-
+Future<bool?> _showConflictModal(String conflictStopName) {
+  return showDialog<bool>(
+    context: context,
+    barrierDismissible: false,
+    builder: (ctx) => AlertDialog(
+      backgroundColor: cardColor,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      title: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: warningColor.withOpacity(0.15),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Icon(Icons.warning_amber_rounded, color: warningColor, size: 22),
+          ),
+          const SizedBox(width: 12),
+          Text('Tag Already Assigned',
+              style: TextStyle(color: textColor, fontWeight: FontWeight.bold, fontSize: 16)),
+        ],
+      ),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('This NFC tag is already assigned to:',
+              style: TextStyle(color: secondaryTextColor, fontSize: 13)),
+          const SizedBox(height: 10),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+            decoration: BoxDecoration(
+              color: warningColor.withOpacity(0.08),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: warningColor.withOpacity(0.3)),
+            ),
+            child: Text(conflictStopName,
+                style: TextStyle(color: warningColor, fontWeight: FontWeight.w700, fontSize: 14)),
+          ),
+          const SizedBox(height: 12),
+          Text('Do you want to reassign it to this stop instead?',
+              style: TextStyle(color: secondaryTextColor, fontSize: 13)),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(ctx, false),
+          child: Text('Cancel', style: TextStyle(color: secondaryTextColor)),
+        ),
+        ElevatedButton(
+          onPressed: () => Navigator.pop(ctx, true),
+          style: ElevatedButton.styleFrom(
+            backgroundColor: warningColor,
+            elevation: 0,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+          ),
+          child: const Text('Reassign',
+              style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
+        ),
+      ],
+    ),
+  );
+}
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -262,7 +345,7 @@ class _NfcAssignPageState extends State<NfcAssignPage> {
                 border: Border.all(color: borderColor),
               ),
               child: Image.asset(
-                'assets/applogo.png',
+                'assets/tt.png',
                 height: 22,
                 width: 22,
                 color: _isDarkMode ? null : const Color(0xFF1E293B),

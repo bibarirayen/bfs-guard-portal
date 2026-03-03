@@ -711,10 +711,7 @@ class _CheckpointsScreenState extends State<CheckpointsScreen> {
         stop.isScanned = true;
         _isScanning = false;
       });
-      _snack(
-          '✅ ${stop.name} validated! (${distanceFt.toStringAsFixed(0)} ft, $accuracy%)');
-    }
-  }
+    }}
 
   // ── NFC waiting dialog ────────────────────────────────────────────────────
   void _showNfcWaitDialog(String checkpointName) {

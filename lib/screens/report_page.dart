@@ -125,25 +125,6 @@ class _ReportPageState extends State<ReportPage> {
   void initState() {
     super.initState();
     _fetchSites();
-    _requestAllMediaPermissions();
-  }
-
-  // Called on page open — shows system dialogs the FIRST time only.
-  // After first ask, system won't show the dialog again — _checkPermission handles that.
-  Future<void> _requestAllMediaPermissions() async {
-    await Permission.camera.request();
-    await Permission.microphone.request();
-    if (Platform.isIOS) {
-      await Permission.photos.request();
-    } else {
-      final sdk = await _getAndroidSdkInt();
-      if (sdk >= 33) {
-        await Permission.photos.request();
-        await Permission.videos.request();
-      } else {
-        await Permission.storage.request();
-      }
-    }
   }
 
   // Called at EVERY button tap.

@@ -69,24 +69,8 @@ class _CounselingUploadPageState extends State<CounselingUploadPage> {
   void initState() {
     super.initState();
     loadSupervisorAndGuards();
-    _requestAllMediaPermissions();
   }
 
-  Future<void> _requestAllMediaPermissions() async {
-    await Permission.camera.request();
-    await Permission.microphone.request();
-    if (Platform.isIOS) {
-      await Permission.photos.request();
-    } else {
-      final sdk = await _getAndroidSdkInt();
-      if (sdk >= 33) {
-        await Permission.photos.request();
-        await Permission.videos.request();
-      } else {
-        await Permission.storage.request();
-      }
-    }
-  }
 
   Future<bool> _checkPermission(Permission perm, String label) async {
     PermissionStatus status = await perm.status;

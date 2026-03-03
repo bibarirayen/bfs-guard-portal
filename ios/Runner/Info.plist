@@ -12,7 +12,8 @@
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
 	<string>BFS Guard Portal requires continuous location access to monitor your patrol routes and ensure your safety during security shifts, even when the app is in the background.</string>
 
-
+    <key>NSLocationAlwaysUsageDescription</key>
+    <string>BFS Guard Portal requires continuous location access to monitor patrol routes and ensure guard safety during security shifts.</string>
 
 	<!-- ============================================================ -->
 	<!-- CAMERA                                                        -->
