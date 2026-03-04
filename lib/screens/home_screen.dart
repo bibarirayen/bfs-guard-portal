@@ -1239,7 +1239,67 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               if (_hasShiftToday && !_shiftEnded)
                 GestureDetector(
                   onTap: _canStartShift
-                      ? _startShift
+                      ? () async {
+                    final confirmed = await showDialog<bool>(
+                      context: context,
+                      barrierDismissible: false,
+                      builder: (ctx) => AlertDialog(
+                        backgroundColor: _cardColor,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                        contentPadding: const EdgeInsets.fromLTRB(24, 28, 24, 16),
+                        content: Column(mainAxisSize: MainAxisSize.min, children: [
+                          Container(
+                            padding: const EdgeInsets.all(16),
+                            decoration: BoxDecoration(
+                              color: Colors.green.withOpacity(0.1),
+                              shape: BoxShape.circle,
+                            ),
+                            child: const Icon(Icons.location_on, color: Colors.green, size: 36),
+                          ),
+                          const SizedBox(height: 16),
+                          Text('Location Tracking',
+                              style: TextStyle(color: _textColor, fontSize: 18, fontWeight: FontWeight.w800)),
+                          const SizedBox(height: 10),
+                          Text(
+                            'Your location will be tracked for the duration of your shift until you clock out.',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(color: _secondaryTextColor, fontSize: 14, height: 1.5),
+                          ),
+                        ]),
+                        actions: [
+                          Row(children: [
+                            Expanded(
+                              child: TextButton(
+                                onPressed: () => Navigator.pop(ctx, false),
+                                style: TextButton.styleFrom(
+                                  padding: const EdgeInsets.symmetric(vertical: 14),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(12),
+                                    side: BorderSide(color: _borderColor),
+                                  ),
+                                ),
+                                child: Text('Cancel', style: TextStyle(color: _secondaryTextColor, fontWeight: FontWeight.w600)),
+                              ),
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: ElevatedButton(
+                                onPressed: () => Navigator.pop(ctx, true),
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: Colors.green,
+                                  padding: const EdgeInsets.symmetric(vertical: 14),
+                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                                  elevation: 0,
+                                ),
+                                child: const Text('Confirm', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
+                              ),
+                            ),
+                          ]),
+                        ],
+                      ),
+                    );
+                    if (confirmed == true) _startShift();
+                  }
                       : _canStopShift
                       ? _stopShift
                       : null,

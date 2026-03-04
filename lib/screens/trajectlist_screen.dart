@@ -36,10 +36,10 @@ class _TrajectListPageState extends State<TrajectListPage> {
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
         final parsed = DateTime.parse(data['now'].toString().split('[')[0]);
-        return parsed.subtract(const Duration(hours: 10)); // Hawaii time
+        return parsed.subtract(const Duration(hours: 10)).toLocal().subtract(const Duration(hours:1)); // Hawaii time
       }
     } catch (_) {}
-    return DateTime.now().toUtc().subtract(const Duration(hours: 10)); // fallback
+    return DateTime.now().toUtc(); // fallback
   }
   Color get backgroundColor =>
       _isDarkMode ? const Color(0xFF0F172A) : const Color(0xFFF8FAFC);
@@ -84,6 +84,8 @@ class _TrajectListPageState extends State<TrajectListPage> {
       if (!mounted) return;
       setState(() {
         _serverNow = results[1] as DateTime;
+        debugPrint('🕐 SERVER NOW: $_serverNow');
+
         trajects = (results[0] as List<AssignmentTrajectory>).map((t) {
           t.instanceKey = '${t.id}';
           return t;
@@ -355,6 +357,7 @@ class _TrajectListPageState extends State<TrajectListPage> {
                         style: TextStyle(
                             color: secondaryTextColor, fontSize: 12)),
                     if (traject.expiresAt != null) ...[
+                      () { debugPrint('📅 [${traject.name}] expiresAt: ${traject.expiresAt}  |  serverNow: $_serverNow  |  isExpired: ${traject.expiresAt!.isBefore(_serverNow ?? DateTime.now())}'); return const SizedBox(); }(),
                       const SizedBox(width: 12),
                       Icon(Icons.event_outlined,
                           size: 13,

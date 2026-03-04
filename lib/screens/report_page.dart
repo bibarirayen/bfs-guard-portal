@@ -14,6 +14,7 @@ import 'package:video_thumbnail/video_thumbnail.dart';
 
 // flutter_image_compress REMOVED — use imageQuality param on pickImage instead (no crashes)
 import 'package:video_compress/video_compress.dart';
+import 'package:device_info_plus/device_info_plus.dart';
 
 // ─── Media item ───────────────────────────────────────────────────────────────
 class _MediaItem {
@@ -104,6 +105,7 @@ class _ReportPageState extends State<ReportPage> {
   final List<_MediaItem> _mediaItems = [];
   bool _isSubmitting    = false;
   double _uploadProgress = 0.0;
+  bool _cancelRequested  = false;
 
   String _selectedReportType = "Incident Report";
   final List<String> _reportTypes = [
@@ -200,11 +202,8 @@ class _ReportPageState extends State<ReportPage> {
 
   Future<int> _getAndroidSdkInt() async {
     try {
-      final match = RegExp(r'Android (\d+)').firstMatch(Platform.operatingSystemVersion);
-      if (match != null) {
-        final v = int.tryParse(match.group(1) ?? '');
-        if (v != null) return {14:34,13:33,12:32,11:30,10:29,9:28}[v] ?? (v >= 13 ? 33 : 28);
-      }
+      final info = await DeviceInfoPlugin().androidInfo;
+      return info.version.sdkInt;
     } catch (_) {}
     return 30;
   }
@@ -239,6 +238,7 @@ class _ReportPageState extends State<ReportPage> {
       _vehicleTowed        = false;
       _uploadProgress      = 0.0;
       _isSubmitting        = false;
+      _cancelRequested     = false;
     });
     for (final c in [
       _clientController, _siteController, _officerController, _dateEnteredController,
@@ -427,7 +427,7 @@ class _ReportPageState extends State<ReportPage> {
     final prefs     = await SharedPreferences.getInstance();
     final officerId = prefs.getInt('userId');
 
-    setState(() { _isSubmitting = true; _uploadProgress = 0.0; });
+    setState(() { _isSubmitting = true; _uploadProgress = 0.0; _cancelRequested = false; });
 
     try {
 
@@ -458,6 +458,7 @@ class _ReportPageState extends State<ReportPage> {
 
         await api.uploadReportDio(payload, filesToUpload, (sent, total) {
           if (total > 0 && mounted) setState(() => _uploadProgress = sent / total);
+          if (_cancelRequested) throw Exception('Upload cancelled by user');
         });
         print("UPLOAD TOOK: ${stopwatch.elapsed}");
       } else {
@@ -559,138 +560,246 @@ class _ReportPageState extends State<ReportPage> {
   @override
   Widget build(BuildContext context) {
 
-    return Scaffold(
-      backgroundColor: _backgroundColor,
-      body: SafeArea(
-        child: LayoutBuilder(builder: (context, constraints) => SingleChildScrollView(
-          padding: const EdgeInsets.all(16),
-          physics: const BouncingScrollPhysics(),
-          child: ConstrainedBox(
-            constraints: BoxConstraints(minHeight: constraints.maxHeight),
-            child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+    return AbsorbPointer(
+        absorbing: _isSubmitting,
+        child: Scaffold(
+          backgroundColor: _backgroundColor,
+          body: SafeArea(
+            child: Stack(children: [
+              LayoutBuilder(builder: (context, constraints) => SingleChildScrollView(
+                padding: const EdgeInsets.all(16),
+                physics: const BouncingScrollPhysics(),
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(minHeight: constraints.maxHeight),
+                  child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
 
-              _card(Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Row(children: [
-                  Icon(Icons.description, color: _primaryColor, size: 20), const SizedBox(width: 8),
-                  Text("Report Type", style: TextStyle(color: _textColor, fontSize: 16, fontWeight: FontWeight.w700)),
-                ]),
-                const SizedBox(height: 16),
-                DropdownButtonFormField<String>(
-                  value: _selectedReportType,
-                  decoration: _modernInput("Select Report Type"),
-                  borderRadius: BorderRadius.circular(14),
-                  dropdownColor: _cardColor,
-                  icon: Icon(Icons.arrow_drop_down, color: _primaryColor),
-                  items: _reportTypes.map((t) => DropdownMenuItem(value: t,
-                      child: Text(t, style: TextStyle(color: _textColor)))).toList(),
-                  onChanged: (v) => setState(() => _selectedReportType = v!),
-                  style: TextStyle(color: _textColor),
-                ),
-              ])),
-              const SizedBox(height: 20),
+                    _card(Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      Row(children: [
+                        Icon(Icons.description, color: _primaryColor, size: 20), const SizedBox(width: 8),
+                        Text("Report Type", style: TextStyle(color: _textColor, fontSize: 16, fontWeight: FontWeight.w700)),
+                      ]),
+                      const SizedBox(height: 16),
+                      DropdownButtonFormField<String>(
+                        value: _selectedReportType,
+                        decoration: _modernInput("Select Report Type"),
+                        borderRadius: BorderRadius.circular(14),
+                        dropdownColor: _cardColor,
+                        icon: Icon(Icons.arrow_drop_down, color: _primaryColor),
+                        items: _reportTypes.map((t) => DropdownMenuItem(value: t,
+                            child: Text(t, style: TextStyle(color: _textColor)))).toList(),
+                        onChanged: (v) => setState(() => _selectedReportType = v!),
+                        style: TextStyle(color: _textColor),
+                      ),
+                    ])),
+                    const SizedBox(height: 20),
 
-              _card(Column(children: [
-                _innerBox(Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  _siteDropdown(),
-                  Row(children: [
-                    Icon(_getReportTypeIcon(), color: _primaryColor, size: 20), const SizedBox(width: 8),
-                    Text(_selectedReportType, style: TextStyle(color: _textColor, fontSize: 16, fontWeight: FontWeight.w700)),
-                  ]),
-                  const SizedBox(height: 16),
-                  ..._buildReportFields(),
-                ])),
+                    _card(Column(children: [
+                      _innerBox(Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                        _siteDropdown(),
+                        Row(children: [
+                          Icon(_getReportTypeIcon(), color: _primaryColor, size: 20), const SizedBox(width: 8),
+                          Text(_selectedReportType, style: TextStyle(color: _textColor, fontSize: 16, fontWeight: FontWeight.w700)),
+                        ]),
+                        const SizedBox(height: 16),
+                        ..._buildReportFields(),
+                      ])),
 
-                _innerBox(Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  Row(children: [
-                    Icon(Icons.photo_library, color: _primaryColor, size: 20), const SizedBox(width: 8),
-                    Text("Attachments", style: TextStyle(color: _textColor, fontSize: 16, fontWeight: FontWeight.w700)),
-                    const Spacer(),
+                      _innerBox(Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                        Row(children: [
+                          Icon(Icons.photo_library, color: _primaryColor, size: 20), const SizedBox(width: 8),
+                          Text("Attachments", style: TextStyle(color: _textColor, fontSize: 16, fontWeight: FontWeight.w700)),
+                          const Spacer(),
 
-                  ]),
-                  const SizedBox(height: 6),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                    decoration: BoxDecoration(
-                      color: Colors.amber.withOpacity(0.1),
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: Colors.amber.withOpacity(0.3)),
-                    ),
-                    child: Row(
-                      children: [
-                        const Icon(Icons.info_outline, color: Colors.amber, size: 15),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Text(
-                            "Set camera quality to 720p or 1080p before recording for faster uploads",
-                            style: TextStyle(color: Colors.amber.shade300, fontSize: 12),
+                        ]),
+                        const SizedBox(height: 6),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                          decoration: BoxDecoration(
+                            color: Colors.amber.withOpacity(0.1),
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(color: Colors.amber.withOpacity(0.3)),
+                          ),
+                          child: Row(
+                            children: [
+                              const Icon(Icons.info_outline, color: Colors.amber, size: 15),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  "Set camera quality to 720p or 1080p before recording for faster uploads",
+                                  style: TextStyle(color: Colors.amber.shade300, fontSize: 12),
+                                ),
+                              ),
+                            ],
                           ),
                         ),
-                      ],
+                        const SizedBox(height: 16),
+                        Row(mainAxisAlignment: MainAxisAlignment.spaceEvenly, children: [
+                          _mediaBtn(icon: Icons.videocam, label: "Video", onTap: () => _pickVideoCamera(), color: Colors.redAccent),
+                          _mediaBtn(icon: Icons.video_library,         label: "Gallery\nVideo",onTap: () => _pickVideo(ImageSource.gallery), color: Colors.orange),
+                          _mediaBtn(icon: Icons.camera_alt_rounded,    label: "Camera",        onTap: () => _pickImage(ImageSource.camera),  color: const Color(0xFF3B82F6)),
+                          _mediaBtn(icon: Icons.photo_library_rounded, label: "Gallery",       onTap: () => _pickImage(ImageSource.gallery), color: const Color(0xFF8B5CF6)),
+                        ]),
+                        if (_mediaItems.isNotEmpty) ...[const SizedBox(height: 20), _buildGrid()],
+                      ])),
+
+                      const SizedBox(height: 8),
+                    ])),
+
+                    const SizedBox(height: 16),
+
+                    Container(
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(20),
+                        gradient: LinearGradient(colors: [_primaryColor, _accentColor],
+                            begin: Alignment.topLeft, end: Alignment.bottomRight),
+                        boxShadow: [BoxShadow(color: _primaryColor.withOpacity(0.4), blurRadius: 15, offset: const Offset(0, 5))],
+                      ),
+                      child: Material(
+                        color: Colors.transparent,
+                        child: InkWell(
+                          onTap: _isSubmitting ? null : () async {
+                            final confirmed = await showDialog<bool>(
+                              context: context,
+                              barrierDismissible: false,
+                              builder: (ctx) => AlertDialog(
+                                backgroundColor: _cardColor,
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                                contentPadding: const EdgeInsets.fromLTRB(24, 28, 24, 16),
+                                content: Column(mainAxisSize: MainAxisSize.min, children: [
+                                  Container(
+                                    padding: const EdgeInsets.all(16),
+                                    decoration: BoxDecoration(
+                                      color: _primaryColor.withOpacity(0.1),
+                                      shape: BoxShape.circle,
+                                    ),
+                                    child: Icon(Icons.send_rounded, color: _primaryColor, size: 36),
+                                  ),
+                                  const SizedBox(height: 16),
+                                  Text('Submit Report',
+                                      style: TextStyle(color: _textColor, fontSize: 18, fontWeight: FontWeight.w800)),
+                                  const SizedBox(height: 10),
+                                  Text(
+                                    'Are you sure you want to submit this \$_selectedReportType? This action cannot be undone.',
+                                    textAlign: TextAlign.center,
+                                    style: TextStyle(color: _secondaryTextColor, fontSize: 14, height: 1.5),
+                                  ),
+                                ]),
+                                actions: [
+                                  Row(children: [
+                                    Expanded(
+                                      child: TextButton(
+                                        onPressed: () => Navigator.pop(ctx, false),
+                                        style: TextButton.styleFrom(
+                                          padding: const EdgeInsets.symmetric(vertical: 14),
+                                          shape: RoundedRectangleBorder(
+                                            borderRadius: BorderRadius.circular(12),
+                                            side: BorderSide(color: _borderColor),
+                                          ),
+                                        ),
+                                        child: Text('Cancel', style: TextStyle(color: _secondaryTextColor, fontWeight: FontWeight.w600)),
+                                      ),
+                                    ),
+                                    const SizedBox(width: 10),
+                                    Expanded(
+                                      child: ElevatedButton(
+                                        onPressed: () => Navigator.pop(ctx, true),
+                                        style: ElevatedButton.styleFrom(
+                                          backgroundColor: _primaryColor,
+                                          padding: const EdgeInsets.symmetric(vertical: 14),
+                                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                                          elevation: 0,
+                                        ),
+                                        child: const Text('Submit', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
+                                      ),
+                                    ),
+                                  ]),
+                                ],
+                              ),
+                            );
+                            if (confirmed == true) _submitReport();
+                          },
+                          borderRadius: BorderRadius.circular(20),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+                            alignment: Alignment.center,
+                            child: _isSubmitting
+                                ? Column(mainAxisSize: MainAxisSize.min, children: [
+                              Text(
+                                _uploadProgress > 0
+                                    ? 'Uploading... ${(_uploadProgress * 100).toStringAsFixed(0)}%' : 'Preparing...',
+                                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 16),
+                              ),
+                              const SizedBox(height: 10),
+                              ClipRRect(
+                                borderRadius: BorderRadius.circular(4),
+                                child: LinearProgressIndicator(
+                                  value: _uploadProgress > 0 ? _uploadProgress : null,
+                                  backgroundColor: Colors.white30,
+                                  valueColor: const AlwaysStoppedAnimation<Color>(Colors.white),
+                                  minHeight: 6,
+                                ),
+                              ),
+                            ])
+                                : const Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                              Icon(Icons.send_rounded, color: Colors.white, size: 22),
+                              SizedBox(width: 12),
+                              Text("Submit Report", style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700, color: Colors.white, letterSpacing: 0.5)),
+                            ]),
+                          ),
+                        ),
+                      ),
                     ),
-                  ),
-                  const SizedBox(height: 16),
-                  Row(mainAxisAlignment: MainAxisAlignment.spaceEvenly, children: [
-                    _mediaBtn(icon: Icons.videocam, label: "Video", onTap: () => _pickVideoCamera(), color: Colors.redAccent),
-                    _mediaBtn(icon: Icons.video_library,         label: "Gallery\nVideo",onTap: () => _pickVideo(ImageSource.gallery), color: Colors.orange),
-                    _mediaBtn(icon: Icons.camera_alt_rounded,    label: "Camera",        onTap: () => _pickImage(ImageSource.camera),  color: const Color(0xFF3B82F6)),
-                    _mediaBtn(icon: Icons.photo_library_rounded, label: "Gallery",       onTap: () => _pickImage(ImageSource.gallery), color: const Color(0xFF8B5CF6)),
+                    const SizedBox(height: 20),
                   ]),
-                  if (_mediaItems.isNotEmpty) ...[const SizedBox(height: 20), _buildGrid()],
-                ])),
-
-                const SizedBox(height: 8),
-              ])),
-
-              const SizedBox(height: 16),
-
-              Container(
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(20),
-                  gradient: LinearGradient(colors: [_primaryColor, _accentColor],
-                      begin: Alignment.topLeft, end: Alignment.bottomRight),
-                  boxShadow: [BoxShadow(color: _primaryColor.withOpacity(0.4), blurRadius: 15, offset: const Offset(0, 5))],
                 ),
-                child: Material(
-                  color: Colors.transparent,
-                  child: InkWell(
-                    onTap: _isSubmitting ? null : _submitReport,
-                    borderRadius: BorderRadius.circular(20),
+              )),
+
+              // ── Loading overlay ──────────────────────────────────────────────
+              if (_isSubmitting)
+                Container(
+                  color: Colors.black54,
+                  child: Center(
                     child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-                      alignment: Alignment.center,
-                      child: _isSubmitting
-                          ? Column(mainAxisSize: MainAxisSize.min, children: [
+                      margin: const EdgeInsets.symmetric(horizontal: 40),
+                      padding: const EdgeInsets.all(28),
+                      decoration: BoxDecoration(
+                        color: _cardColor,
+                        borderRadius: BorderRadius.circular(20),
+                        border: Border.all(color: _borderColor),
+                      ),
+                      child: Column(mainAxisSize: MainAxisSize.min, children: [
                         Text(
                           _uploadProgress > 0
-                              ? 'Uploading... ${(_uploadProgress * 100).toStringAsFixed(0)}%' : 'Preparing...',
-                          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 16),
+                              ? 'Uploading... \${(_uploadProgress * 100).toStringAsFixed(0)}%'
+                              : 'Preparing...',
+                          style: TextStyle(color: _textColor, fontSize: 16, fontWeight: FontWeight.w600),
                         ),
-                        const SizedBox(height: 10),
+                        const SizedBox(height: 20),
                         ClipRRect(
-                          borderRadius: BorderRadius.circular(4),
+                          borderRadius: BorderRadius.circular(6),
                           child: LinearProgressIndicator(
                             value: _uploadProgress > 0 ? _uploadProgress : null,
-                            backgroundColor: Colors.white30,
-                            valueColor: const AlwaysStoppedAnimation<Color>(Colors.white),
-                            minHeight: 6,
+                            backgroundColor: _borderColor,
+                            valueColor: AlwaysStoppedAnimation<Color>(_primaryColor),
+                            minHeight: 8,
                           ),
                         ),
-                      ])
-                          : const Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-                        Icon(Icons.send_rounded, color: Colors.white, size: 22),
-                        SizedBox(width: 12),
-                        Text("Submit Report", style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700, color: Colors.white, letterSpacing: 0.5)),
+                        const SizedBox(height: 12),
+                        Text('Please wait, do not close the app',
+                            style: TextStyle(color: _secondaryTextColor, fontSize: 12)),
+                        const SizedBox(height: 16),
+                        TextButton.icon(
+                          onPressed: () => setState(() => _cancelRequested = true),
+                          icon: const Icon(Icons.cancel_outlined, color: Colors.redAccent, size: 18),
+                          label: const Text('Cancel Upload', style: TextStyle(color: Colors.redAccent, fontWeight: FontWeight.w600)),
+                        ),
                       ]),
                     ),
                   ),
                 ),
-              ),
-              const SizedBox(height: 20),
             ]),
           ),
-        )),
-      ),
-    );
+        ));
   }
   Future<void> _pickVideoCamera() async {
     if (_isPickingMedia) return;

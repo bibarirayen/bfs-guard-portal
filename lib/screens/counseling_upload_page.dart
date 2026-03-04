@@ -8,6 +8,7 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:video_player/video_player.dart';
 import 'package:video_compress/video_compress.dart';
+import 'package:device_info_plus/device_info_plus.dart';
 import 'package:video_thumbnail/video_thumbnail.dart';
 import '../services/counseling_service.dart';
 
@@ -53,6 +54,7 @@ class _CounselingUploadPageState extends State<CounselingUploadPage> {
 
   // ── Picking lock (blocks all buttons while OS picker is open / file loading) ──
   bool _isPickingMedia = false;
+  bool _cancelRequested = false;
 
   // ── Theme ──────────────────────────────────────────────────────────────────
   Color get _backgroundColor    => _isDarkMode ? const Color(0xFF0F172A) : const Color(0xFFF8FAFC);
@@ -131,11 +133,8 @@ class _CounselingUploadPageState extends State<CounselingUploadPage> {
 
   Future<int> _getAndroidSdkInt() async {
     try {
-      final match = RegExp(r'Android (\d+)').firstMatch(Platform.operatingSystemVersion);
-      if (match != null) {
-        final v = int.tryParse(match.group(1) ?? '');
-        if (v != null) return {14:34,13:33,12:32,11:30,10:29,9:28}[v] ?? (v >= 13 ? 33 : 28);
-      }
+      final info = await DeviceInfoPlugin().androidInfo;
+      return info.version.sdkInt;
     } catch (_) {}
     return 30;
   }
@@ -361,7 +360,7 @@ class _CounselingUploadPageState extends State<CounselingUploadPage> {
       return;
     }
 
-    setState(() { _loading = true; _uploadProgress = 0.0; });
+    setState(() { _loading = true; _uploadProgress = 0.0; _cancelRequested = false; });
 
     try {
       final payload = {
@@ -375,6 +374,7 @@ class _CounselingUploadPageState extends State<CounselingUploadPage> {
       final List<File> files = _mediaItems.map((m) => m.uploadFile).toList();
       await _service.uploadStatementDio(payload, files, (sent, total) {
         if (total > 0 && mounted) setState(() => _uploadProgress = sent / total);
+        if (_cancelRequested) throw Exception('Upload cancelled by user');
       });
 
       if (mounted) {
@@ -385,11 +385,19 @@ class _CounselingUploadPageState extends State<CounselingUploadPage> {
         setState(() { _selectedGuardId = null; _mediaItems.clear(); _uploadProgress = 0.0; });
       }
     } on DioException catch (e) {
-      _snack('Upload failed: ${e.response?.data ?? e.message}');
+      if (_cancelRequested) {
+        if (mounted) _snack('Upload cancelled', color: Colors.orange);
+      } else {
+        _snack('Upload failed: \${e.response?.data ?? e.message}');
+      }
     } catch (e) {
-      _snack('Error: $e');
+      if (_cancelRequested) {
+        if (mounted) _snack('Upload cancelled', color: Colors.orange);
+      } else {
+        _snack('Error: \$e');
+      }
     } finally {
-      if (mounted) setState(() { _loading = false; _uploadProgress = 0.0; });
+      if (mounted) setState(() { _loading = false; _uploadProgress = 0.0; _cancelRequested = false; });
     }
   }
 
@@ -497,6 +505,12 @@ class _CounselingUploadPageState extends State<CounselingUploadPage> {
                       const SizedBox(height: 12),
                       Text('Please wait, do not close the app',
                           style: TextStyle(color: _secondaryTextColor, fontSize: 12)),
+                      const SizedBox(height: 16),
+                      TextButton.icon(
+                        onPressed: () => setState(() => _cancelRequested = true),
+                        icon: const Icon(Icons.cancel_outlined, color: Colors.redAccent, size: 18),
+                        label: const Text('Cancel Upload', style: TextStyle(color: Colors.redAccent, fontWeight: FontWeight.w600)),
+                      ),
                     ]),
                   ),
                 ),
@@ -675,7 +689,67 @@ class _CounselingUploadPageState extends State<CounselingUploadPage> {
         color: Colors.transparent,
         child: InkWell(
           borderRadius: BorderRadius.circular(20),
-          onTap: _loading ? null : submitStatement,
+          onTap: _loading ? null : () async {
+            final confirmed = await showDialog<bool>(
+              context: context,
+              barrierDismissible: false,
+              builder: (ctx) => AlertDialog(
+                backgroundColor: _cardColor,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                contentPadding: const EdgeInsets.fromLTRB(24, 28, 24, 16),
+                content: Column(mainAxisSize: MainAxisSize.min, children: [
+                  Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: _primaryColor.withOpacity(0.1),
+                      shape: BoxShape.circle,
+                    ),
+                    child: Icon(Icons.send_rounded, color: _primaryColor, size: 36),
+                  ),
+                  const SizedBox(height: 16),
+                  Text('Submit Statement',
+                      style: TextStyle(color: _textColor, fontSize: 18, fontWeight: FontWeight.w800)),
+                  const SizedBox(height: 10),
+                  Text(
+                    'Are you sure you want to submit this counseling statement? This action cannot be undone.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: _secondaryTextColor, fontSize: 14, height: 1.5),
+                  ),
+                ]),
+                actions: [
+                  Row(children: [
+                    Expanded(
+                      child: TextButton(
+                        onPressed: () => Navigator.pop(ctx, false),
+                        style: TextButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                            side: BorderSide(color: _borderColor),
+                          ),
+                        ),
+                        child: Text('Cancel', style: TextStyle(color: _secondaryTextColor, fontWeight: FontWeight.w600)),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: ElevatedButton(
+                        onPressed: () => Navigator.pop(ctx, true),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: _primaryColor,
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                          elevation: 0,
+                        ),
+                        child: const Text('Submit', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
+                      ),
+                    ),
+                  ]),
+                ],
+              ),
+            );
+            if (confirmed == true) submitStatement();
+          },
           child: Padding(
             padding: const EdgeInsets.symmetric(vertical: 18),
             child: Center(child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
