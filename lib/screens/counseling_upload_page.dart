@@ -55,6 +55,7 @@ class _CounselingUploadPageState extends State<CounselingUploadPage> {
   // ── Picking lock (blocks all buttons while OS picker is open / file loading) ──
   bool _isPickingMedia = false;
   bool _cancelRequested = false;
+  CancelToken? _cancelToken;
 
   // ── Theme ──────────────────────────────────────────────────────────────────
   Color get _backgroundColor    => _isDarkMode ? const Color(0xFF0F172A) : const Color(0xFFF8FAFC);
@@ -360,6 +361,7 @@ class _CounselingUploadPageState extends State<CounselingUploadPage> {
       return;
     }
 
+    _cancelToken = CancelToken();
     setState(() { _loading = true; _uploadProgress = 0.0; _cancelRequested = false; });
 
     try {
@@ -374,8 +376,7 @@ class _CounselingUploadPageState extends State<CounselingUploadPage> {
       final List<File> files = _mediaItems.map((m) => m.uploadFile).toList();
       await _service.uploadStatementDio(payload, files, (sent, total) {
         if (total > 0 && mounted) setState(() => _uploadProgress = sent / total);
-        if (_cancelRequested) throw Exception('Upload cancelled by user');
-      });
+      }, cancelToken: _cancelToken);
 
       if (mounted) {
         _snack('Statement uploaded successfully', color: Colors.greenAccent);
@@ -385,16 +386,16 @@ class _CounselingUploadPageState extends State<CounselingUploadPage> {
         setState(() { _selectedGuardId = null; _mediaItems.clear(); _uploadProgress = 0.0; });
       }
     } on DioException catch (e) {
-      if (_cancelRequested) {
+      if (_cancelRequested || e.type == DioExceptionType.cancel) {
         if (mounted) _snack('Upload cancelled', color: Colors.orange);
       } else {
-        _snack('Upload failed: \${e.response?.data ?? e.message}');
+        _snack('Upload failed: ${e.response?.data ?? e.message}');
       }
     } catch (e) {
       if (_cancelRequested) {
         if (mounted) _snack('Upload cancelled', color: Colors.orange);
       } else {
-        _snack('Error: \$e');
+        _snack('Error: $e');
       }
     } finally {
       if (mounted) setState(() { _loading = false; _uploadProgress = 0.0; _cancelRequested = false; });
@@ -507,7 +508,10 @@ class _CounselingUploadPageState extends State<CounselingUploadPage> {
                           style: TextStyle(color: _secondaryTextColor, fontSize: 12)),
                       const SizedBox(height: 16),
                       TextButton.icon(
-                        onPressed: () => setState(() => _cancelRequested = true),
+                        onPressed: () {
+                          _cancelToken?.cancel('Upload cancelled by user');
+                          setState(() => _cancelRequested = true);
+                        },
                         icon: const Icon(Icons.cancel_outlined, color: Colors.redAccent, size: 18),
                         label: const Text('Cancel Upload', style: TextStyle(color: Colors.redAccent, fontWeight: FontWeight.w600)),
                       ),

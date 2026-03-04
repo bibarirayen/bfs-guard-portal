@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'package:dio/dio.dart';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
@@ -35,8 +36,9 @@ class CounselingService {
   Future<void> uploadStatementDio(
       Map<String, dynamic> payload,
       List<File> files,
-      Function(int sent, int total) onProgress,
-      ) async {
-    return await api.uploadCounselingDio(payload, files, onProgress);
+      Function(int sent, int total) onProgress, {
+        CancelToken? cancelToken,
+      }) async {
+    return await api.uploadCounselingDio(payload, files, onProgress, cancelToken: cancelToken);
   }
 }

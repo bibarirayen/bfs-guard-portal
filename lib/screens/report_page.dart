@@ -106,6 +106,7 @@ class _ReportPageState extends State<ReportPage> {
   bool _isSubmitting    = false;
   double _uploadProgress = 0.0;
   bool _cancelRequested  = false;
+  CancelToken? _cancelToken;
 
   String _selectedReportType = "Incident Report";
   final List<String> _reportTypes = [
@@ -427,6 +428,7 @@ class _ReportPageState extends State<ReportPage> {
     final prefs     = await SharedPreferences.getInstance();
     final officerId = prefs.getInt('userId');
 
+    _cancelToken = CancelToken();
     setState(() { _isSubmitting = true; _uploadProgress = 0.0; _cancelRequested = false; });
 
     try {
@@ -458,8 +460,7 @@ class _ReportPageState extends State<ReportPage> {
 
         await api.uploadReportDio(payload, filesToUpload, (sent, total) {
           if (total > 0 && mounted) setState(() => _uploadProgress = sent / total);
-          if (_cancelRequested) throw Exception('Upload cancelled by user');
-        });
+        }, cancelToken: _cancelToken);
         print("UPLOAD TOOK: ${stopwatch.elapsed}");
       } else {
         final response = await api.post('reports', payload);
@@ -477,13 +478,23 @@ class _ReportPageState extends State<ReportPage> {
       }
 
     } on DioException catch (e) {
-      _snackError("Upload failed: ${e.response?.data?.toString() ?? e.message}");
-      print("DATA: ${e.response?.data}");
-      print("ERROR: ${e.message}");
+      if (_cancelRequested || e.type == DioExceptionType.cancel) {
+        if (mounted) ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Upload cancelled'), backgroundColor: Colors.orange));
+      } else {
+        _snackError("Upload failed: ${e.response?.data?.toString() ?? e.message}");
+        print("DATA: ${e.response?.data}");
+        print("ERROR: ${e.message}");
+      }
     } catch (e) {
-      _snackError("Error submitting report: $e");
+      if (_cancelRequested) {
+        if (mounted) ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Upload cancelled'), backgroundColor: Colors.orange));
+      } else {
+        _snackError("Error submitting report: $e");
+      }
     } finally {
-      if (mounted) setState(() { _isSubmitting = false; _uploadProgress = 0.0; });
+      if (mounted) setState(() { _isSubmitting = false; _uploadProgress = 0.0; _cancelRequested = false; });
     }
   }
 
@@ -679,7 +690,7 @@ class _ReportPageState extends State<ReportPage> {
                                       style: TextStyle(color: _textColor, fontSize: 18, fontWeight: FontWeight.w800)),
                                   const SizedBox(height: 10),
                                   Text(
-                                    'Are you sure you want to submit this \$_selectedReportType? This action cannot be undone.',
+                                    'Are you sure you want to submit this $_selectedReportType? This action cannot be undone.',
                                     textAlign: TextAlign.center,
                                     style: TextStyle(color: _secondaryTextColor, fontSize: 14, height: 1.5),
                                   ),
@@ -770,7 +781,7 @@ class _ReportPageState extends State<ReportPage> {
                       child: Column(mainAxisSize: MainAxisSize.min, children: [
                         Text(
                           _uploadProgress > 0
-                              ? 'Uploading... \${(_uploadProgress * 100).toStringAsFixed(0)}%'
+                              ? 'Uploading... ${(_uploadProgress * 100).toStringAsFixed(0)}%'
                               : 'Preparing...',
                           style: TextStyle(color: _textColor, fontSize: 16, fontWeight: FontWeight.w600),
                         ),
@@ -789,7 +800,10 @@ class _ReportPageState extends State<ReportPage> {
                             style: TextStyle(color: _secondaryTextColor, fontSize: 12)),
                         const SizedBox(height: 16),
                         TextButton.icon(
-                          onPressed: () => setState(() => _cancelRequested = true),
+                          onPressed: () {
+                            _cancelToken?.cancel('Upload cancelled by user');
+                            setState(() => _cancelRequested = true);
+                          },
                           icon: const Icon(Icons.cancel_outlined, color: Colors.redAccent, size: 18),
                           label: const Text('Cancel Upload', style: TextStyle(color: Colors.redAccent, fontWeight: FontWeight.w600)),
                         ),

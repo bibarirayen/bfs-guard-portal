@@ -67,7 +67,7 @@ class ApiService {
   // Sends the report payload + all media files (already compressed by report_page.dart)
   // in a single multipart request. Server saves files, stores report, fires email.
   // Progress callback drives the real upload progress bar on the Submit button.
-  Future<void> uploadReportDio(Map<String, dynamic> payload, List<File> files, Function(int, int) onProgress) async {
+  Future<void> uploadReportDio(Map<String, dynamic> payload, List<File> files, Function(int, int) onProgress, {CancelToken? cancelToken}) async {
     final prefs = await SharedPreferences.getInstance();
     final String? token = prefs.getString('jwt');
     print("JWT TOKEN: $token");
@@ -97,6 +97,7 @@ class ApiService {
     await dio.post(
       '${baseUrl}reports/upload',
       data: formData,
+      cancelToken: cancelToken,
       options: Options(
         headers: {if (token != null) 'Authorization': 'Bearer $token'},
       ),
@@ -108,8 +109,9 @@ class ApiService {
   Future<void> uploadCounselingDio(
       Map<String, dynamic> payload,
       List<File> files,
-      Function(int sent, int total) onProgress,
-      ) async {
+      Function(int sent, int total) onProgress, {
+        CancelToken? cancelToken,
+      }) async {
     final prefs = await SharedPreferences.getInstance();
     final String? token = prefs.getString('jwt');
 
@@ -133,6 +135,7 @@ class ApiService {
     final response = await dio.post(
       '${baseUrl}counseling/upload',
       data: formData,
+      cancelToken: cancelToken,
       options: Options(
         headers: {if (token != null) 'Authorization': 'Bearer $token'},
         contentType: 'multipart/form-data',
