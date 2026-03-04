@@ -13,10 +13,12 @@ import 'package:url_launcher/url_launcher.dart';
 import '../config/ApiService.dart';
 import '../services/HeartbeatService.dart';
 import '../services/LiveLocationService.dart';
+import '../services/chat_service.dart';
 import '../services/dashboard_service.dart';
 import '../services/permission_helper.dart';
 import '../widgets/navbar.dart';
 import 'chat_screen.dart';
+import 'conversation_screen.dart';
 import 'report_page.dart';
 import 'favorites_screen.dart';
 import 'profile_screen.dart';
@@ -80,6 +82,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     "Reports",
     "New Report",
     "Patrols",
+    "Chat",
     "Profile",
     "Vacation Requests",
     "Shifts",
@@ -96,11 +99,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   bool _assignmentActive = false;
 
   // ── Dialog state ──────────────────────────────────────────────────────────
-  // We keep a GlobalKey for the "Always" block dialog so we can pop it
-  // programmatically when the user returns from Settings with the right permission.
   bool _isLocationDialogVisible = false;
   final _locationDialogKey = GlobalKey();
-  BuildContext? _locationDialogContext; // context of the open dialog
+  BuildContext? _locationDialogContext;
 
   // ─────────────────────────────────────────────────────────────────────────
   // Theme helpers
@@ -148,13 +149,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     };
     // ────────────────────────────────────────────────────────────────────────
 
-    // Step 1: Request ALL system permissions first (camera, mic, photos,
-    //         notification, and initial location "While In Use").
-    // Step 2: AFTER those complete, enforce the "Always" location requirement.
     WidgetsBinding.instance.addPostFrameCallback((_) async {
-      await _requestAllPermissions();      // all normal system dialogs
-      await Future.delayed(const Duration(milliseconds: 500)); // let dialogs settle
-      await _enforceAlwaysPermission();    // NOW show our custom modal if needed
+      await _requestAllPermissions();
+      await Future.delayed(const Duration(milliseconds: 500));
+      await _enforceAlwaysPermission();
     });
 
     WidgetsBinding.instance.addPostFrameCallback((_) async {
@@ -164,12 +162,20 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
     _loadDashboard();
 
+    // ── CHANGE 4: Connect ChatService once userId is available ────────────
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      final prefs = await SharedPreferences.getInstance();
+      final userId = prefs.getInt('userId');
+      if (userId != null) ChatService().connect(userId);
+    });
+
     _screens = [
           () => _buildDashboard(),
           () => const ReportListPage(),
           () => const ReportPage(),
           () => TrajectListPage(),
-          () => const ProfileScreen(),
+          () => const ConversationsScreen(),   // ← index 4 (Chat)
+          () => const ProfileScreen(),         // ← index 5
           () => const VacationRequestPage(),
           () => const ShiftsPage(),
           () => const DispatchContactsPage(),
@@ -228,7 +234,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   // ─────────────────────────────────────────────────────────────────────────
-  // App lifecycle — called when user returns from Settings
+  // App lifecycle
   // ─────────────────────────────────────────────────────────────────────────
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
@@ -237,26 +243,19 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     }
   }
 
-  /// Called every time the app comes back to foreground (including from Settings).
-  /// KEY FIX: if the "Always" dialog is open and the user now has the right
-  /// permission, we close the dialog automatically — no need to press anything.
   Future<void> _onAppResumed() async {
     final permission = await Geolocator.checkPermission();
 
     if (permission == LocationPermission.always) {
-      // ✅ Permission is now correct — dismiss the block dialog if it's showing
       if (_isLocationDialogVisible && _locationDialogContext != null) {
         print('✅ "Always" granted on resume — auto-closing block dialog');
         if (mounted && Navigator.canPop(_locationDialogContext!)) {
           Navigator.pop(_locationDialogContext!);
-          // _isLocationDialogVisible is reset inside _showLocationBlockDialog after pop
         }
       }
-      // No further action needed
       return;
     }
 
-    // Permission is still wrong — if tracking was active, stop it
     if (_liveLocationService.isTracking) {
       print('⚠️ "Always" permission still missing on resume — stopping tracking');
       _liveLocationService.stopTracking();
@@ -272,7 +271,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       }
     }
 
-    // Show dialog only if it's not already visible
     if (mounted && !_isLocationDialogVisible) {
       _showLocationBlockDialog(
         title: 'Location Set to "Always" Required',
@@ -291,21 +289,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   // Permissions
   // ─────────────────────────────────────────────────────────────────────────
 
-  /// Requests all normal system permissions (notifications, camera, photos,
-  /// microphone, and the initial location "While In Use" dialog).
-  /// Does NOT touch the "Always" location requirement — that comes after.
   Future<void> _requestAllPermissions() async {
-    // Only request permissions needed at launch.
-    // Camera, photos, microphone are requested contextually when the user
-    // taps the relevant button — Apple guideline 5.1.1.
-
-    // Notifications — needed immediately for shift alerts
     if (await Permission.notification.isDenied) {
       await Permission.notification.request();
       await Future.delayed(const Duration(milliseconds: 600));
     }
 
-    // Location — "While In Use" first; "Always" handled by _enforceAlwaysPermission
     LocationPermission locationPerm = await Geolocator.checkPermission();
     if (locationPerm == LocationPermission.denied) {
       locationPerm = await Geolocator.requestPermission();
@@ -313,9 +302,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     }
   }
 
-  /// Shows our custom block dialog in a loop until the user grants "Always".
-  /// The dialog auto-dismisses when the user comes back from Settings with
-  /// the correct permission (handled in _onAppResumed).
   Future<void> _enforceAlwaysPermission() async {
     while (true) {
       final permission = await Geolocator.checkPermission();
@@ -326,8 +312,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       }
 
       print('🔒 Showing "Always" block dialog...');
-      // This await resolves when the dialog is dismissed (either by user
-      // pressing "Open Settings" or by _onAppResumed auto-popping it).
       await _showLocationBlockDialog(
         title: 'Location Set to "Always" Required',
         message:
@@ -338,21 +322,18 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         onTap: () => openAppSettings(),
       );
 
-      // Small delay before re-checking (handles race conditions)
       await Future.delayed(const Duration(milliseconds: 300));
 
-      // Re-check: if permission is now correct, exit the loop
       final recheckPerm = await Geolocator.checkPermission();
       if (recheckPerm == LocationPermission.always) {
         print('✅ "Always" granted — exiting enforce loop');
         return;
       }
-      // Otherwise loop again and show the dialog again
     }
   }
 
   // ─────────────────────────────────────────────────────────────────────────
-  // Restore tracking on app resume / hot-restart
+  // Restore tracking
   // ─────────────────────────────────────────────────────────────────────────
 
   Future<void> _restoreLiveTrackingIfNeeded() async {
@@ -786,12 +767,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     return false;
   }
 
-  /// Shows the "Always" block dialog.
-  ///
-  /// KEY FIX: We store the dialog's BuildContext in [_locationDialogContext]
-  /// so that [_onAppResumed] can pop it programmatically when the user comes
-  /// back from Settings with the correct permission — without needing to press
-  /// any button.
   Future<void> _showLocationBlockDialog({
     required String title,
     required String message,
@@ -799,7 +774,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     required VoidCallback onTap,
   }) async {
     if (!mounted) return;
-    if (_isLocationDialogVisible) return; // prevent duplicate dialogs
+    if (_isLocationDialogVisible) return;
 
     _isLocationDialogVisible = true;
     _locationDialogContext = null;
@@ -808,10 +783,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       context: context,
       barrierDismissible: false,
       builder: (ctx) {
-        // Store the dialog context so _onAppResumed can pop it
         _locationDialogContext = ctx;
         return WillPopScope(
-          onWillPop: () async => false, // prevent back-button dismiss
+          onWillPop: () async => false,
           child: AlertDialog(
             backgroundColor: const Color(0xFF1E293B),
             shape: RoundedRectangleBorder(
@@ -823,7 +797,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               ElevatedButton(
                 onPressed: () {
                   Navigator.pop(ctx);
-                  onTap(); // open Settings
+                  onTap();
                 },
                 child: Text(buttonLabel),
               ),
@@ -833,12 +807,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       },
     );
 
-    // Reset after the dialog is closed (by any means)
     _isLocationDialogVisible = false;
     _locationDialogContext = null;
   }
 
-  /// Silent check used by restore path — requires "Always".
   Future<bool> _handleLocationPermission() async {
     final bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
     if (!serviceEnabled) return false;
@@ -1536,15 +1508,15 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     return GestureDetector(
       onTap: () {
         if (label.contains("Vacation")) {
-          _onItemTapped(5);
+          _onItemTapped(6);   // shifted +1 because Chat is now index 4
         } else if (label.contains("Shift\nMarketplace")) {
-          _onItemTapped(6);
-        } else if (label.contains("Dispatch")) {
           _onItemTapped(7);
-        } else if (label.contains("Counseling\nStatements")) {
+        } else if (label.contains("Dispatch")) {
           _onItemTapped(8);
-        } else if (label.contains("New Counseling\nReport")) {
+        } else if (label.contains("Counseling\nStatements")) {
           _onItemTapped(9);
+        } else if (label.contains("New Counseling\nReport")) {
+          _onItemTapped(10);
         } else {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
