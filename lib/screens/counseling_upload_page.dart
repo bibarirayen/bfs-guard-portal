@@ -453,13 +453,13 @@ class _CounselingUploadPageState extends State<CounselingUploadPage> {
   // ── Build ──────────────────────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
-    return AbsorbPointer(
-      absorbing: _loading,
-      child: Scaffold(
-        backgroundColor: _backgroundColor,
-        body: SafeArea(
-          child: Stack(children: [
-            SingleChildScrollView(
+    return Stack(children: [
+      AbsorbPointer(
+        absorbing: _loading,
+        child: Scaffold(
+          backgroundColor: _backgroundColor,
+          body: SafeArea(
+            child: SingleChildScrollView(
               padding: const EdgeInsets.all(16),
               child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
                 Text('Upload Counseling Statement',
@@ -473,59 +473,57 @@ class _CounselingUploadPageState extends State<CounselingUploadPage> {
                 const SizedBox(height: 40),
               ]),
             ),
-
-            if (_loading)
-              Container(
-                color: Colors.black54,
-                child: Center(
-                  child: Container(
-                    margin: const EdgeInsets.symmetric(horizontal: 40),
-                    padding: const EdgeInsets.all(28),
-                    decoration: BoxDecoration(
-                      color: _cardColor,
-                      borderRadius: BorderRadius.circular(20),
-                      border: Border.all(color: _borderColor),
-                    ),
-                    child: Column(mainAxisSize: MainAxisSize.min, children: [
-                      Text(
-                        _uploadProgress > 0
-                            ? 'Uploading... ${(_uploadProgress * 100).toStringAsFixed(0)}%'
-                            : 'Preparing...',
-                        style: TextStyle(color: _textColor, fontSize: 16, fontWeight: FontWeight.w600),
-                      ),
-                      const SizedBox(height: 20),
-                      ClipRRect(
-                        borderRadius: BorderRadius.circular(6),
-                        child: LinearProgressIndicator(
-                          value: _uploadProgress > 0 ? _uploadProgress : null,
-                          backgroundColor: _borderColor,
-                          valueColor: AlwaysStoppedAnimation<Color>(_primaryColor),
-                          minHeight: 8,
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-                      Text('Please wait, do not close the app',
-                          style: TextStyle(color: _secondaryTextColor, fontSize: 12)),
-                      const SizedBox(height: 16),
-                      AbsorbPointer(
-                        absorbing: false,
-                        child: TextButton.icon(
-                          onPressed: () {
-                            _cancelToken?.cancel('Upload cancelled by user');
-                            setState(() => _cancelRequested = true);
-                          },
-                          icon: const Icon(Icons.cancel_outlined, color: Colors.redAccent, size: 18),
-                          label: const Text('Cancel Upload', style: TextStyle(color: Colors.redAccent, fontWeight: FontWeight.w600)),
-                        ),
-                      ),
-                    ]),
-                  ),
-                ),
-              ),
-          ]),
+          ),
         ),
       ),
-    );
+
+      // overlay is outside AbsorbPointer — cancel button receives taps
+      if (_loading)
+        Container(
+          color: Colors.black54,
+          child: Center(
+            child: Container(
+              margin: const EdgeInsets.symmetric(horizontal: 40),
+              padding: const EdgeInsets.all(28),
+              decoration: BoxDecoration(
+                color: _cardColor,
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: _borderColor),
+              ),
+              child: Column(mainAxisSize: MainAxisSize.min, children: [
+                Text(
+                  _uploadProgress > 0
+                      ? 'Uploading... ${(_uploadProgress * 100).toStringAsFixed(0)}%'
+                      : 'Preparing...',
+                  style: TextStyle(color: _textColor, fontSize: 16, fontWeight: FontWeight.w600),
+                ),
+                const SizedBox(height: 20),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(6),
+                  child: LinearProgressIndicator(
+                    value: _uploadProgress > 0 ? _uploadProgress : null,
+                    backgroundColor: _borderColor,
+                    valueColor: AlwaysStoppedAnimation<Color>(_primaryColor),
+                    minHeight: 8,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Text('Please wait, do not close the app',
+                    style: TextStyle(color: _secondaryTextColor, fontSize: 12)),
+                const SizedBox(height: 16),
+                TextButton.icon(
+                  onPressed: () {
+                    _cancelToken?.cancel('Upload cancelled by user');
+                    setState(() => _cancelRequested = true);
+                  },
+                  icon: const Icon(Icons.cancel_outlined, color: Colors.redAccent, size: 18),
+                  label: const Text('Cancel Upload', style: TextStyle(color: Colors.redAccent, fontWeight: FontWeight.w600)),
+                ),
+              ]),
+            ),
+          ),
+        ),
+    ]);
   }
 
   Widget _buildFormCard() {
