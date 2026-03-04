@@ -30,7 +30,6 @@ class _ChatScreenState extends State<ChatScreen> {
   List<ChatMessage> _messages = [];
   bool _loading = true;
 
-  // ── FIX: explicit generic type so the compiler resolves _sub correctly ──
   StreamSubscription<ChatMessage>? _sub;
 
   // ── Theme ─────────────────────────────────────────────────────────────────
@@ -38,7 +37,7 @@ class _ChatScreenState extends State<ChatScreen> {
   Color get _card      => const Color(0xFF1E293B);
   Color get _border    => const Color(0xFF334155);
   Color get _text      => Colors.white;
-  Color get _sub_color => Colors.grey[400]!;   // renamed from _sub to avoid clash
+  Color get _sub_color => Colors.grey[400]!;
   Color get _primary   => const Color(0xFF4F46E5);
   Color get _inputFill => const Color(0xFF2D3748);
 
@@ -62,22 +61,18 @@ class _ChatScreenState extends State<ChatScreen> {
     _myUserId   = prefs.getInt('userId');
     if (_myUserId == null) return;
 
-    // Make sure WS is connected
     _chat.connect(_myUserId!);
 
-    // Listen for incoming messages on this conversation
     _sub = _chat.messageStream.listen((ChatMessage msg) {
       final relevant =
           (msg.senderId == widget.otherUserId && msg.receiverId == _myUserId) ||
               (msg.senderId == _myUserId           && msg.receiverId == widget.otherUserId);
       if (!relevant || !mounted) return;
 
-      // Avoid duplicates: skip if we already have this message by id
       final exists = _messages.any((m) => m.id == msg.id && msg.id != -1);
       if (exists) return;
 
       setState(() {
-        // Replace optimistic message (id == -1) with confirmed one
         final optIdx = _messages.indexWhere(
               (m) => m.id == -1 && m.senderId == msg.senderId && m.content == msg.content,
         );
@@ -90,7 +85,6 @@ class _ChatScreenState extends State<ChatScreen> {
       _scrollToBottom();
     });
 
-    // Load history
     final history = await _chat.getHistory(widget.otherUserId);
     if (mounted) {
       setState(() {
@@ -100,7 +94,6 @@ class _ChatScreenState extends State<ChatScreen> {
       _scrollToBottom(delay: true);
     }
 
-    // Mark received messages as read
     await _chat.markRead(widget.otherUserId);
   }
 
@@ -122,7 +115,6 @@ class _ChatScreenState extends State<ChatScreen> {
 
     _inputCtrl.clear();
 
-    // Optimistic bubble
     final optimistic = ChatMessage(
       id:         -1,
       senderId:   _myUserId!,
@@ -135,7 +127,6 @@ class _ChatScreenState extends State<ChatScreen> {
     setState(() => _messages.add(optimistic));
     _scrollToBottom();
 
-    // Send over STOMP — backend persists + pushes confirmed message back
     _chat.sendMessage(widget.otherUserId, content);
   }
 
@@ -150,6 +141,7 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      resizeToAvoidBottomInset: true,  // ← Flutter handles keyboard resize
       backgroundColor: _bg,
       appBar: _appBar(),
       body: Column(children: [
@@ -362,13 +354,10 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
+  // ── FIX: removed MediaQuery.of(context).viewInsets.bottom — Flutter handles
+  //         keyboard insets automatically via resizeToAvoidBottomInset: true
   Widget _inputBar() => Container(
-    padding: EdgeInsets.fromLTRB(
-      12,
-      8,
-      12,
-      MediaQuery.of(context).viewInsets.bottom + 12,
-    ),
+    padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
     decoration: BoxDecoration(
       color: _card,
       border: Border(top: BorderSide(color: _border)),
