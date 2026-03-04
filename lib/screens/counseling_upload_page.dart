@@ -507,13 +507,16 @@ class _CounselingUploadPageState extends State<CounselingUploadPage> {
                       Text('Please wait, do not close the app',
                           style: TextStyle(color: _secondaryTextColor, fontSize: 12)),
                       const SizedBox(height: 16),
-                      TextButton.icon(
-                        onPressed: () {
-                          _cancelToken?.cancel('Upload cancelled by user');
-                          setState(() => _cancelRequested = true);
-                        },
-                        icon: const Icon(Icons.cancel_outlined, color: Colors.redAccent, size: 18),
-                        label: const Text('Cancel Upload', style: TextStyle(color: Colors.redAccent, fontWeight: FontWeight.w600)),
+                      AbsorbPointer(
+                        absorbing: false,
+                        child: TextButton.icon(
+                          onPressed: () {
+                            _cancelToken?.cancel('Upload cancelled by user');
+                            setState(() => _cancelRequested = true);
+                          },
+                          icon: const Icon(Icons.cancel_outlined, color: Colors.redAccent, size: 18),
+                          label: const Text('Cancel Upload', style: TextStyle(color: Colors.redAccent, fontWeight: FontWeight.w600)),
+                        ),
                       ),
                     ]),
                   ),
