@@ -80,8 +80,19 @@ class _ProfileScreenState extends State<ProfileScreen> {
     LiveLocationService().stopTracking();
     HeartbeatService().stopHeartbeat();
 
+    final rememberMe = prefs.getBool('remember_me') ?? false;
+    final savedEmail = prefs.getString('saved_email') ?? '';
+    final savedPass  = prefs.getString('saved_password') ?? '';
+
+// 2️⃣ Clear everything
     await prefs.clear();
 
+// 3️⃣ Restore credentials if remember me was on
+    if (rememberMe && savedEmail.isNotEmpty) {
+      await prefs.setBool('remember_me',      true);
+      await prefs.setString('saved_email',    savedEmail);
+      await prefs.setString('saved_password', savedPass);
+    }
     Navigator.pushReplacement(
       context,
       MaterialPageRoute(builder: (_) => const LoginScreen()),
