@@ -254,17 +254,15 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
   }
 
   String _formatTime(DateTime dt) {
-    // Compare against Hawaii "now" since all times are stored/parsed as Hawaii time
-    final hawaiiNow = DateTime.now().toUtc().subtract(const Duration(hours: 10));
-    final diff = hawaiiNow.difference(dt);
+    final diff = DateTime.now().difference(dt);
     if (diff.inMinutes < 1) return 'now';
-    if (diff.inHours < 1)   return '\${diff.inMinutes}m';
-    if (diff.inDays < 1)    return '\${diff.inHours}h';
-    if (diff.inDays < 7)    return '\${diff.inDays}d';
+    if (diff.inHours  < 1)  return '${diff.inMinutes}m';
+    if (diff.inDays   < 1)  return '${diff.inHours}h';
+    if (diff.inDays   < 7)  return '${diff.inDays}d';
     final period = dt.hour >= 12 ? 'PM' : 'AM';
     final h = dt.hour % 12 == 0 ? 12 : dt.hour % 12;
     final m = dt.minute.toString().padLeft(2, '0');
-    return '\$h:\$m \$period';
+    return '$h:$m $period';
   }
 }
 
