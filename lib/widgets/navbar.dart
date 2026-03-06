@@ -43,9 +43,9 @@ class CustomNavbar extends StatelessWidget {
           ),
           // 1 - Reports
           IconButton(
-            icon: Icon(Icons.description,
-                color: selectedIndex == 1 ? Colors.white : const Color(0xFF9299A1)),
-            onPressed: () => onItemTapped(1),
+            icon: Icon(Icons.chat_bubble_outline_rounded,
+                color: selectedIndex == 2 ? Colors.white : const Color(0xFF9299A1)),
+            onPressed: () => onItemTapped(2),
           ),
           // 2 - New Report (center button)
           Container(
@@ -55,26 +55,22 @@ class CustomNavbar extends StatelessWidget {
             ),
             child: IconButton(
               icon: const Icon(Icons.add, color: Colors.white),
-              onPressed: () => onItemTapped(2),
+              onPressed: () => onItemTapped(10),
             ),
           ),
           // 3 - Patrols
           IconButton(
             icon: Icon(Icons.route,
-                color: selectedIndex == 3 ? Colors.white : const Color(0xFF9299A1)),
-            onPressed: () => onItemTapped(3),
+                color: selectedIndex == 1 ? Colors.white : const Color(0xFF9299A1)),
+            onPressed: () => onItemTapped(1),
           ),
           // 4 - Chat  ← NEW
-          IconButton(
-            icon: Icon(Icons.chat_bubble_outline_rounded,
-                color: selectedIndex == 4 ? Colors.white : const Color(0xFF9299A1)),
-            onPressed: () => onItemTapped(4),
-          ),
+
           // 5 - Profile
           IconButton(
             icon: Icon(Icons.person,
-                color: selectedIndex == 5 ? Colors.white : const Color(0xFF9299A1)),
-            onPressed: () => onItemTapped(5),
+                color: selectedIndex == 3 ? Colors.white : const Color(0xFF9299A1)),
+            onPressed: () => onItemTapped(3),
           ),
         ],
       ),

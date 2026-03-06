@@ -66,7 +66,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   late LiveLocationService _liveLocationService;
 
-  // ⭐ Timers for periodic updates
   Timer? _dashboardRefreshTimer;
   Timer? _shiftButtonUpdateTimer;
 
@@ -77,28 +76,27 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   late final List<Widget Function()> _screens;
   bool _isDarkMode = true;
+
+  // ── Navbar titles — Reports removed from navbar, accessed via card ────────
   final List<String> _titles = [
-    "Dashboard",
-    "Reports",
-    "New Report",
-    "Patrols",
-    "Chat",
-    "Profile",
-    "Vacation Requests",
-    "Shifts",
-    "Dispatch Contacts",
-    "Counseling List",
-    "New Counseling Report",
-    "Late Arrivals",
+    "Dashboard",            // 0
+    "Patrols",              // 1
+    "Chat",                 // 2
+    "Profile",              // 3
+    "Vacation Requests",    // 4
+    "Shifts",               // 5
+    "Dispatch Contacts",    // 6
+    "Counseling List",      // 7
+    "New Counseling Report",// 8
+    "Reports",              // 9  (card only — not in navbar)
+    "New Report",           // 10 (card only — not in navbar)
   ];
 
-  // GPS tracking variables
   Position? _currentPosition;
   bool _tracking = false;
   bool _isEmergencyActive = false;
   bool _assignmentActive = false;
 
-  // ── Dialog state ──────────────────────────────────────────────────────────
   bool _isLocationDialogVisible = false;
   final _locationDialogKey = GlobalKey();
   BuildContext? _locationDialogContext;
@@ -126,7 +124,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
 
-    // ── Init live location service and register remote-end callback ─────────
     _liveLocationService = LiveLocationService();
     _liveLocationService.onShiftEndedRemotely = () {
       if (!mounted) return;
@@ -147,7 +144,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         ),
       );
     };
-    // ────────────────────────────────────────────────────────────────────────
 
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       await _requestAllPermissions();
@@ -162,25 +158,25 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
     _loadDashboard();
 
-    // ── CHANGE 4: Connect ChatService once userId is available ────────────
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       final prefs = await SharedPreferences.getInstance();
       final userId = prefs.getInt('userId');
       if (userId != null) ChatService().connect(userId);
     });
 
+    // ── Screens — Reports & New Report at end, accessed via cards only ────
     _screens = [
-          () => _buildDashboard(),
-          () => const ReportListPage(),
-          () => const ReportPage(),
-          () => TrajectListPage(),
-          () => const ConversationsScreen(),   // ← index 4 (Chat)
-          () => const ProfileScreen(),         // ← index 5
-          () => const VacationRequestPage(),
-          () => const ShiftsPage(),
-          () => const DispatchContactsPage(),
-          () => const CounselingListPage(),
-          () => const CounselingUploadPage(),
+          () => _buildDashboard(),           // 0  Dashboard
+          () => TrajectListPage(),           // 1  Patrols
+          () => const ConversationsScreen(), // 2  Chat
+          () => const ProfileScreen(),       // 3  Profile
+          () => const VacationRequestPage(), // 4  Vacation Requests
+          () => const ShiftsPage(),          // 5  Shifts
+          () => const DispatchContactsPage(),// 6  Dispatch Contacts
+          () => const CounselingListPage(),  // 7  Counseling List
+          () => const CounselingUploadPage(),// 8  New Counseling Report
+          () => const ReportListPage(),      // 9  Reports (card only)
+          () => const ReportPage(),          // 10 New Report (card only)
     ];
 
     _dashboardRefreshTimer =
@@ -191,7 +187,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           if (_liveLocationService.isTracking) {
             final permission = await Geolocator.checkPermission();
             if (permission != LocationPermission.always) {
-              print('🔒 [Timer] "Always" permission lost — stopping shift tracking');
               _liveLocationService.stopTracking();
               final prefs = await SharedPreferences.getInstance();
               await prefs.setBool('shift_active', false);
@@ -229,13 +224,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     _dashboardRefreshTimer?.cancel();
     _shiftButtonUpdateTimer?.cancel();
     _liveLocationService.onShiftEndedRemotely = null;
-    print('🧹 Timers cleaned up');
     super.dispose();
   }
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // App lifecycle
-  // ─────────────────────────────────────────────────────────────────────────
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
@@ -248,7 +239,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
     if (permission == LocationPermission.always) {
       if (_isLocationDialogVisible && _locationDialogContext != null) {
-        print('✅ "Always" granted on resume — auto-closing block dialog');
         if (mounted && Navigator.canPop(_locationDialogContext!)) {
           Navigator.pop(_locationDialogContext!);
         }
@@ -257,7 +247,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     }
 
     if (_liveLocationService.isTracking) {
-      print('⚠️ "Always" permission still missing on resume — stopping tracking');
       _liveLocationService.stopTracking();
       final prefs = await SharedPreferences.getInstance();
       await prefs.setBool('shift_active', false);
@@ -294,7 +283,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       await Permission.notification.request();
       await Future.delayed(const Duration(milliseconds: 600));
     }
-
     LocationPermission locationPerm = await Geolocator.checkPermission();
     if (locationPerm == LocationPermission.denied) {
       locationPerm = await Geolocator.requestPermission();
@@ -305,13 +293,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   Future<void> _enforceAlwaysPermission() async {
     while (true) {
       final permission = await Geolocator.checkPermission();
-
-      if (permission == LocationPermission.always) {
-        print('✅ "Always" permission confirmed — no block dialog needed');
-        return;
-      }
-
-      print('🔒 Showing "Always" block dialog...');
+      if (permission == LocationPermission.always) return;
       await _showLocationBlockDialog(
         title: 'Location Set to "Always" Required',
         message:
@@ -321,14 +303,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         buttonLabel: 'Open Settings',
         onTap: () => openAppSettings(),
       );
-
       await Future.delayed(const Duration(milliseconds: 300));
-
       final recheckPerm = await Geolocator.checkPermission();
-      if (recheckPerm == LocationPermission.always) {
-        print('✅ "Always" granted — exiting enforce loop');
-        return;
-      }
+      if (recheckPerm == LocationPermission.always) return;
     }
   }
 
@@ -338,30 +315,16 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   Future<void> _restoreLiveTrackingIfNeeded() async {
     final prefs = await SharedPreferences.getInstance();
-
     final isShiftActive = prefs.getBool('shift_active') ?? false;
     final assignmentId = prefs.getInt('active_assignment_id');
     final guardId = prefs.getInt('active_guard_id');
 
-    print("🔁 RESTORE CHECK");
-    print("shift_active = $isShiftActive");
-    print("assignmentId = $assignmentId");
-    print("guardId = $guardId");
-
-    if (!isShiftActive || !_hasShiftToday || assignmentId == null || guardId == null) {
-      print("❌ Restore aborted (no active shift)");
-      return;
-    }
+    if (!isShiftActive || !_hasShiftToday || assignmentId == null || guardId == null) return;
 
     final hasPermission = await _handleLocationPermission();
-    if (!hasPermission) {
-      print("❌ Restore aborted (permission denied)");
-      return;
-    }
+    if (!hasPermission) return;
 
-    print("✅ Restoring live location tracking...");
     _liveLocationService.startTracking(guardId, assignmentId);
-
     setState(() {
       _assignmentActive = true;
       _shiftStarted = true;
@@ -370,7 +333,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   // ─────────────────────────────────────────────────────────────────────────
-  // Dashboard
+  // Dashboard data
   // ─────────────────────────────────────────────────────────────────────────
 
   String _toAmPm(String timeStr) {
@@ -392,7 +355,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       final bool assignmentActive = data["Active"] == true;
 
       if (!assignmentActive && _liveLocationService.isTracking) {
-        print('🛑 Dashboard: shift not active → stopping GPS tracking');
         _liveLocationService.stopTracking();
         final prefs = await SharedPreferences.getInstance();
         await prefs.setBool('shift_active', false);
@@ -514,13 +476,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   // Time helpers
   // ─────────────────────────────────────────────────────────────────────────
 
-  DateTime getHawaiiTime() {
-    return DateTime.now().toUtc().subtract(const Duration(hours: 10));
-  }
+  DateTime getHawaiiTime() =>
+      DateTime.now().toUtc().subtract(const Duration(hours: 10));
 
-  DateTime parseServerTime(String serverTimeStr) {
-    return DateTime.parse(serverTimeStr.split('[')[0]);
-  }
+  DateTime parseServerTime(String serverTimeStr) =>
+      DateTime.parse(serverTimeStr.split('[')[0]);
 
   Future<DateTime?> _fetchServerTime() async {
     try {
@@ -546,9 +506,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
     DateTime now = DateTime.now().toUtc().subtract(const Duration(hours: 10));
     final serverTime = await _fetchServerTime();
-    if (serverTime != null) {
-      now = serverTime.subtract(const Duration(hours: 10));
-    }
+    if (serverTime != null) now = serverTime.subtract(const Duration(hours: 10));
 
     final startWindow = _shiftStartDateTime!.subtract(const Duration(minutes: 15));
 
@@ -703,7 +661,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text("Shift stopped successfully\nTotal hours: ${data["totalHours"]}"),
+            content: Text(
+                "Shift stopped successfully\nTotal hours: ${data["totalHours"]}"),
             backgroundColor: Colors.green,
           ),
         );
@@ -743,7 +702,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     if (!serviceEnabled) {
       await _showLocationBlockDialog(
         title: 'Turn On Location Services',
-        message: 'GPS is disabled on your device. Please turn on Location Services.',
+        message:
+        'GPS is disabled on your device. Please turn on Location Services.',
         buttonLabel: 'Open Location Settings',
         onTap: () => Geolocator.openLocationSettings(),
       );
@@ -789,10 +749,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           child: AlertDialog(
             backgroundColor: const Color(0xFF1E293B),
             shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(16),
-            ),
+                borderRadius: BorderRadius.circular(16)),
             title: Text(title, style: const TextStyle(color: Colors.white)),
-            content: Text(message, style: const TextStyle(color: Colors.white70)),
+            content:
+            Text(message, style: const TextStyle(color: Colors.white70)),
             actions: [
               ElevatedButton(
                 onPressed: () {
@@ -893,7 +853,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             const Icon(Icons.person, color: Color(0xFF3B82F6)),
             const SizedBox(width: 10),
             Text("Supervisor Info",
-                style: TextStyle(fontWeight: FontWeight.bold, color: _textColor)),
+                style: TextStyle(
+                    fontWeight: FontWeight.bold, color: _textColor)),
           ],
         ),
         content: Column(
@@ -911,11 +872,13 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                 ),
                 if (_supervisorEmail != null)
                   IconButton(
-                    icon: Icon(Icons.copy, size: 16, color: _secondaryTextColor),
+                    icon: Icon(Icons.copy,
+                        size: 16, color: _secondaryTextColor),
                     padding: EdgeInsets.zero,
                     constraints: const BoxConstraints(),
                     onPressed: () {
-                      Clipboard.setData(ClipboardData(text: _supervisorEmail!));
+                      Clipboard.setData(
+                          ClipboardData(text: _supervisorEmail!));
                       ScaffoldMessenger.of(context).showSnackBar(
                         const SnackBar(
                             content: Text("Email copied"),
@@ -934,11 +897,13 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                 ),
                 if (_supervisorPhone != null)
                   IconButton(
-                    icon: Icon(Icons.copy, size: 16, color: _secondaryTextColor),
+                    icon: Icon(Icons.copy,
+                        size: 16, color: _secondaryTextColor),
                     padding: EdgeInsets.zero,
                     constraints: const BoxConstraints(),
                     onPressed: () {
-                      Clipboard.setData(ClipboardData(text: _supervisorPhone!));
+                      Clipboard.setData(
+                          ClipboardData(text: _supervisorPhone!));
                       ScaffoldMessenger.of(context).showSnackBar(
                         const SnackBar(
                             content: Text("Phone copied"),
@@ -971,11 +936,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         ),
         title: Row(
           children: [
-            const Icon(Icons.warning_amber_rounded, color: Colors.redAccent, size: 28),
+            const Icon(Icons.warning_amber_rounded,
+                color: Colors.redAccent, size: 28),
             const SizedBox(width: 12),
             Text("Emergency Alert",
                 style: TextStyle(
-                    color: _textColor, fontSize: 20, fontWeight: FontWeight.bold)),
+                    color: _textColor,
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold)),
           ],
         ),
         content: Text(
@@ -986,7 +954,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           TextButton(
             onPressed: () => Navigator.pop(context),
             child: Text("Cancel",
-                style: TextStyle(color: _secondaryTextColor, fontSize: 16)),
+                style:
+                TextStyle(color: _secondaryTextColor, fontSize: 16)),
           ),
           ElevatedButton(
             onPressed: () async {
@@ -998,7 +967,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               backgroundColor: Colors.redAccent,
               shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(15)),
-              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+              padding:
+              const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
             ),
             child: const Text("Confirm",
                 style: TextStyle(
@@ -1027,7 +997,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // Header card
+              // ── Header card ──────────────────────────────────────────────
               Container(
                 width: double.infinity,
                 padding: const EdgeInsets.all(20),
@@ -1040,8 +1010,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                   children: [
                     CircleAvatar(
                       radius: 35,
-                      backgroundColor: const Color(0xFF4F46E5).withOpacity(0.1),
-                      child: const Icon(Icons.person, size: 40, color: Color(0xFF4F46E5)),
+                      backgroundColor:
+                      const Color(0xFF4F46E5).withOpacity(0.1),
+                      child: const Icon(Icons.person,
+                          size: 40, color: Color(0xFF4F46E5)),
                     ),
                     const SizedBox(width: 15),
                     Expanded(
@@ -1113,7 +1085,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
               const SizedBox(height: 20),
 
-              // Stats row
+              // ── Stats row ────────────────────────────────────────────────
               Row(
                 children: [
                   Expanded(
@@ -1145,9 +1117,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
               const SizedBox(height: 20),
 
-              // Emergency button
+              // ── Emergency button ─────────────────────────────────────────
               GestureDetector(
-                onTap: (_shiftStarted && !_shiftEnded) ? _toggleEmergency : null,
+                onTap:
+                (_shiftStarted && !_shiftEnded) ? _toggleEmergency : null,
                 child: Opacity(
                   opacity: (_shiftStarted && !_shiftEnded) ? 1.0 : 0.4,
                   child: Container(
@@ -1156,18 +1129,23 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                     decoration: BoxDecoration(
                       borderRadius: BorderRadius.circular(20),
                       color: _hasShiftToday
-                          ? (_isEmergencyActive ? Colors.redAccent : Colors.red)
+                          ? (_isEmergencyActive
+                          ? Colors.redAccent
+                          : Colors.red)
                           : Colors.grey,
                       boxShadow: _hasShiftToday
-                          ? [BoxShadow(
-                          color: Colors.red.withOpacity(0.3),
-                          blurRadius: 10,
-                          offset: const Offset(0, 4))]
+                          ? [
+                        BoxShadow(
+                            color: Colors.red.withOpacity(0.3),
+                            blurRadius: 10,
+                            offset: const Offset(0, 4))
+                      ]
                           : [],
                     ),
                     child: Row(
                       children: [
-                        const Icon(Icons.warning, size: 28, color: Colors.white),
+                        const Icon(Icons.warning,
+                            size: 28, color: Colors.white),
                         const SizedBox(width: 12),
                         Expanded(
                           child: Column(
@@ -1207,7 +1185,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
               const SizedBox(height: 16),
 
-              // Start / Stop shift button
+              // ── Start / Stop shift ───────────────────────────────────────
               if (_hasShiftToday && !_shiftEnded)
                 GestureDetector(
                   onTap: _canStartShift
@@ -1217,53 +1195,87 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                       barrierDismissible: false,
                       builder: (ctx) => AlertDialog(
                         backgroundColor: _cardColor,
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-                        contentPadding: const EdgeInsets.fromLTRB(24, 28, 24, 16),
-                        content: Column(mainAxisSize: MainAxisSize.min, children: [
-                          Container(
-                            padding: const EdgeInsets.all(16),
-                            decoration: BoxDecoration(
-                              color: Colors.green.withOpacity(0.1),
-                              shape: BoxShape.circle,
-                            ),
-                            child: const Icon(Icons.location_on, color: Colors.green, size: 36),
-                          ),
-                          const SizedBox(height: 16),
-                          Text('Location Tracking',
-                              style: TextStyle(color: _textColor, fontSize: 18, fontWeight: FontWeight.w800)),
-                          const SizedBox(height: 10),
-                          Text(
-                            'Your location will be tracked for the duration of your shift until you clock out.',
-                            textAlign: TextAlign.center,
-                            style: TextStyle(color: _secondaryTextColor, fontSize: 14, height: 1.5),
-                          ),
-                        ]),
+                        shape: RoundedRectangleBorder(
+                            borderRadius:
+                            BorderRadius.circular(20)),
+                        contentPadding: const EdgeInsets.fromLTRB(
+                            24, 28, 24, 16),
+                        content: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Container(
+                                padding: const EdgeInsets.all(16),
+                                decoration: BoxDecoration(
+                                  color: Colors.green.withOpacity(0.1),
+                                  shape: BoxShape.circle,
+                                ),
+                                child: const Icon(
+                                    Icons.location_on,
+                                    color: Colors.green,
+                                    size: 36),
+                              ),
+                              const SizedBox(height: 16),
+                              Text('Location Tracking',
+                                  style: TextStyle(
+                                      color: _textColor,
+                                      fontSize: 18,
+                                      fontWeight:
+                                      FontWeight.w800)),
+                              const SizedBox(height: 10),
+                              Text(
+                                'Your location will be tracked for the duration of your shift until you clock out.',
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                    color: _secondaryTextColor,
+                                    fontSize: 14,
+                                    height: 1.5),
+                              ),
+                            ]),
                         actions: [
                           Row(children: [
                             Expanded(
                               child: TextButton(
-                                onPressed: () => Navigator.pop(ctx, false),
+                                onPressed: () =>
+                                    Navigator.pop(ctx, false),
                                 style: TextButton.styleFrom(
-                                  padding: const EdgeInsets.symmetric(vertical: 14),
+                                  padding:
+                                  const EdgeInsets.symmetric(
+                                      vertical: 14),
                                   shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(12),
-                                    side: BorderSide(color: _borderColor),
+                                    borderRadius:
+                                    BorderRadius.circular(12),
+                                    side: BorderSide(
+                                        color: _borderColor),
                                   ),
                                 ),
-                                child: Text('Cancel', style: TextStyle(color: _secondaryTextColor, fontWeight: FontWeight.w600)),
+                                child: Text('Cancel',
+                                    style: TextStyle(
+                                        color: _secondaryTextColor,
+                                        fontWeight:
+                                        FontWeight.w600)),
                               ),
                             ),
                             const SizedBox(width: 10),
                             Expanded(
                               child: ElevatedButton(
-                                onPressed: () => Navigator.pop(ctx, true),
+                                onPressed: () =>
+                                    Navigator.pop(ctx, true),
                                 style: ElevatedButton.styleFrom(
                                   backgroundColor: Colors.green,
-                                  padding: const EdgeInsets.symmetric(vertical: 14),
-                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                                  padding:
+                                  const EdgeInsets.symmetric(
+                                      vertical: 14),
+                                  shape: RoundedRectangleBorder(
+                                      borderRadius:
+                                      BorderRadius.circular(
+                                          12)),
                                   elevation: 0,
                                 ),
-                                child: const Text('Confirm', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
+                                child: const Text('Confirm',
+                                    style: TextStyle(
+                                        color: Colors.white,
+                                        fontWeight:
+                                        FontWeight.w700)),
                               ),
                             ),
                           ]),
@@ -1276,28 +1288,36 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                       ? _stopShift
                       : null,
                   child: Opacity(
-                    opacity: (_canStartShift || _canStopShift) ? 1.0 : 0.4,
+                    opacity:
+                    (_canStartShift || _canStopShift) ? 1.0 : 0.4,
                     child: Container(
                       width: double.infinity,
                       padding: const EdgeInsets.all(16),
                       decoration: BoxDecoration(
                         borderRadius: BorderRadius.circular(20),
-                        color: _shiftStarted ? Colors.redAccent : Colors.green,
+                        color: _shiftStarted
+                            ? Colors.redAccent
+                            : Colors.green,
                       ),
                       child: Row(
                         children: [
                           Icon(
-                            _shiftStarted ? Icons.stop : Icons.play_arrow,
+                            _shiftStarted
+                                ? Icons.stop
+                                : Icons.play_arrow,
                             color: Colors.white,
                             size: 28,
                           ),
                           const SizedBox(width: 12),
                           Expanded(
                             child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
+                              crossAxisAlignment:
+                              CrossAxisAlignment.start,
                               children: [
                                 Text(
-                                  _shiftStarted ? "STOP SHIFT" : "START SHIFT",
+                                  _shiftStarted
+                                      ? "STOP SHIFT"
+                                      : "START SHIFT",
                                   style: const TextStyle(
                                       color: Colors.white,
                                       fontSize: 16,
@@ -1308,7 +1328,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                                       ? "Available at shift end"
                                       : "Available 20 minutes before start",
                                   style: TextStyle(
-                                      color: Colors.white.withOpacity(0.9),
+                                      color:
+                                      Colors.white.withOpacity(0.9),
                                       fontSize: 12),
                                 ),
                               ],
@@ -1322,7 +1343,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
               const SizedBox(height: 25),
 
-              // Quick Actions
+              // ── Quick Actions header ──────────────────────────────────────
               Padding(
                 padding: const EdgeInsets.only(left: 4),
                 child: Text(
@@ -1333,117 +1354,123 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                       fontWeight: FontWeight.w700),
                 ),
               ),
+
+              // Supervisor-only: Late Arrivals banner
+              if (_isSupervisor) ...[
+                const SizedBox(height: 12),
+                GestureDetector(
+                  onTap: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                        builder: (_) => const LateArrivalsPage()),
+                  ),
+                  child: Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFEF4444).withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(
+                          color: const Color(0xFFEF4444).withOpacity(0.3)),
+                    ),
+                    child: Row(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.all(8),
+                          decoration: BoxDecoration(
+                            color:
+                            const Color(0xFFEF4444).withOpacity(0.15),
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: const Icon(Icons.warning_amber_rounded,
+                              color: Color(0xFFEF4444), size: 22),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Text(
+                            "Late Arrivals",
+                            style: TextStyle(
+                                color: _textColor,
+                                fontWeight: FontWeight.bold,
+                                fontSize: 13),
+                          ),
+                        ),
+                        const Icon(Icons.arrow_forward_ios,
+                            size: 14, color: Color(0xFFEF4444)),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+
+              const SizedBox(height: 12),
+
+              // Row 1: Vacation + Shift Marketplace
+              Row(
+                children: [
+                  Expanded(
+                    child: _buildSimpleActionButton(
+                      Icons.beach_access,
+                      "Vacation\nRequest",
+                      const Color(0xFF3B82F6),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: _buildSimpleActionButton(
+                      Icons.access_time_filled,
+                      "Shift\nMarketplace",
+                      const Color(0xFF10B981),
+                    ),
+                  ),
+                ],
+              ),
+
+              const SizedBox(height: 12),
+
+              // Row 2: Reports + Dispatch Contacts  ← NEW
+              Row(
+                children: [
+                  Expanded(
+                    child: _buildSimpleActionButton(
+                      Icons.description_outlined,
+                      "Reports",
+                      const Color(0xFF6366F1),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: _buildSimpleActionButton(
+                      Icons.support_agent,
+                      "Dispatch\nContacts",
+                      const Color(0xFF8B5CF6),
+                    ),
+                  ),
+                ],
+              ),
+
+              // Supervisor-only row: Counseling
               if (_isSupervisor) ...[
                 const SizedBox(height: 12),
                 Row(
                   children: [
                     Expanded(
-                      child: GestureDetector(
-                        onTap: () {
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                                builder: (_) => const LateArrivalsPage()),
-                          );
-                        },
-                        child: Container(
-                          padding: const EdgeInsets.all(16),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFFEF4444).withOpacity(0.1),
-                            borderRadius: BorderRadius.circular(16),
-                            border: Border.all(
-                                color: const Color(0xFFEF4444).withOpacity(0.3)),
-                          ),
-                          child: Row(
-                            children: [
-                              Container(
-                                padding: const EdgeInsets.all(8),
-                                decoration: BoxDecoration(
-                                  color: const Color(0xFFEF4444).withOpacity(0.15),
-                                  borderRadius: BorderRadius.circular(10),
-                                ),
-                                child: const Icon(Icons.warning_amber_rounded,
-                                    color: Color(0xFFEF4444), size: 22),
-                              ),
-                              const SizedBox(width: 12),
-                              Expanded(
-                                child: Text(
-                                  "Late Arrivals",
-                                  style: TextStyle(
-                                      color: _textColor,
-                                      fontWeight: FontWeight.bold,
-                                      fontSize: 13),
-                                ),
-                              ),
-                              const Icon(Icons.arrow_forward_ios,
-                                  size: 14, color: Color(0xFFEF4444)),
-                            ],
-                          ),
-                        ),
+                      child: _buildSimpleActionButton(
+                        Icons.article_outlined,
+                        "Counseling\nStatements",
+                        const Color(0xFFF59E0B),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: _buildSimpleActionButton(
+                        Icons.note_add_outlined,
+                        "New Counseling\nReport",
+                        const Color(0xFFEF4444),
                       ),
                     ),
                   ],
                 ),
               ],
-              const SizedBox(height: 12),
-
-              Column(
-                children: [
-                  Row(
-                    children: [
-                      Expanded(
-                        child: _buildSimpleActionButton(
-                          Icons.beach_access, "Vacation\nRequest",
-                          const Color(0xFF3B82F6),
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: _buildSimpleActionButton(
-                          Icons.access_time_filled, "Shift\nMarketplace",
-                          const Color(0xFF10B981),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-                  if (_isSupervisor)
-                    Column(
-                      children: [
-                        Row(
-                          children: [
-                            Expanded(
-                              child: _buildSimpleActionButton(
-                                Icons.message_outlined, "Counseling\nStatements",
-                                const Color(0xFFF59E0B),
-                              ),
-                            ),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: _buildSimpleActionButton(
-                                Icons.report, "New Counseling\nReport",
-                                const Color(0xFFEF4444),
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 12),
-                      ],
-                    ),
-                  const SizedBox(height: 12),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: _buildSimpleActionButton(
-                          Icons.support_agent, "Dispatch\nContacts",
-                          const Color(0xFF8B5CF6),
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                    ],
-                  ),
-                ],
-              ),
 
               const SizedBox(height: 90),
             ],
@@ -1497,7 +1524,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             ),
             const SizedBox(height: 8),
             Text(label,
-                style: TextStyle(color: _secondaryTextColor, fontSize: 12)),
+                style:
+                TextStyle(color: _secondaryTextColor, fontSize: 12)),
           ],
         ),
       ),
@@ -1508,15 +1536,17 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     return GestureDetector(
       onTap: () {
         if (label.contains("Vacation")) {
-          _onItemTapped(6);   // shifted +1 because Chat is now index 4
+          _onItemTapped(4);
         } else if (label.contains("Shift\nMarketplace")) {
-          _onItemTapped(7);
+          _onItemTapped(5);
+        } else if (label.contains("Reports")) {
+          _onItemTapped(9);  // Reports — card only
         } else if (label.contains("Dispatch")) {
-          _onItemTapped(8);
+          _onItemTapped(6);
         } else if (label.contains("Counseling\nStatements")) {
-          _onItemTapped(9);
+          _onItemTapped(7);
         } else if (label.contains("New Counseling\nReport")) {
-          _onItemTapped(10);
+          _onItemTapped(8);
         } else {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(

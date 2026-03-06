@@ -31,7 +31,7 @@ android {
         applicationId = "com.blackfabricsecurity.crossplatformblackfabric"
         minSdk = flutter.minSdkVersion
         targetSdk = 36
-        versionCode = 46
+        versionCode = 47
         versionName = "1.0.1"
     }
 
