@@ -28,6 +28,12 @@ class ChatMessage {
     required this.isRead,
   });
 
+  ChatMessage copyWith({bool? isRead}) => ChatMessage(
+    id: id, senderId: senderId, senderName: senderName,
+    receiverId: receiverId, content: content, sentAt: sentAt,
+    isRead: isRead ?? this.isRead,
+  );
+
   factory ChatMessage.fromJson(Map<String, dynamic> j) => ChatMessage(
     id:         j['id'] ?? -1,
     senderId:   j['senderId'] ?? 0,
@@ -35,20 +41,29 @@ class ChatMessage {
     receiverId: j['receiverId'] ?? 0,
     content:    j['content'] ?? '',
     sentAt:     j['sentAt'] != null
-        ? DateTime.tryParse(j['sentAt']) ?? DateTime.now()
+        ? (DateTime.tryParse(j['sentAt'] + '-10:00') ?? DateTime.now()).toLocal()
         : DateTime.now(),
     isRead:     j['isRead'] ?? false,
   );
 
   Map<String, dynamic> toJson() => {
-    'id':         id,
-    'senderId':   senderId,
-    'senderName': senderName,
-    'receiverId': receiverId,
-    'content':    content,
-    'sentAt':     sentAt.toIso8601String(),
-    'isRead':     isRead,
+    'id': id, 'senderId': senderId, 'senderName': senderName,
+    'receiverId': receiverId, 'content': content,
+    'sentAt': sentAt.toIso8601String(), 'isRead': isRead,
   };
+}
+
+// Read receipt pushed by the backend when the receiver opens the chat
+class ReadReceipt {
+  final int readBy;    // the user who read the messages
+  final int readFrom;  // whose messages were read
+
+  ReadReceipt({required this.readBy, required this.readFrom});
+
+  factory ReadReceipt.fromJson(Map<String, dynamic> j) => ReadReceipt(
+    readBy:   j['readBy']   ?? 0,
+    readFrom: j['readFrom'] ?? 0,
+  );
 }
 
 class Conversation {
@@ -83,7 +98,6 @@ class Conversation {
 // ─── Service ──────────────────────────────────────────────────────────────────
 
 class ChatService {
-  // Singleton — same pattern as LiveLocationService
   static final ChatService _instance = ChatService._internal();
   factory ChatService() => _instance;
   ChatService._internal();
@@ -93,15 +107,17 @@ class ChatService {
   StompClient? _stompClient;
   int?         _myUserId;
 
-  // Stream that any screen can listen to for incoming messages
+  // Stream for incoming chat messages
   final _messageStreamController = StreamController<ChatMessage>.broadcast();
   Stream<ChatMessage> get messageStream => _messageStreamController.stream;
+
+  // Stream for read receipts — tells the sender their messages were seen
+  final _readReceiptController = StreamController<ReadReceipt>.broadcast();
+  Stream<ReadReceipt> get readReceiptStream => _readReceiptController.stream;
 
   bool get isConnected => _stompClient?.connected ?? false;
 
   // ─── Connect ──────────────────────────────────────────────────────────────
-  // Call once when the app starts or when entering the chat tab.
-  // Safe to call multiple times — checks isConnected first.
   void connect(int userId) {
     if (_stompClient?.connected == true && _myUserId == userId) return;
 
@@ -110,42 +126,37 @@ class ChatService {
 
     _stompClient = StompClient(
       config: StompConfig(
-        // Same WS URL as LiveLocationService
         url: 'wss://api.blackfabricsecurity.com/ws',
         reconnectDelay: const Duration(seconds: 5),
         onConnect: (StompFrame frame) {
-          print('✅ Chat WebSocket connected for user $userId');
-          // Subscribe to personal topic — backend sends here when a message arrives
-          // /topic/chat.{myUserId}
           _stompClient!.subscribe(
             destination: '/topic/chat.$userId',
             callback: (StompFrame frame) {
               if (frame.body == null) return;
               try {
-                final msg = ChatMessage.fromJson(jsonDecode(frame.body!));
-                _messageStreamController.add(msg);
-                print('💬 Received: ${msg.senderName} → "${msg.content}"');
+                final payload = jsonDecode(frame.body!) as Map<String, dynamic>;
+                // Route to the correct stream based on payload type
+                if (payload['type'] == 'READ_RECEIPT') {
+                  _readReceiptController.add(ReadReceipt.fromJson(payload));
+                } else {
+                  _messageStreamController.add(ChatMessage.fromJson(payload));
+                }
               } catch (e) {
-                print('❌ Chat parse error: $e');
+                print('Chat parse error: $e');
               }
             },
           );
         },
-        onWebSocketError: (e) => print('❌ Chat WS error: $e'),
-        onDisconnect: (_) => print('⚠️ Chat WS disconnected'),
+        onWebSocketError: (e) => print('Chat WS error: $e'),
+        onDisconnect:     (_) => print('Chat WS disconnected'),
       ),
     );
     _stompClient!.activate();
   }
 
   // ─── Send ─────────────────────────────────────────────────────────────────
-  // Sends over STOMP to /app/chat.send — backend handles routing + persistence
   void sendMessage(int toUserId, String content) {
-    if (_stompClient == null || !_stompClient!.connected) {
-      print('⚠️ Chat WS not connected, cannot send');
-      return;
-    }
-
+    if (_stompClient == null || !_stompClient!.connected) return;
     _stompClient!.send(
       destination: '/app/chat.send',
       body: jsonEncode({
@@ -157,7 +168,6 @@ class ChatService {
   }
 
   // ─── REST calls ───────────────────────────────────────────────────────────
-
   Future<List<ChatMessage>> getHistory(int otherUserId) async {
     if (_myUserId == null) return [];
     try {
@@ -166,9 +176,7 @@ class ChatService {
         final List data = jsonDecode(res.body);
         return data.map((e) => ChatMessage.fromJson(e)).toList();
       }
-    } catch (e) {
-      print('❌ Chat history error: $e');
-    }
+    } catch (e) { print('Chat history error: $e'); }
     return [];
   }
 
@@ -180,9 +188,7 @@ class ChatService {
         final List data = jsonDecode(res.body);
         return data.map((e) => Conversation.fromJson(e)).toList();
       }
-    } catch (e) {
-      print('❌ Conversations error: $e');
-    }
+    } catch (e) { print('Conversations error: $e'); }
     return [];
   }
 
@@ -194,9 +200,7 @@ class ChatService {
         final List data = jsonDecode(res.body);
         return data.cast<Map<String, dynamic>>();
       }
-    } catch (e) {
-      print('❌ Chat users error: $e');
-    }
+    } catch (e) { print('Chat users error: $e'); }
     return [];
   }
 
@@ -207,15 +211,12 @@ class ChatService {
         'userId':     _myUserId,
         'fromUserId': fromUserId,
       });
-    } catch (e) {
-      print('❌ Mark read error: $e');
-    }
+    } catch (e) { print('Mark read error: $e'); }
   }
 
   // ─── Disconnect ───────────────────────────────────────────────────────────
   void disconnect() {
     _stompClient?.deactivate();
     _stompClient = null;
-    print('🛑 Chat WebSocket disconnected');
   }
 }

@@ -31,6 +31,7 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _loading = true;
 
   StreamSubscription<ChatMessage>? _sub;
+  StreamSubscription<ReadReceipt>?  _readReceiptSub;
 
   // ── Theme ─────────────────────────────────────────────────────────────────
   Color get _bg        => const Color(0xFF0F172A);
@@ -95,6 +96,27 @@ class _ChatScreenState extends State<ChatScreen> {
     }
 
     await _chat.markRead(widget.otherUserId);
+
+    // Update local messages to isRead=true when the other user reads our messages
+    _readReceiptSub = _chat.readReceiptStream.listen((receipt) {
+      if (!mounted) return;
+      if (receipt.readBy == widget.otherUserId) {
+        setState(() {
+          _messages = _messages.map((m) =>
+          m.senderId == _myUserId ? m.copyWith(isRead: true) : m
+          ).toList();
+        });
+      }
+    });
+
+    // Also mark all received messages as read locally right away
+    if (mounted) {
+      setState(() {
+        _messages = _messages.map((m) =>
+        m.receiverId == _myUserId ? m.copyWith(isRead: true) : m
+        ).toList();
+      });
+    }
   }
 
   void _scrollToBottom({bool delay = false}) {
@@ -133,6 +155,7 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   void dispose() {
     _sub?.cancel();
+    _readReceiptSub?.cancel();
     _inputCtrl.dispose();
     _scrollCtrl.dispose();
     super.dispose();
