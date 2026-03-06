@@ -143,7 +143,7 @@ class _ChatScreenState extends State<ChatScreen> {
       senderName: 'Me',
       receiverId: widget.otherUserId,
       content:    content,
-      sentAt:     DateTime.now().toUtc().subtract(const Duration(hours: 10)),
+      sentAt:     DateTime.now(),
       isRead:     false,
     );
     setState(() => _messages.add(optimistic));
@@ -445,7 +445,10 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   String _formatDate(DateTime dt) {
-    final diff = DateTime.now().difference(dt).inDays;
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final msgDay = DateTime(dt.year, dt.month, dt.day);
+    final diff = today.difference(msgDay).inDays;
     if (diff == 0) return 'Today';
     if (diff == 1) return 'Yesterday';
     return '${dt.day}/${dt.month}/${dt.year}';
