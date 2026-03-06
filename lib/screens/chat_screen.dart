@@ -143,7 +143,7 @@ class _ChatScreenState extends State<ChatScreen> {
       senderName: 'Me',
       receiverId: widget.otherUserId,
       content:    content,
-      sentAt:     DateTime.now(),
+      sentAt:     DateTime.now().toUtc().subtract(const Duration(hours: 10)),
       isRead:     false,
     );
     setState(() => _messages.add(optimistic));
@@ -437,9 +437,12 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _sameDay(DateTime a, DateTime b) =>
       a.year == b.year && a.month == b.month && a.day == b.day;
 
-  String _formatTime(DateTime dt) =>
-      '${dt.hour.toString().padLeft(2, '0')}:'
-          '${dt.minute.toString().padLeft(2, '0')}';
+  String _formatTime(DateTime dt) {
+    final h = dt.hour % 12 == 0 ? 12 : dt.hour % 12;
+    final m = dt.minute.toString().padLeft(2, '0');
+    final ampm = dt.hour >= 12 ? 'PM' : 'AM';
+    return '$h:$m $ampm';
+  }
 
   String _formatDate(DateTime dt) {
     final diff = DateTime.now().difference(dt).inDays;
