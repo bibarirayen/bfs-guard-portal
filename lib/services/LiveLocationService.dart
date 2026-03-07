@@ -11,6 +11,7 @@ import 'package:stomp_dart_client/stomp_config.dart';
 import 'package:stomp_dart_client/stomp_frame.dart';
 
 import '../config/ApiService.dart';
+import 'BackgroundLocationService.dart';
 
 class LiveLocationService {
   static final LiveLocationService _instance =
@@ -58,6 +59,9 @@ class LiveLocationService {
 
     _connectWebSocket(userId, assignmentId);
     _startShiftChecker(userId, assignmentId);
+
+    // Start the background isolate — handles location when iOS freezes main isolate
+    startBackgroundLocationService(userId, assignmentId);
   }
 
   /// Fully stop everything. Safe to call multiple times.
@@ -83,6 +87,9 @@ class LiveLocationService {
     _currentAssignmentId = null;
 
     print('🛑 LiveLocationService: tracking fully stopped');
+
+    // Stop the background isolate too
+    stopBackgroundLocationService();
   }
 
   // ─── WebSocket ────────────────────────────────────────────────────────────
@@ -297,29 +304,27 @@ class LiveLocationService {
       'platform': Platform.isIOS ? 'iOS' : 'Android',
     });
 
-    // Try WebSocket first (foreground — fast path)
+    // Try WebSocket first (foreground fast path)
     if (stompClient != null && stompClient!.connected) {
       stompClient!.send(destination: '/app/location', body: body);
-      print('📍 [WS] Sent: ${_lastPosition!.latitude.toStringAsFixed(6)}, '
-          '${_lastPosition!.longitude.toStringAsFixed(6)}');
+      print('📍 [WS] Sent: \${_lastPosition!.latitude.toStringAsFixed(6)}, '
+          '\${_lastPosition!.longitude.toStringAsFixed(6)}');
       return;
     }
 
-    // WebSocket is dead (happens every time in background).
-    // Fall back to HTTP so the location is NOT silently dropped.
-    // POST /api/locations/update already exists in the backend.
+    // WebSocket is dead — HTTP fallback
     print('⚠️ WS down — HTTP fallback');
     ApiService().post('locations/update', {
       'guardId': userId,
       'lat': _lastPosition!.latitude,
       'lng': _lastPosition!.longitude,
     }).timeout(const Duration(seconds: 10)).then((res) {
-      print('📍 [HTTP] ${res.statusCode}');
+      print('📍 [HTTP] \${res.statusCode}');
     }).catchError((e) {
-      print('❌ [HTTP] $e');
+      print('❌ [HTTP] \$e');
     });
 
-    // Also try to reconnect WebSocket for next time
+    // Try to reconnect WebSocket for next time
     Future.delayed(const Duration(seconds: 3), () {
       if (_isTracking && (stompClient == null || !stompClient!.connected)) {
         _connectWebSocket(userId, assignmentId);

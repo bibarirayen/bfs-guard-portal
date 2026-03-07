@@ -9,6 +9,7 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 import 'services/notifications.dart';
+import 'services/BackgroundLocationService.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:http/http.dart' as http;
 
@@ -47,6 +48,9 @@ Future<void> logError(String message, {String stack = ''}) async {
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // Initialize background location service (separate isolate — survives iOS freeze)
+  await initBackgroundService();
 
   FlutterError.onError = (details) {
     FlutterError.dumpErrorToConsole(details);
