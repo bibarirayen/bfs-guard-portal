@@ -1,8 +1,7 @@
-// lib/services/BackgroundLocationService.dart
+// lib/services/BackgroundLocation_Service.dart
 //
-// This runs in a SEPARATE Dart isolate that iOS cannot freeze.
-// It handles location sending while the app is in background.
-// The main isolate (LiveLocationService) handles foreground.
+// Runs in a SEPARATE Dart isolate — iOS cannot freeze this.
+// Sends location via HTTP every 30s independently of the main UI isolate.
 
 import 'dart:async';
 import 'dart:convert';
@@ -12,18 +11,17 @@ import 'package:geolocator/geolocator.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:http/http.dart' as http;
 
-// ─── Call this once from main() before runApp() ───────────────────────────────
+const String _baseUrl = 'https://api.blackfabricsecurity.com/api/';
+
+// ─── Call once from main() before runApp() ────────────────────────────────────
 Future<void> initBackgroundService() async {
   final service = FlutterBackgroundService();
-
   await service.configure(
-    // iOS background task config
     iosConfiguration: IosConfiguration(
       autoStart: false,
       onForeground: onBackgroundServiceStart,
       onBackground: onIosBackground,
     ),
-    // Android foreground service config
     androidConfiguration: AndroidConfiguration(
       autoStart: false,
       onStart: onBackgroundServiceStart,
@@ -36,68 +34,88 @@ Future<void> initBackgroundService() async {
   );
 }
 
-// iOS requires this handler in the background isolate
 @pragma('vm:entry-point')
 Future<bool> onIosBackground(ServiceInstance service) async {
   return true;
 }
 
-// This runs in the background isolate — completely separate from Flutter UI
+// ─── Background isolate entry point ──────────────────────────────────────────
 @pragma('vm:entry-point')
 void onBackgroundServiceStart(ServiceInstance service) async {
   Timer? locationTimer;
+  int? _userId;
+  int? _assignmentId;
 
-  // Listen for start command from main isolate
   service.on('start').listen((data) async {
-    final userId = data?['userId'] as int?;
-    final assignmentId = data?['assignmentId'] as int?;
-    if (userId == null || assignmentId == null) return;
+    _userId = data?['userId'] as int?;
+    _assignmentId = data?['assignmentId'] as int?;
+    if (_userId == null || _assignmentId == null) return;
 
-    print('🟢 [BGService] Started for user $userId assignment $assignmentId');
+    print('🟢 [BGService] Started — user $_userId assignment $_assignmentId');
 
-    // Send location immediately, then every 30 seconds
-    await _sendLocationHttp(userId, assignmentId);
+    // Send immediately on start
+    await _sendLocation(_userId!, _assignmentId!);
 
+    // Then every 30 seconds
     locationTimer?.cancel();
     locationTimer = Timer.periodic(const Duration(seconds: 30), (_) async {
-      await _sendLocationHttp(userId, assignmentId);
+      if (_userId != null && _assignmentId != null) {
+        await _sendLocation(_userId!, _assignmentId!);
+      }
     });
   });
 
-  // Listen for stop command from main isolate
   service.on('stop').listen((_) {
     print('🔴 [BGService] Stopped');
     locationTimer?.cancel();
     locationTimer = null;
+    _userId = null;
+    _assignmentId = null;
     service.stopSelf();
   });
 }
 
-// Gets current GPS position and POSTs it to the backend
-Future<void> _sendLocationHttp(int userId, int assignmentId) async {
+// ─── Get GPS and POST to backend ─────────────────────────────────────────────
+Future<void> _sendLocation(int userId, int assignmentId) async {
   try {
+    // Check permission
     final permission = await Geolocator.checkPermission();
     if (permission != LocationPermission.always) {
-      print('⚠️ [BGService] No always permission — skipping');
+      print('⚠️ [BGService] No always permission');
       return;
     }
 
-    final position = await Geolocator.getCurrentPosition(
-      locationSettings: const LocationSettings(
-        accuracy: LocationAccuracy.high,
-        timeLimit: Duration(seconds: 10),
-      ),
-    );
+    // Get current position with timeout
+    Position position;
+    try {
+      position = await Geolocator.getCurrentPosition(
+        locationSettings: const LocationSettings(
+          accuracy: LocationAccuracy.high,
+          timeLimit: Duration(seconds: 15),
+        ),
+      );
+    } catch (e) {
+      // If getCurrentPosition times out, try last known position
+      final last = await Geolocator.getLastKnownPosition();
+      if (last == null) {
+        print('⚠️ [BGService] No position available');
+        return;
+      }
+      position = last;
+      print('⚠️ [BGService] Using last known position');
+    }
 
+    // Get JWT token
     final prefs = await SharedPreferences.getInstance();
     final token = prefs.getString('jwt');
     if (token == null) {
-      print('⚠️ [BGService] No JWT token — skipping');
+      print('⚠️ [BGService] No JWT token');
       return;
     }
 
+    // POST location to backend — saves to both current location + history table
     final response = await http.post(
-      Uri.parse('https://api.blackfabricsecurity.com/api/locations/update'),
+      Uri.parse('${_baseUrl}locations/update'),
       headers: {
         'Content-Type': 'application/json',
         'Authorization': 'Bearer $token',
@@ -107,33 +125,40 @@ Future<void> _sendLocationHttp(int userId, int assignmentId) async {
         'lat': position.latitude,
         'lng': position.longitude,
       }),
-    ).timeout(const Duration(seconds: 10));
+    ).timeout(const Duration(seconds: 15));
 
-    print('📍 [BGService] Sent ${position.latitude.toStringAsFixed(6)}'
-        ', ${position.longitude.toStringAsFixed(6)} → ${response.statusCode}');
+    print('📍 [BGService] ${position.latitude.toStringAsFixed(6)}, '
+        '${position.longitude.toStringAsFixed(6)} → HTTP ${response.statusCode}');
+
   } catch (e) {
-    print('❌ [BGService] Error: $e');
+    // Never crash the background isolate — just log and continue
+    print('❌ [BGService] Error (will retry in 30s): $e');
   }
 }
 
-// ─── Called by LiveLocationService to start/stop the background service ───────
+// ─── Called from LiveLocationService ─────────────────────────────────────────
 
 Future<void> startBackgroundLocationService(int userId, int assignmentId) async {
-  final service = FlutterBackgroundService();
-  final isRunning = await service.isRunning();
-
-  if (!isRunning) {
-    await service.startService();
-    // Small delay to let the isolate boot
-    await Future.delayed(const Duration(milliseconds: 500));
+  try {
+    final service = FlutterBackgroundService();
+    final isRunning = await service.isRunning();
+    if (!isRunning) {
+      await service.startService();
+      await Future.delayed(const Duration(milliseconds: 800));
+    }
+    service.invoke('start', {'userId': userId, 'assignmentId': assignmentId});
+    print('🟢 [BGService] Start command sent');
+  } catch (e) {
+    print('❌ [BGService] Failed to start: $e');
   }
-
-  service.invoke('start', {'userId': userId, 'assignmentId': assignmentId});
-  print('🟢 [BGService] Start command sent');
 }
 
 Future<void> stopBackgroundLocationService() async {
-  final service = FlutterBackgroundService();
-  service.invoke('stop');
-  print('🔴 [BGService] Stop command sent');
+  try {
+    final service = FlutterBackgroundService();
+    service.invoke('stop');
+    print('🔴 [BGService] Stop command sent');
+  } catch (e) {
+    print('❌ [BGService] Failed to stop: $e');
+  }
 }
