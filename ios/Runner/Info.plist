@@ -109,7 +109,6 @@
 		<string>location</string>
 		<string>remote-notification</string>
 		<string>fetch</string>
-		<string>processing</string>
 	</array>
 
 	<!-- ============================================================ -->
