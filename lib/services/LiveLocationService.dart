@@ -307,8 +307,8 @@ class LiveLocationService {
     // Try WebSocket first (foreground fast path)
     if (stompClient != null && stompClient!.connected) {
       stompClient!.send(destination: '/app/location', body: body);
-      print('📍 [WS] Sent: \${_lastPosition!.latitude.toStringAsFixed(6)}, '
-          '\${_lastPosition!.longitude.toStringAsFixed(6)}');
+      print('📍 [WS] Sent: ${_lastPosition!.latitude.toStringAsFixed(6)}, '
+          '${_lastPosition!.longitude.toStringAsFixed(6)}');
       return;
     }
 
