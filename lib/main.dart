@@ -13,7 +13,6 @@ import 'services/BackgroundLocation_Service.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:http/http.dart' as http;
 
-// Global navigator key — lets notifications navigate without a BuildContext
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
 const String backendUrl = 'https://api.blackfabricsecurity.com/api/errors/log';
@@ -23,9 +22,7 @@ Future<void> logErrorLocally(String message) async {
     final directory = await getApplicationDocumentsDirectory();
     final file = File('${directory.path}/error_log.txt');
     await file.writeAsString('$message\n', mode: FileMode.append);
-  } catch (e) {
-    print('Failed to write local log: $e');
-  }
+  } catch (_) {}
 }
 
 Future<void> logErrorRemote(String message, {String stack = ''}) async {
@@ -36,9 +33,7 @@ Future<void> logErrorRemote(String message, {String stack = ''}) async {
       headers: {'Content-Type': 'application/json'},
       body: jsonEncode({'message': message, 'stackTrace': stack}),
     );
-  } catch (e) {
-    print('Failed to send error to backend: $e');
-  }
+  } catch (_) {}
 }
 
 Future<void> logError(String message, {String stack = ''}) async {
@@ -49,7 +44,6 @@ Future<void> logError(String message, {String stack = ''}) async {
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Initialize background location service (separate isolate — survives iOS freeze)
   await initBackgroundService();
 
   FlutterError.onError = (details) {
@@ -61,7 +55,6 @@ void main() async {
   runZonedGuarded(() async {
     try {
       await Firebase.initializeApp();
-      FirebaseCrashlytics.instance.log('App started');
 
       NotificationSettings settings =
       await FirebaseMessaging.instance.requestPermission(
@@ -69,20 +62,13 @@ void main() async {
         badge: true,
         sound: true,
       );
-      print('User granted permission: ${settings.authorizationStatus}');
       await setupFlutterNotifications();
-
-      // ✅ REMOVED: prefs.clear() was here — it was wiping saved email/password
-      //    on every single app launch. Do NOT add it back.
-
     } catch (e, stack) {
       logError('Initialization error: $e', stack: stack.toString());
     }
 
     runApp(const BlackFabricApp());
-    logError('App launched successfully');
   }, (error, stack) {
-    print('Caught by runZonedGuarded: $error');
     FirebaseCrashlytics.instance.recordError(error, stack);
     logError(error.toString(), stack: stack.toString());
   });

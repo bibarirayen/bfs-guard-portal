@@ -101,8 +101,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   BuildContext? _locationDialogContext;
 
   // ── DEBUG LOG OVERLAY ────────────────────────────────────────────────────────
-  final List<String> _debugLogs = [];
-  bool _showDebugPanel = false;
   // ─────────────────────────────────────────────────────────────────────────────
 
   Color get _backgroundColor =>
@@ -124,16 +122,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     _liveLocationService = LiveLocationService();
 
     // ── Wire up debug log callback ───────────────────────────────────────────
-    _liveLocationService.onDebugLog = (msg) {
-      if (!mounted) return;
-      setState(() {
-        final now = DateTime.now();
-        final ts =
-            '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}:${now.second.toString().padLeft(2, '0')}';
-        _debugLogs.insert(0, '[$ts] $msg');
-        if (_debugLogs.length > 60) _debugLogs.removeLast();
-      });
-    };
+
     // ─────────────────────────────────────────────────────────────────────────
 
     _liveLocationService.onShiftEndedRemotely = () {
@@ -158,9 +147,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       await _requestAllPermissions();
-      // The 500ms was too short — on some devices the system permission dialog
-      // dismiss animation was still running, causing showDialog to silently fail.
-      // _enforceAlwaysPermission now adds its own 800ms delay internally.
+      await Future.delayed(const Duration(milliseconds: 500));
       await _enforceAlwaysPermission();
     });
 
@@ -237,7 +224,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     _dashboardRefreshTimer?.cancel();
     _shiftButtonUpdateTimer?.cancel();
     _liveLocationService.onShiftEndedRemotely = null;
-    _liveLocationService.onDebugLog = null;
     super.dispose();
   }
 
@@ -302,31 +288,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   Future<void> _enforceAlwaysPermission() async {
-    // Give the navigator a full frame to settle after any system permission
-    // dialogs. Without this, showDialog can silently fail if called while
-    // the system dialog's dismiss animation is still running.
-    await Future.delayed(const Duration(milliseconds: 800));
-
     while (true) {
-      if (!mounted) return;
-
       final permission = await Geolocator.checkPermission();
       final bool granted = permission == LocationPermission.always ||
           (Platform.isIOS && permission == LocationPermission.whileInUse);
       if (granted) return;
-
-      // deniedForever → can only fix via Settings, no point looping
-      if (permission == LocationPermission.deniedForever) {
-        await _showLocationBlockDialog(
-          title: 'Location Permission Blocked',
-          message:
-          'Location access was permanently denied.\n\n'
-              'Go to Settings → [App] → Location → select "Always".',
-          buttonLabel: 'Open Settings',
-          onTap: () => openAppSettings(),
-        );
-        return;
-      }
 
       await _showLocationBlockDialog(
         title: 'Location Set to "Always" Required',
@@ -337,9 +303,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         buttonLabel: 'Open Settings',
         onTap: () => openAppSettings(),
       );
-
-      // Wait for the user to come back from Settings before rechecking
-      await Future.delayed(const Duration(milliseconds: 500));
+      await Future.delayed(const Duration(milliseconds: 300));
       final recheckPerm = await Geolocator.checkPermission();
       final bool recheckGranted = recheckPerm == LocationPermission.always ||
           (Platform.isIOS && recheckPerm == LocationPermission.whileInUse);
@@ -741,8 +705,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       permission = await Geolocator.requestPermission();
     }
 
-    if (permission == LocationPermission.always ||
-        permission == LocationPermission.whileInUse) return true;
+    if (permission == LocationPermission.always) return true;
 
     await _showLocationBlockDialog(
       title: 'Location Set to "Always" Required',
@@ -767,38 +730,35 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     _isLocationDialogVisible = true;
     _locationDialogContext = null;
 
-    try {
-      await showDialog(
-        context: context,
-        barrierDismissible: false,
-        builder: (ctx) {
-          _locationDialogContext = ctx;
-          return WillPopScope(
-            onWillPop: () async => false,
-            child: AlertDialog(
-              backgroundColor: const Color(0xFF1E293B),
-              shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(16)),
-              title: Text(title, style: const TextStyle(color: Colors.white)),
-              content: Text(message, style: const TextStyle(color: Colors.white70)),
-              actions: [
-                ElevatedButton(
-                  onPressed: () {
-                    Navigator.pop(ctx);
-                    onTap();
-                  },
-                  child: Text(buttonLabel),
-                ),
-              ],
-            ),
-          );
-        },
-      );
-    } finally {
-      // Always reset — even if showDialog throws or widget unmounts mid-dialog.
-      _isLocationDialogVisible = false;
-      _locationDialogContext = null;
-    }
+    await showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) {
+        _locationDialogContext = ctx;
+        return WillPopScope(
+          onWillPop: () async => false,
+          child: AlertDialog(
+            backgroundColor: const Color(0xFF1E293B),
+            shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16)),
+            title: Text(title, style: const TextStyle(color: Colors.white)),
+            content: Text(message, style: const TextStyle(color: Colors.white70)),
+            actions: [
+              ElevatedButton(
+                onPressed: () {
+                  Navigator.pop(ctx);
+                  onTap();
+                },
+                child: Text(buttonLabel),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+
+    _isLocationDialogVisible = false;
+    _locationDialogContext = null;
   }
 
   Future<bool> _handleLocationPermission() async {
@@ -836,92 +796,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           _screens[_selectedIndex](),
 
           // ── ON-SCREEN DEBUG LOG PANEL ──────────────────────────────────────
-          if (_showDebugPanel)
-            Positioned(
-              bottom: 0,
-              left: 0,
-              right: 0,
-              child: Material(
-                color: Colors.black.withOpacity(0.93),
-                child: SizedBox(
-                  height: 220,
-                  child: Padding(
-                    padding: const EdgeInsets.all(8),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(children: [
-                          const Text('📡 GPS Debug Log',
-                              style: TextStyle(
-                                  color: Colors.greenAccent,
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.bold)),
-                          const Spacer(),
-                          GestureDetector(
-                            onTap: () => setState(() => _debugLogs.clear()),
-                            child: const Padding(
-                              padding: EdgeInsets.only(right: 12),
-                              child: Text('clear',
-                                  style: TextStyle(
-                                      color: Colors.orange, fontSize: 11)),
-                            ),
-                          ),
-                          GestureDetector(
-                            onTap: () =>
-                                setState(() => _showDebugPanel = false),
-                            child: const Text('close',
-                                style:
-                                TextStyle(color: Colors.red, fontSize: 11)),
-                          ),
-                        ]),
-                        const Divider(color: Colors.green, height: 6),
-                        Expanded(
-                          child: ListView.builder(
-                            itemCount: _debugLogs.length,
-                            itemBuilder: (_, i) => Text(
-                              _debugLogs[i],
-                              style: const TextStyle(
-                                  color: Colors.greenAccent,
-                                  fontSize: 10,
-                                  height: 1.4),
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-            ),
 
-          // ── FLOATING DEBUG TOGGLE BUTTON ───────────────────────────────────
-          Positioned(
-            bottom: _showDebugPanel ? 224 : 8,
-            right: 8,
-            child: GestureDetector(
-              onTap: () => setState(() => _showDebugPanel = !_showDebugPanel),
-              child: Container(
-                padding:
-                const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                decoration: BoxDecoration(
-                  color: _showDebugPanel
-                      ? Colors.green.withOpacity(0.85)
-                      : Colors.black.withOpacity(0.6),
-                  borderRadius: BorderRadius.circular(20),
-                  border: Border.all(
-                      color: _showDebugPanel
-                          ? Colors.greenAccent
-                          : Colors.grey.withOpacity(0.5)),
-                ),
-                child: const Row(mainAxisSize: MainAxisSize.min, children: [
-                  Icon(Icons.bug_report, size: 13, color: Colors.white),
-                  SizedBox(width: 4),
-                  Text('Debug',
-                      style: TextStyle(color: Colors.white, fontSize: 11)),
-                ]),
-              ),
-            ),
-          ),
+
+
         ],
       ),
       bottomNavigationBar: CustomNavbar(

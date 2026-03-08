@@ -1,5 +1,3 @@
-// lib/services/LiveLocationService.dart
-
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -34,16 +32,6 @@ class LiveLocationService {
 
   VoidCallback? onShiftEndedRemotely;
 
-  // ── DEBUG: hook this up to show logs on screen ──────────────────────────────
-  // Set this from HomeScreen to receive debug messages in the UI overlay.
-  void Function(String message)? onDebugLog;
-
-  void _log(String msg) {
-    print(msg);
-    onDebugLog?.call(msg);
-  }
-  // ────────────────────────────────────────────────────────────────────────────
-
   static const int _locationIntervalSeconds = 30;
   static const int _shiftCheckIntervalSeconds = 30;
 
@@ -62,10 +50,7 @@ class LiveLocationService {
     _startLocationStream(userId, assignmentId);
     _startShiftChecker(userId, assignmentId);
 
-    // Android only — iOS does not use background service isolate
     startBackgroundLocationService(userId, assignmentId);
-
-    _log('🚀 startTracking: user=$userId assignment=$assignmentId platform=${Platform.isIOS ? "iOS" : "Android"}');
   }
 
   void stopTracking() {
@@ -89,8 +74,6 @@ class LiveLocationService {
     _currentUserId = null;
     _currentAssignmentId = null;
 
-    _log('🛑 stopTracking called');
-
     stopBackgroundLocationService();
   }
 
@@ -99,9 +82,6 @@ class LiveLocationService {
       config: StompConfig(
         url: 'wss://api.blackfabricsecurity.com/ws',
         reconnectDelay: const Duration(seconds: 5),
-        onConnect: (_) => _log('✅ WebSocket connected'),
-        onWebSocketError: (error) => _log('❌ WebSocket error: $error'),
-        onDisconnect: (_) => _log('⚠️ WebSocket disconnected'),
       ),
     );
     _stompClient!.activate();
@@ -133,17 +113,12 @@ class LiveLocationService {
               (Position pos) async {
             _lastPosition = pos;
 
-            if (!_isTracking) {
-              _log('📍 GPS fired but _isTracking=false — skipping');
-              return;
-            }
+            if (!_isTracking) return;
 
             final now = DateTime.now();
             final secondsSinceLast = _lastSentTime == null
                 ? _locationIntervalSeconds + 1
                 : now.difference(_lastSentTime!).inSeconds;
-
-            _log('📍 GPS: ${pos.latitude.toStringAsFixed(5)},${pos.longitude.toStringAsFixed(5)} | secondsSinceLast=$secondsSinceLast');
 
             if (secondsSinceLast >= _locationIntervalSeconds) {
               await _sendLocation(userId, assignmentId);
@@ -152,7 +127,6 @@ class LiveLocationService {
             _piggybackShiftCheck(assignmentId);
           },
           onError: (error) {
-            _log('❌ Location stream error: $error');
             Future.delayed(const Duration(seconds: 5), () {
               if (_isTracking) {
                 _positionSubscription?.cancel();
@@ -163,17 +137,13 @@ class LiveLocationService {
           cancelOnError: false,
         );
 
-    // Heartbeat — sends even if device barely moves (foreground only on iOS)
     _heartbeatTimer?.cancel();
     _heartbeatTimer = Timer.periodic(
         const Duration(seconds: _locationIntervalSeconds), (_) async {
       if (_isTracking && _lastPosition != null) {
-        _log('💓 Heartbeat firing');
         await _sendLocation(userId, assignmentId);
       }
     });
-
-    _log('📍 Location stream started for user=$userId assignment=$assignmentId');
   }
 
   void _startShiftChecker(int userId, int assignmentId) {
@@ -184,13 +154,8 @@ class LiveLocationService {
         if (!_isTracking) return;
         try {
           final active = await _isShiftStillActive(assignmentId);
-          if (!active) {
-            _log('🛑 [Timer] Shift ended → stopping tracking');
-            await _handleRemoteShiftEnd();
-          }
-        } catch (e) {
-          _log('⚠️ Shift timer check error (keeping alive): $e');
-        }
+          if (!active) await _handleRemoteShiftEnd();
+        } catch (_) {}
       },
     );
   }
@@ -204,13 +169,8 @@ class LiveLocationService {
     _lastShiftCheck = now;
 
     _isShiftStillActive(assignmentId).then((active) {
-      if (!active && _isTracking) {
-        _log('🛑 [Piggyback] Shift ended → stopping tracking');
-        _handleRemoteShiftEnd();
-      }
-    }).catchError((e) {
-      _log('⚠️ Piggyback shift check error: $e');
-    });
+      if (!active && _isTracking) _handleRemoteShiftEnd();
+    }).catchError((_) {});
   }
 
   Future<bool> _isShiftStillActive(int assignmentId) async {
@@ -230,13 +190,12 @@ class LiveLocationService {
         final int? serverAssignmentId = data['assignmentId'] as int?;
         if (!active) return false;
         if (serverAssignmentId != null && serverAssignmentId != assignmentId) {
-          _log('⚠️ Assignment mismatch (server=$serverAssignmentId, local=$assignmentId)');
           return false;
         }
         return true;
       }
       return true;
-    } catch (e) {
+    } catch (_) {
       return true;
     }
   }
@@ -251,23 +210,17 @@ class LiveLocationService {
   }
 
   Future<void> _sendLocation(int userId, int assignmentId) async {
-    if (!_isTracking || _lastPosition == null) {
-      _log('⚠️ _sendLocation skipped: isTracking=$_isTracking hasPos=${_lastPosition != null}');
-      return;
-    }
+    if (!_isTracking || _lastPosition == null) return;
 
     _lastSentTime = DateTime.now();
     final lat = _lastPosition!.latitude;
     final lng = _lastPosition!.longitude;
 
-    // iOS: always HTTP — WebSocket is killed by iOS in background
     if (Platform.isIOS) {
-      _log('📤 iOS: calling _sendViaHttp user=$userId');
       await _sendViaHttp(userId, lat, lng);
       return;
     }
 
-    // Android: WebSocket first, HTTP fallback
     final wsBody = jsonEncode({
       'userId': userId,
       'shiftId': assignmentId,
@@ -281,11 +234,9 @@ class LiveLocationService {
 
     if (_stompClient != null && _stompClient!.connected) {
       _stompClient!.send(destination: '/app/location', body: wsBody);
-      _log('📍 [WS] Sent: ${lat.toStringAsFixed(6)}, ${lng.toStringAsFixed(6)}');
       return;
     }
 
-    _log('⚠️ WS down — HTTP fallback');
     await _sendViaHttp(userId, lat, lng);
 
     Future.delayed(const Duration(seconds: 3), () {
@@ -299,15 +250,9 @@ class LiveLocationService {
     try {
       final prefs = await SharedPreferences.getInstance();
       final token = prefs.getString('jwt');
+      if (token == null) return;
 
-      if (token == null) {
-        _log('❌ [HTTP] No JWT token — cannot send location');
-        return;
-      }
-
-      _log('📡 [HTTP] POSTing location: guardId=$userId lat=${lat.toStringAsFixed(5)} lng=${lng.toStringAsFixed(5)}');
-
-      final response = await http.post(
+      await http.post(
         Uri.parse('https://api.blackfabricsecurity.com/api/locations/update'),
         headers: {
           'Content-Type': 'application/json',
@@ -319,10 +264,6 @@ class LiveLocationService {
           'lng': lng,
         }),
       ).timeout(const Duration(seconds: 10));
-
-      _log('✅ [HTTP] Response: ${response.statusCode} — ${response.body.length > 80 ? response.body.substring(0, 80) : response.body}');
-    } catch (e) {
-      _log('❌ [HTTP] Exception: $e');
-    }
+    } catch (_) {}
   }
 }
