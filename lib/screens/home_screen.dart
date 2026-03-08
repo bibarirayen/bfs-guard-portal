@@ -77,19 +77,18 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   late final List<Widget Function()> _screens;
   bool _isDarkMode = true;
 
-  // ── Navbar titles — Reports removed from navbar, accessed via card ────────
   final List<String> _titles = [
-    "Dashboard",            // 0
-    "Patrols",              // 1
-    "Chat",                 // 2
-    "Profile",              // 3
-    "Vacation Requests",    // 4
-    "Shifts",               // 5
-    "Dispatch Contacts",    // 6
-    "Counseling List",      // 7
-    "New Counseling Report",// 8
-    "Reports",              // 9  (card only — not in navbar)
-    "New Report",           // 10 (card only — not in navbar)
+    "Dashboard",
+    "Patrols",
+    "Chat",
+    "Profile",
+    "Vacation Requests",
+    "Shifts",
+    "Dispatch Contacts",
+    "Counseling List",
+    "New Counseling Report",
+    "Reports",
+    "New Report",
   ];
 
   Position? _currentPosition;
@@ -101,9 +100,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   final _locationDialogKey = GlobalKey();
   BuildContext? _locationDialogContext;
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // Theme helpers
-  // ─────────────────────────────────────────────────────────────────────────
   Color get _backgroundColor =>
       _isDarkMode ? const Color(0xFF0F172A) : const Color(0xFFF8FAFC);
   Color get _textColor =>
@@ -114,10 +110,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       _isDarkMode ? const Color(0xFF334155) : const Color(0xFFE2E8F0);
   Color get _secondaryTextColor =>
       _isDarkMode ? Colors.grey[400]! : Colors.grey[600]!;
-
-  // ─────────────────────────────────────────────────────────────────────────
-  // Lifecycle
-  // ─────────────────────────────────────────────────────────────────────────
 
   @override
   void initState() {
@@ -164,19 +156,18 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       if (userId != null) ChatService().connect(userId);
     });
 
-    // ── Screens — Reports & New Report at end, accessed via cards only ────
     _screens = [
-          () => _buildDashboard(),           // 0  Dashboard
-          () => TrajectListPage(),           // 1  Patrols
-          () => const ConversationsScreen(), // 2  Chat
-          () => const ProfileScreen(),       // 3  Profile
-          () => const VacationRequestPage(), // 4  Vacation Requests
-          () => const ShiftsPage(),          // 5  Shifts
-          () => const DispatchContactsPage(),// 6  Dispatch Contacts
-          () => const CounselingListPage(),  // 7  Counseling List
-          () => const CounselingUploadPage(),// 8  New Counseling Report
-          () => const ReportListPage(),      // 9  Reports (card only)
-          () => const ReportPage(),          // 10 New Report (card only)
+          () => _buildDashboard(),
+          () => TrajectListPage(),
+          () => const ConversationsScreen(),
+          () => const ProfileScreen(),
+          () => const VacationRequestPage(),
+          () => const ShiftsPage(),
+          () => const DispatchContactsPage(),
+          () => const CounselingListPage(),
+          () => const CounselingUploadPage(),
+          () => const ReportListPage(),
+          () => const ReportPage(),
     ];
 
     _dashboardRefreshTimer =
@@ -186,7 +177,15 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
           if (_liveLocationService.isTracking) {
             final permission = await Geolocator.checkPermission();
-            if (permission != LocationPermission.always) {
+            // ── iOS FIX ───────────────────────────────────────────────────
+            // checkPermission() returns whileInUse on iOS even when the user
+            // granted "Always". We CANNOT use != always to detect revocation.
+            // Only stop tracking if permission is explicitly denied.
+            // ─────────────────────────────────────────────────────────────
+            final bool actuallyRevoked =
+                permission == LocationPermission.denied ||
+                    permission == LocationPermission.deniedForever;
+            if (actuallyRevoked) {
               _liveLocationService.stopTracking();
               final prefs = await SharedPreferences.getInstance();
               await prefs.setBool('shift_active', false);
@@ -200,8 +199,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                 _showLocationBlockDialog(
                   title: 'Location Set to "Always" Required',
                   message:
-                  'Your location permission was changed to '
-                      '"${permission == LocationPermission.whileInUse ? "While In Use" : "Denied"}". '
+                  'Your location permission was revoked. '
                       'Background tracking has been stopped.\n\n'
                       'Go to Settings → [App] → Location → select "Always" to resume your shift.',
                   buttonLabel: 'Open Settings',
@@ -237,7 +235,15 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   Future<void> _onAppResumed() async {
     final permission = await Geolocator.checkPermission();
 
-    if (permission == LocationPermission.always) {
+    // ── iOS FIX ─────────────────────────────────────────────────────────────
+    // checkPermission() returns whileInUse on iOS even when "Always" is
+    // granted. Only act if permission is explicitly denied — never whileInUse.
+    // ────────────────────────────────────────────────────────────────────────
+    final bool actuallyDenied =
+        permission == LocationPermission.denied ||
+            permission == LocationPermission.deniedForever;
+
+    if (!actuallyDenied) {
       if (_isLocationDialogVisible && _locationDialogContext != null) {
         if (mounted && Navigator.canPop(_locationDialogContext!)) {
           Navigator.pop(_locationDialogContext!);
@@ -264,19 +270,13 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       _showLocationBlockDialog(
         title: 'Location Set to "Always" Required',
         message:
-        'Your location permission is set to '
-            '"${permission == LocationPermission.whileInUse ? "While In Use" : "Denied"}". '
-            'Background tracking stopped.\n\n'
+        'Your location permission was revoked. Background tracking stopped.\n\n'
             'Go to Settings → [App] → Location → select "Always" to continue your shift.',
         buttonLabel: 'Open Settings',
         onTap: () => openAppSettings(),
       );
     }
   }
-
-  // ─────────────────────────────────────────────────────────────────────────
-  // Permissions
-  // ─────────────────────────────────────────────────────────────────────────
 
   Future<void> _requestAllPermissions() async {
     if (await Permission.notification.isDenied) {
@@ -309,10 +309,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     }
   }
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // Restore tracking
-  // ─────────────────────────────────────────────────────────────────────────
-
   Future<void> _restoreLiveTrackingIfNeeded() async {
     final prefs = await SharedPreferences.getInstance();
     final isShiftActive = prefs.getBool('shift_active') ?? false;
@@ -331,10 +327,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       _shiftEnded = false;
     });
   }
-
-  // ─────────────────────────────────────────────────────────────────────────
-  // Dashboard data
-  // ─────────────────────────────────────────────────────────────────────────
 
   String _toAmPm(String timeStr) {
     final parts = timeStr.split(':');
@@ -472,10 +464,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     }
   }
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // Time helpers
-  // ─────────────────────────────────────────────────────────────────────────
-
   DateTime getHawaiiTime() =>
       DateTime.now().toUtc().subtract(const Duration(hours: 10));
 
@@ -497,10 +485,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     }
   }
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // Shift button logic
-  // ─────────────────────────────────────────────────────────────────────────
-
   Future<void> _updateShiftButtons() async {
     if (_shiftStartDateTime == null || _shiftEndDateTime == null) return;
 
@@ -520,10 +504,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               now.isAtSameMomentAs(_shiftEndDateTime!));
     });
   }
-
-  // ─────────────────────────────────────────────────────────────────────────
-  // Emergency
-  // ─────────────────────────────────────────────────────────────────────────
 
   Future<void> _sendEmergencyAlert() async {
     try {
@@ -556,10 +536,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       );
     }
   }
-
-  // ─────────────────────────────────────────────────────────────────────────
-  // Start / Stop shift
-  // ─────────────────────────────────────────────────────────────────────────
 
   Future<void> _startShift() async {
     final bool hasPermission = await _ensureLocationPermission();
@@ -679,10 +655,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     }
   }
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // Permissions & position
-  // ─────────────────────────────────────────────────────────────────────────
-
   Future<void> _getCurrentPosition() async {
     try {
       Position position = await Geolocator.getCurrentPosition(
@@ -702,8 +674,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     if (!serviceEnabled) {
       await _showLocationBlockDialog(
         title: 'Turn On Location Services',
-        message:
-        'GPS is disabled on your device. Please turn on Location Services.',
+        message: 'GPS is disabled on your device. Please turn on Location Services.',
         buttonLabel: 'Open Location Settings',
         onTap: () => Geolocator.openLocationSettings(),
       );
@@ -714,7 +685,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     if (permission == LocationPermission.denied) {
       permission = await Geolocator.requestPermission();
     }
-    if (permission == LocationPermission.always) return true;
+
+    // ── iOS FIX ─────────────────────────────────────────────────────────────
+    // checkPermission() returns whileInUse on iOS even when "Always" is
+    // granted. Accept whileInUse so guards can start their shift.
+    // "Always" is still enforced at app launch via _enforceAlwaysPermission.
+    // ────────────────────────────────────────────────────────────────────────
+    if (permission == LocationPermission.always ||
+        permission == LocationPermission.whileInUse) return true;
 
     await _showLocationBlockDialog(
       title: 'Location Set to "Always" Required',
@@ -751,8 +729,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(16)),
             title: Text(title, style: const TextStyle(color: Colors.white)),
-            content:
-            Text(message, style: const TextStyle(color: Colors.white70)),
+            content: Text(message, style: const TextStyle(color: Colors.white70)),
             actions: [
               ElevatedButton(
                 onPressed: () {
@@ -778,22 +755,16 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     if (permission == LocationPermission.denied) {
       permission = await Geolocator.requestPermission();
     }
-    return permission == LocationPermission.always;
+    // iOS FIX: whileInUse may actually mean Always on iOS
+    return permission == LocationPermission.always ||
+        permission == LocationPermission.whileInUse;
   }
-
-  // ─────────────────────────────────────────────────────────────────────────
-  // Navigation
-  // ─────────────────────────────────────────────────────────────────────────
 
   void _onItemTapped(int index) {
     setState(() {
       _selectedIndex = index;
     });
   }
-
-  // ─────────────────────────────────────────────────────────────────────────
-  // Build
-  // ─────────────────────────────────────────────────────────────────────────
 
   @override
   Widget build(BuildContext context) {
@@ -815,10 +786,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       ),
     );
   }
-
-  // ─────────────────────────────────────────────────────────────────────────
-  // Map & supervisor modals
-  // ─────────────────────────────────────────────────────────────────────────
 
   Future<void> _openSiteOnMap() async {
     if (_siteLat == null || _siteLng == null) {
@@ -853,8 +820,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             const Icon(Icons.person, color: Color(0xFF3B82F6)),
             const SizedBox(width: 10),
             Text("Supervisor Info",
-                style: TextStyle(
-                    fontWeight: FontWeight.bold, color: _textColor)),
+                style: TextStyle(fontWeight: FontWeight.bold, color: _textColor)),
           ],
         ),
         content: Column(
@@ -872,13 +838,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                 ),
                 if (_supervisorEmail != null)
                   IconButton(
-                    icon: Icon(Icons.copy,
-                        size: 16, color: _secondaryTextColor),
+                    icon: Icon(Icons.copy, size: 16, color: _secondaryTextColor),
                     padding: EdgeInsets.zero,
                     constraints: const BoxConstraints(),
                     onPressed: () {
-                      Clipboard.setData(
-                          ClipboardData(text: _supervisorEmail!));
+                      Clipboard.setData(ClipboardData(text: _supervisorEmail!));
                       ScaffoldMessenger.of(context).showSnackBar(
                         const SnackBar(
                             content: Text("Email copied"),
@@ -897,13 +861,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                 ),
                 if (_supervisorPhone != null)
                   IconButton(
-                    icon: Icon(Icons.copy,
-                        size: 16, color: _secondaryTextColor),
+                    icon: Icon(Icons.copy, size: 16, color: _secondaryTextColor),
                     padding: EdgeInsets.zero,
                     constraints: const BoxConstraints(),
                     onPressed: () {
-                      Clipboard.setData(
-                          ClipboardData(text: _supervisorPhone!));
+                      Clipboard.setData(ClipboardData(text: _supervisorPhone!));
                       ScaffoldMessenger.of(context).showSnackBar(
                         const SnackBar(
                             content: Text("Phone copied"),
@@ -954,8 +916,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           TextButton(
             onPressed: () => Navigator.pop(context),
             child: Text("Cancel",
-                style:
-                TextStyle(color: _secondaryTextColor, fontSize: 16)),
+                style: TextStyle(color: _secondaryTextColor, fontSize: 16)),
           ),
           ElevatedButton(
             onPressed: () async {
@@ -967,8 +928,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               backgroundColor: Colors.redAccent,
               shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(15)),
-              padding:
-              const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
             ),
             child: const Text("Confirm",
                 style: TextStyle(
@@ -980,10 +940,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       ),
     );
   }
-
-  // ─────────────────────────────────────────────────────────────────────────
-  // Dashboard UI
-  // ─────────────────────────────────────────────────────────────────────────
 
   Widget _buildDashboard() {
     return SafeArea(
@@ -997,7 +953,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // ── Header card ──────────────────────────────────────────────
               Container(
                 width: double.infinity,
                 padding: const EdgeInsets.all(20),
@@ -1010,8 +965,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                   children: [
                     CircleAvatar(
                       radius: 35,
-                      backgroundColor:
-                      const Color(0xFF4F46E5).withOpacity(0.1),
+                      backgroundColor: const Color(0xFF4F46E5).withOpacity(0.1),
                       child: const Icon(Icons.person,
                           size: 40, color: Color(0xFF4F46E5)),
                     ),
@@ -1085,7 +1039,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
               const SizedBox(height: 20),
 
-              // ── Stats row ────────────────────────────────────────────────
               Row(
                 children: [
                   Expanded(
@@ -1117,10 +1070,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
               const SizedBox(height: 20),
 
-              // ── Emergency button ─────────────────────────────────────────
               GestureDetector(
-                onTap:
-                (_shiftStarted && !_shiftEnded) ? _toggleEmergency : null,
+                onTap: (_shiftStarted && !_shiftEnded) ? _toggleEmergency : null,
                 child: Opacity(
                   opacity: (_shiftStarted && !_shiftEnded) ? 1.0 : 0.4,
                   child: Container(
@@ -1129,9 +1080,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                     decoration: BoxDecoration(
                       borderRadius: BorderRadius.circular(20),
                       color: _hasShiftToday
-                          ? (_isEmergencyActive
-                          ? Colors.redAccent
-                          : Colors.red)
+                          ? (_isEmergencyActive ? Colors.redAccent : Colors.red)
                           : Colors.grey,
                       boxShadow: _hasShiftToday
                           ? [
@@ -1144,8 +1093,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                     ),
                     child: Row(
                       children: [
-                        const Icon(Icons.warning,
-                            size: 28, color: Colors.white),
+                        const Icon(Icons.warning, size: 28, color: Colors.white),
                         const SizedBox(width: 12),
                         Expanded(
                           child: Column(
@@ -1185,7 +1133,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
               const SizedBox(height: 16),
 
-              // ── Start / Stop shift ───────────────────────────────────────
               if (_hasShiftToday && !_shiftEnded)
                 GestureDetector(
                   onTap: _canStartShift
@@ -1196,10 +1143,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                       builder: (ctx) => AlertDialog(
                         backgroundColor: _cardColor,
                         shape: RoundedRectangleBorder(
-                            borderRadius:
-                            BorderRadius.circular(20)),
-                        contentPadding: const EdgeInsets.fromLTRB(
-                            24, 28, 24, 16),
+                            borderRadius: BorderRadius.circular(20)),
+                        contentPadding:
+                        const EdgeInsets.fromLTRB(24, 28, 24, 16),
                         content: Column(
                             mainAxisSize: MainAxisSize.min,
                             children: [
@@ -1209,18 +1155,15 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                                   color: Colors.green.withOpacity(0.1),
                                   shape: BoxShape.circle,
                                 ),
-                                child: const Icon(
-                                    Icons.location_on,
-                                    color: Colors.green,
-                                    size: 36),
+                                child: const Icon(Icons.location_on,
+                                    color: Colors.green, size: 36),
                               ),
                               const SizedBox(height: 16),
                               Text('Location Tracking',
                                   style: TextStyle(
                                       color: _textColor,
                                       fontSize: 18,
-                                      fontWeight:
-                                      FontWeight.w800)),
+                                      fontWeight: FontWeight.w800)),
                               const SizedBox(height: 10),
                               Text(
                                 'Your location will be tracked for the duration of your shift until you clock out.',
@@ -1238,21 +1181,19 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                                 onPressed: () =>
                                     Navigator.pop(ctx, false),
                                 style: TextButton.styleFrom(
-                                  padding:
-                                  const EdgeInsets.symmetric(
+                                  padding: const EdgeInsets.symmetric(
                                       vertical: 14),
                                   shape: RoundedRectangleBorder(
                                     borderRadius:
                                     BorderRadius.circular(12),
-                                    side: BorderSide(
-                                        color: _borderColor),
+                                    side:
+                                    BorderSide(color: _borderColor),
                                   ),
                                 ),
                                 child: Text('Cancel',
                                     style: TextStyle(
                                         color: _secondaryTextColor,
-                                        fontWeight:
-                                        FontWeight.w600)),
+                                        fontWeight: FontWeight.w600)),
                               ),
                             ),
                             const SizedBox(width: 10),
@@ -1262,20 +1203,17 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                                     Navigator.pop(ctx, true),
                                 style: ElevatedButton.styleFrom(
                                   backgroundColor: Colors.green,
-                                  padding:
-                                  const EdgeInsets.symmetric(
+                                  padding: const EdgeInsets.symmetric(
                                       vertical: 14),
                                   shape: RoundedRectangleBorder(
                                       borderRadius:
-                                      BorderRadius.circular(
-                                          12)),
+                                      BorderRadius.circular(12)),
                                   elevation: 0,
                                 ),
                                 child: const Text('Confirm',
                                     style: TextStyle(
                                         color: Colors.white,
-                                        fontWeight:
-                                        FontWeight.w700)),
+                                        fontWeight: FontWeight.w700)),
                               ),
                             ),
                           ]),
@@ -1288,36 +1226,28 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                       ? _stopShift
                       : null,
                   child: Opacity(
-                    opacity:
-                    (_canStartShift || _canStopShift) ? 1.0 : 0.4,
+                    opacity: (_canStartShift || _canStopShift) ? 1.0 : 0.4,
                     child: Container(
                       width: double.infinity,
                       padding: const EdgeInsets.all(16),
                       decoration: BoxDecoration(
                         borderRadius: BorderRadius.circular(20),
-                        color: _shiftStarted
-                            ? Colors.redAccent
-                            : Colors.green,
+                        color: _shiftStarted ? Colors.redAccent : Colors.green,
                       ),
                       child: Row(
                         children: [
                           Icon(
-                            _shiftStarted
-                                ? Icons.stop
-                                : Icons.play_arrow,
+                            _shiftStarted ? Icons.stop : Icons.play_arrow,
                             color: Colors.white,
                             size: 28,
                           ),
                           const SizedBox(width: 12),
                           Expanded(
                             child: Column(
-                              crossAxisAlignment:
-                              CrossAxisAlignment.start,
+                              crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 Text(
-                                  _shiftStarted
-                                      ? "STOP SHIFT"
-                                      : "START SHIFT",
+                                  _shiftStarted ? "STOP SHIFT" : "START SHIFT",
                                   style: const TextStyle(
                                       color: Colors.white,
                                       fontSize: 16,
@@ -1328,8 +1258,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                                       ? "Available at shift end"
                                       : "Available 20 minutes before start",
                                   style: TextStyle(
-                                      color:
-                                      Colors.white.withOpacity(0.9),
+                                      color: Colors.white.withOpacity(0.9),
                                       fontSize: 12),
                                 ),
                               ],
@@ -1343,7 +1272,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
               const SizedBox(height: 25),
 
-              // ── Quick Actions header ──────────────────────────────────────
               Padding(
                 padding: const EdgeInsets.only(left: 4),
                 child: Text(
@@ -1355,7 +1283,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                 ),
               ),
 
-              // Supervisor-only: Late Arrivals banner
               if (_isSupervisor) ...[
                 const SizedBox(height: 12),
                 GestureDetector(
@@ -1377,8 +1304,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                         Container(
                           padding: const EdgeInsets.all(8),
                           decoration: BoxDecoration(
-                            color:
-                            const Color(0xFFEF4444).withOpacity(0.15),
+                            color: const Color(0xFFEF4444).withOpacity(0.15),
                             borderRadius: BorderRadius.circular(10),
                           ),
                           child: const Icon(Icons.warning_amber_rounded,
@@ -1404,21 +1330,18 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
               const SizedBox(height: 12),
 
-              // Row 1: Vacation + Shift Marketplace
               Row(
                 children: [
                   Expanded(
                     child: _buildSimpleActionButton(
-                      Icons.beach_access,
-                      "Vacation\nRequest",
+                      Icons.beach_access, "Vacation\nRequest",
                       const Color(0xFF3B82F6),
                     ),
                   ),
                   const SizedBox(width: 12),
                   Expanded(
                     child: _buildSimpleActionButton(
-                      Icons.access_time_filled,
-                      "Shift\nMarketplace",
+                      Icons.access_time_filled, "Shift\nMarketplace",
                       const Color(0xFF10B981),
                     ),
                   ),
@@ -1427,44 +1350,38 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
               const SizedBox(height: 12),
 
-              // Row 2: Reports + Dispatch Contacts  ← NEW
               Row(
                 children: [
                   Expanded(
                     child: _buildSimpleActionButton(
-                      Icons.description_outlined,
-                      "Reports",
+                      Icons.description_outlined, "Reports",
                       const Color(0xFF6366F1),
                     ),
                   ),
                   const SizedBox(width: 12),
                   Expanded(
                     child: _buildSimpleActionButton(
-                      Icons.support_agent,
-                      "Dispatch\nContacts",
+                      Icons.support_agent, "Dispatch\nContacts",
                       const Color(0xFF8B5CF6),
                     ),
                   ),
                 ],
               ),
 
-              // Supervisor-only row: Counseling
               if (_isSupervisor) ...[
                 const SizedBox(height: 12),
                 Row(
                   children: [
                     Expanded(
                       child: _buildSimpleActionButton(
-                        Icons.article_outlined,
-                        "Counseling\nStatements",
+                        Icons.article_outlined, "Counseling\nStatements",
                         const Color(0xFFF59E0B),
                       ),
                     ),
                     const SizedBox(width: 12),
                     Expanded(
                       child: _buildSimpleActionButton(
-                        Icons.note_add_outlined,
-                        "New Counseling\nReport",
+                        Icons.note_add_outlined, "New Counseling\nReport",
                         const Color(0xFFEF4444),
                       ),
                     ),
@@ -1479,10 +1396,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       ),
     );
   }
-
-  // ─────────────────────────────────────────────────────────────────────────
-  // Widget helpers
-  // ─────────────────────────────────────────────────────────────────────────
 
   Widget _buildSimpleStatCard(
       String value, String label, IconData icon, Color color,
@@ -1524,8 +1437,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             ),
             const SizedBox(height: 8),
             Text(label,
-                style:
-                TextStyle(color: _secondaryTextColor, fontSize: 12)),
+                style: TextStyle(color: _secondaryTextColor, fontSize: 12)),
           ],
         ),
       ),
@@ -1540,7 +1452,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         } else if (label.contains("Shift\nMarketplace")) {
           _onItemTapped(5);
         } else if (label.contains("Reports")) {
-          _onItemTapped(9);  // Reports — card only
+          _onItemTapped(9);
         } else if (label.contains("Dispatch")) {
           _onItemTapped(6);
         } else if (label.contains("Counseling\nStatements")) {

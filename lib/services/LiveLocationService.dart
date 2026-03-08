@@ -23,7 +23,6 @@ class LiveLocationService {
   StreamSubscription<Position>? _positionSubscription;
   Timer? _heartbeatTimer;
   Timer? _shiftCheckTimer;
-  Timer? _permissionCheckTimer;
 
   bool _isTracking = false;
   Position? _lastPosition;
@@ -53,14 +52,10 @@ class LiveLocationService {
     _startLocationStream(userId, assignmentId);
     _startShiftChecker(userId, assignmentId);
 
-    // iOS: start a separate permission checker that runs every 60s
-    // We do NOT check permission inside the GPS stream callback —
-    // iOS returns wrong permission values during background wakeups.
-    if (Platform.isIOS) {
-      _startPermissionWatcher();
-    }
-
+    // Android only — iOS does not use background service isolate
     startBackgroundLocationService(userId, assignmentId);
+
+    print('🚀 LiveLocationService: tracking started for user $userId assignment $assignmentId');
   }
 
   void stopTracking() {
@@ -74,9 +69,6 @@ class LiveLocationService {
 
     _positionSubscription?.cancel();
     _positionSubscription = null;
-
-    _permissionCheckTimer?.cancel();
-    _permissionCheckTimer = null;
 
     _stompClient?.deactivate();
     _stompClient = null;
@@ -92,8 +84,6 @@ class LiveLocationService {
     stopBackgroundLocationService();
   }
 
-  // ─── WebSocket ────────────────────────────────────────────────────────────
-
   void _connectWebSocket(int userId, int assignmentId) {
     _stompClient = StompClient(
       config: StompConfig(
@@ -106,8 +96,6 @@ class LiveLocationService {
     );
     _stompClient!.activate();
   }
-
-  // ─── GPS Stream ───────────────────────────────────────────────────────────
 
   void _startLocationStream(int userId, int assignmentId) {
     final locationSettings = Platform.isIOS
@@ -136,14 +124,9 @@ class LiveLocationService {
             _lastPosition = pos;
             if (!_isTracking) return;
 
-            // ── CRITICAL iOS FIX ────────────────────────────────────────────────
-            // Do NOT call Geolocator.checkPermission() here on iOS.
-            // When iOS wakes the main isolate for a GPS fix in the background,
-            // checkPermission() unreliably returns whileInUse even when the user
-            // granted Always. This was causing tracking to stop itself every time.
-            // Permission is now checked separately via _startPermissionWatcher()
-            // which runs while the app is in the foreground only.
-            // ────────────────────────────────────────────────────────────────────
+            // NEVER call checkPermission() inside this callback.
+            // iOS returns wrong values (whileInUse) during background wakeups
+            // which would kill tracking. Permission is enforced in home_screen.dart.
 
             final now = DateTime.now();
             final secondsSinceLast = _lastSentTime == null
@@ -168,7 +151,7 @@ class LiveLocationService {
           cancelOnError: false,
         );
 
-    // Heartbeat — safety net if device barely moves
+    // Heartbeat — sends even if device barely moves
     _heartbeatTimer?.cancel();
     _heartbeatTimer = Timer.periodic(
         const Duration(seconds: _locationIntervalSeconds), (_) async {
@@ -179,31 +162,6 @@ class LiveLocationService {
 
     print('📍 Location stream started for user $userId, assignment $assignmentId');
   }
-
-  // ─── Permission watcher (iOS only, foreground-safe) ───────────────────────
-  // Checks permission every 60s. Because this runs on a timer (not inside a
-  // background wakeup callback), iOS returns the correct permission value.
-
-  void _startPermissionWatcher() {
-    _permissionCheckTimer?.cancel();
-    _permissionCheckTimer = Timer.periodic(const Duration(seconds: 60), (_) async {
-      if (!_isTracking) return;
-      try {
-        final perm = await Geolocator.checkPermission();
-        if (perm == LocationPermission.denied ||
-            perm == LocationPermission.deniedForever) {
-          print('🔒 [PermWatcher] Permission revoked — stopping tracking');
-          await _handleRemoteShiftEnd();
-        }
-        // Note: whileInUse is still allowed — we keep tracking.
-        // Only fully denied should stop us.
-      } catch (e) {
-        print('⚠️ [PermWatcher] Error: $e');
-      }
-    });
-  }
-
-  // ─── Shift checker ────────────────────────────────────────────────────────
 
   void _startShiftChecker(int userId, int assignmentId) {
     _shiftCheckTimer?.cancel();
@@ -218,6 +176,7 @@ class LiveLocationService {
             await _handleRemoteShiftEnd();
           }
         } catch (e) {
+          // Network blip — keep running
           print('⚠️ Shift timer check error (keeping alive): $e');
         }
       },
@@ -248,24 +207,28 @@ class LiveLocationService {
     final guardId = prefs.getInt('userId');
     if (guardId == null) return false;
 
-    final response = await api
-        .get('assignments/dashboard-mobile/$guardId')
-        .timeout(const Duration(seconds: 10));
+    try {
+      final response = await api
+          .get('assignments/dashboard-mobile/$guardId')
+          .timeout(const Duration(seconds: 10));
 
-    if (response.statusCode == 200) {
-      final data = jsonDecode(response.body);
-      final bool active = data['Active'] == true;
-      final int? serverAssignmentId = data['assignmentId'] as int?;
-      if (!active) return false;
-      if (serverAssignmentId != null && serverAssignmentId != assignmentId) {
-        print('⚠️ Assignment mismatch (server=$serverAssignmentId, local=$assignmentId)');
-        return false;
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        final bool active = data['Active'] == true;
+        final int? serverAssignmentId = data['assignmentId'] as int?;
+        if (!active) return false;
+        if (serverAssignmentId != null && serverAssignmentId != assignmentId) {
+          print('⚠️ Assignment mismatch (server=$serverAssignmentId, local=$assignmentId)');
+          return false;
+        }
+        return true;
       }
+      // On any non-200 keep alive — don't stop on server errors
+      return true;
+    } catch (e) {
+      // Network error — keep alive
       return true;
     }
-
-    print('⚠️ Dashboard returned ${response.statusCode} → stopping');
-    return false;
   }
 
   Future<void> _handleRemoteShiftEnd() async {
@@ -276,8 +239,6 @@ class LiveLocationService {
     await prefs.remove('active_guard_id');
     onShiftEndedRemotely?.call();
   }
-
-  // ─── Send ─────────────────────────────────────────────────────────────────
 
   Future<void> _sendLocation(int userId, int assignmentId) async {
     if (!_isTracking || _lastPosition == null) return;
