@@ -293,7 +293,13 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   Future<void> _enforceAlwaysPermission() async {
     while (true) {
       final permission = await Geolocator.checkPermission();
-      if (permission == LocationPermission.always) return;
+      // iOS BUG: checkPermission() returns whileInUse even when the user
+      // has set it to "Always". We must accept whileInUse on iOS or this
+      // loop will block forever and the guard can never start a shift.
+      final bool granted = permission == LocationPermission.always ||
+          (Platform.isIOS && permission == LocationPermission.whileInUse);
+      if (granted) return;
+
       await _showLocationBlockDialog(
         title: 'Location Set to "Always" Required',
         message:
@@ -305,7 +311,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       );
       await Future.delayed(const Duration(milliseconds: 300));
       final recheckPerm = await Geolocator.checkPermission();
-      if (recheckPerm == LocationPermission.always) return;
+      final bool recheckGranted = recheckPerm == LocationPermission.always ||
+          (Platform.isIOS && recheckPerm == LocationPermission.whileInUse);
+      if (recheckGranted) return;
     }
   }
 
