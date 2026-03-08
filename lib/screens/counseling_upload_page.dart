@@ -212,10 +212,13 @@ class _CounselingUploadPageState extends State<CounselingUploadPage> {
       // Camera permission is required to access the camera hardware.
       if (!await _checkPermission(Permission.camera, 'Camera')) return;
     }
-    // Gallery on Android 13+: image_picker uses the system Photo Picker,
-    // which needs NO permission — do NOT request READ_MEDIA_IMAGES.
-    // Gallery on Android ≤ 12: READ_EXTERNAL_STORAGE (maxSdkVersion="32")
-    // covers it; image_picker handles it internally.
+    // Gallery picking:
+    // - Android 13+: image_picker uses the system Photo Picker → NO permission needed.
+    // - Android ≤ 12: READ_EXTERNAL_STORAGE (maxSdkVersion="32") handles it at OS level.
+    // - iOS: check manually so we can show "go to Settings" if previously denied.
+    if (source == ImageSource.gallery && Platform.isIOS) {
+      if (!await _checkPermission(Permission.photos, 'Photos')) return;
+    }
 
     setState(() => _isPickingMedia = true);
     try {
@@ -241,10 +244,13 @@ class _CounselingUploadPageState extends State<CounselingUploadPage> {
       if (!await _checkPermission(Permission.camera, 'Camera')) return;
       if (!await _checkPermission(Permission.microphone, 'Microphone')) return;
     }
-    // Gallery on Android 13+: image_picker uses the system Photo Picker,
-    // which needs NO permission — do NOT request READ_MEDIA_VIDEO.
-    // Gallery on Android ≤ 12: READ_EXTERNAL_STORAGE (maxSdkVersion="32")
-    // covers it; image_picker handles it internally.
+    // Gallery picking:
+    // - Android 13+: image_picker uses the system Photo Picker → NO permission needed.
+    // - Android ≤ 12: READ_EXTERNAL_STORAGE (maxSdkVersion="32") handles it at OS level.
+    // - iOS: check manually so we can show "go to Settings" if previously denied.
+    if (source == ImageSource.gallery && Platform.isIOS) {
+      if (!await _checkPermission(Permission.photos, 'Photos & Videos')) return;
+    }
 
     setState(() => _isPickingMedia = true);
     try {

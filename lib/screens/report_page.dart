@@ -306,11 +306,15 @@ class _ReportPageState extends State<ReportPage> {
       // Camera permission is required to access the camera hardware.
       if (!await _checkPermission(Permission.camera, 'Camera')) return;
     }
-    // Gallery on Android 13+: image_picker uses the system Photo Picker,
-    // which needs NO permission — do NOT request READ_MEDIA_IMAGES.
-    // Gallery on Android ≤ 12: READ_EXTERNAL_STORAGE is in the manifest
-    // with maxSdkVersion="32"; image_picker handles it internally.
-    // iOS: image_picker handles the photo library permission internally.
+    // Gallery picking:
+    // - Android 13+: image_picker uses the system Photo Picker → NO permission needed.
+    // - Android ≤ 12: READ_EXTERNAL_STORAGE (maxSdkVersion="32") handles it at OS level.
+    // - iOS: image_picker shows its own system dialog on first use, BUT if the user
+    //   previously denied access it returns null silently. We check manually so we
+    //   can show the "go to Settings" dialog in that case.
+    if (source == ImageSource.gallery && Platform.isIOS) {
+      if (!await _checkPermission(Permission.photos, 'Photos')) return;
+    }
 
     setState(() => _isPickingMedia = true);
     try {
@@ -333,10 +337,13 @@ class _ReportPageState extends State<ReportPage> {
       if (!await _checkPermission(Permission.camera, 'Camera')) return;
       if (!await _checkPermission(Permission.microphone, 'Microphone')) return;
     }
-    // Gallery on Android 13+: image_picker uses the system Photo Picker,
-    // which needs NO permission — do NOT request READ_MEDIA_VIDEO.
-    // Gallery on Android ≤ 12: READ_EXTERNAL_STORAGE (maxSdkVersion="32")
-    // covers it; image_picker handles it internally.
+    // Gallery picking:
+    // - Android 13+: image_picker uses the system Photo Picker → NO permission needed.
+    // - Android ≤ 12: READ_EXTERNAL_STORAGE (maxSdkVersion="32") handles it at OS level.
+    // - iOS: check manually so we can show "go to Settings" if previously denied.
+    if (source == ImageSource.gallery && Platform.isIOS) {
+      if (!await _checkPermission(Permission.photos, 'Photos & Videos')) return;
+    }
 
     setState(() => _isPickingMedia = true);
     try {

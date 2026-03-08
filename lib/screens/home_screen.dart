@@ -158,7 +158,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       await _requestAllPermissions();
-      await Future.delayed(const Duration(milliseconds: 500));
+      // The 500ms was too short — on some devices the system permission dialog
+      // dismiss animation was still running, causing showDialog to silently fail.
+      // _enforceAlwaysPermission now adds its own 800ms delay internally.
       await _enforceAlwaysPermission();
     });
 
@@ -300,11 +302,31 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   Future<void> _enforceAlwaysPermission() async {
+    // Give the navigator a full frame to settle after any system permission
+    // dialogs. Without this, showDialog can silently fail if called while
+    // the system dialog's dismiss animation is still running.
+    await Future.delayed(const Duration(milliseconds: 800));
+
     while (true) {
+      if (!mounted) return;
+
       final permission = await Geolocator.checkPermission();
       final bool granted = permission == LocationPermission.always ||
           (Platform.isIOS && permission == LocationPermission.whileInUse);
       if (granted) return;
+
+      // deniedForever → can only fix via Settings, no point looping
+      if (permission == LocationPermission.deniedForever) {
+        await _showLocationBlockDialog(
+          title: 'Location Permission Blocked',
+          message:
+          'Location access was permanently denied.\n\n'
+              'Go to Settings → [App] → Location → select "Always".',
+          buttonLabel: 'Open Settings',
+          onTap: () => openAppSettings(),
+        );
+        return;
+      }
 
       await _showLocationBlockDialog(
         title: 'Location Set to "Always" Required',
@@ -315,7 +337,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         buttonLabel: 'Open Settings',
         onTap: () => openAppSettings(),
       );
-      await Future.delayed(const Duration(milliseconds: 300));
+
+      // Wait for the user to come back from Settings before rechecking
+      await Future.delayed(const Duration(milliseconds: 500));
       final recheckPerm = await Geolocator.checkPermission();
       final bool recheckGranted = recheckPerm == LocationPermission.always ||
           (Platform.isIOS && recheckPerm == LocationPermission.whileInUse);
@@ -743,35 +767,38 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     _isLocationDialogVisible = true;
     _locationDialogContext = null;
 
-    await showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (ctx) {
-        _locationDialogContext = ctx;
-        return WillPopScope(
-          onWillPop: () async => false,
-          child: AlertDialog(
-            backgroundColor: const Color(0xFF1E293B),
-            shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(16)),
-            title: Text(title, style: const TextStyle(color: Colors.white)),
-            content: Text(message, style: const TextStyle(color: Colors.white70)),
-            actions: [
-              ElevatedButton(
-                onPressed: () {
-                  Navigator.pop(ctx);
-                  onTap();
-                },
-                child: Text(buttonLabel),
-              ),
-            ],
-          ),
-        );
-      },
-    );
-
-    _isLocationDialogVisible = false;
-    _locationDialogContext = null;
+    try {
+      await showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (ctx) {
+          _locationDialogContext = ctx;
+          return WillPopScope(
+            onWillPop: () async => false,
+            child: AlertDialog(
+              backgroundColor: const Color(0xFF1E293B),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(16)),
+              title: Text(title, style: const TextStyle(color: Colors.white)),
+              content: Text(message, style: const TextStyle(color: Colors.white70)),
+              actions: [
+                ElevatedButton(
+                  onPressed: () {
+                    Navigator.pop(ctx);
+                    onTap();
+                  },
+                  child: Text(buttonLabel),
+                ),
+              ],
+            ),
+          );
+        },
+      );
+    } finally {
+      // Always reset — even if showDialog throws or widget unmounts mid-dialog.
+      _isLocationDialogVisible = false;
+      _locationDialogContext = null;
+    }
   }
 
   Future<bool> _handleLocationPermission() async {
