@@ -318,6 +318,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   Future<void> _restoreLiveTrackingIfNeeded() async {
+    // Guard: if already tracking, do NOT restart. This is called every 30s from
+    // _loadDashboard. Without this guard, it calls startTracking() which always
+    // calls stopTracking() first — killing the iOS stream every 30 seconds.
+    // Android doesn't care because its background service isolate runs independently.
+    if (_liveLocationService.isTracking) return;
+
     final prefs = await SharedPreferences.getInstance();
     final isShiftActive = prefs.getBool('shift_active') ?? false;
     final assignmentId = prefs.getInt('active_assignment_id');
