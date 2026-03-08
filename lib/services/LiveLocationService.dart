@@ -1,12 +1,4 @@
 // lib/services/LiveLocationService.dart
-//
-// Strategy:
-//  Android → foreground service in BackgroundLocation_Service.dart handles HTTP.
-//            This class runs the GPS stream + WebSocket in foreground.
-//  iOS     → The GPS stream (with allowBackgroundLocationUpdates: true) is the
-//            ONLY reliable background wakeup Apple allows without special
-//            entitlements. Each GPS fix wakes the main isolate briefly — we use
-//            that window to fire an HTTP POST directly (WS is dead in background).
 
 import 'dart:async';
 import 'dart:convert';
@@ -27,11 +19,11 @@ class LiveLocationService {
   factory LiveLocationService() => _instance;
   LiveLocationService._internal();
 
-  // ─── Internal state ───────────────────────────────────────────────────────
   StompClient? _stompClient;
   StreamSubscription<Position>? _positionSubscription;
   Timer? _heartbeatTimer;
   Timer? _shiftCheckTimer;
+  Timer? _permissionCheckTimer;
 
   bool _isTracking = false;
   Position? _lastPosition;
@@ -41,37 +33,33 @@ class LiveLocationService {
   int? _currentUserId;
   int? _currentAssignmentId;
 
-  /// HomeScreen sets this to update UI when shift ends remotely.
   VoidCallback? onShiftEndedRemotely;
 
-  // ─── Configuration ────────────────────────────────────────────────────────
   static const int _locationIntervalSeconds = 30;
   static const int _shiftCheckIntervalSeconds = 30;
 
-  // ─── Public API ───────────────────────────────────────────────────────────
   bool get isTracking => _isTracking;
   Position? get lastPosition => _lastPosition;
   bool get isConnected => _stompClient?.connected ?? false;
 
   void startTracking(int userId, int assignmentId) {
-    stopTracking(); // clean restart
+    stopTracking();
 
     _currentUserId = userId;
     _currentAssignmentId = assignmentId;
     _isTracking = true;
 
-    // Connect WebSocket (foreground fast path)
     _connectWebSocket(userId, assignmentId);
-
-    // Start the GPS stream — this is the backbone for BOTH platforms.
-    // On iOS: each fix wakes the main isolate; we send HTTP from here in bg.
-    // On Android: the foreground service handles bg HTTP independently.
     _startLocationStream(userId, assignmentId);
-
-    // Shift checker timer (belt-and-suspenders)
     _startShiftChecker(userId, assignmentId);
 
-    // Android only: start foreground service isolate
+    // iOS: start a separate permission checker that runs every 60s
+    // We do NOT check permission inside the GPS stream callback —
+    // iOS returns wrong permission values during background wakeups.
+    if (Platform.isIOS) {
+      _startPermissionWatcher();
+    }
+
     startBackgroundLocationService(userId, assignmentId);
   }
 
@@ -86,6 +74,9 @@ class LiveLocationService {
 
     _positionSubscription?.cancel();
     _positionSubscription = null;
+
+    _permissionCheckTimer?.cancel();
+    _permissionCheckTimer = null;
 
     _stompClient?.deactivate();
     _stompClient = null;
@@ -108,9 +99,7 @@ class LiveLocationService {
       config: StompConfig(
         url: 'wss://api.blackfabricsecurity.com/ws',
         reconnectDelay: const Duration(seconds: 5),
-        onConnect: (_) {
-          print('✅ WebSocket connected');
-        },
+        onConnect: (_) => print('✅ WebSocket connected'),
         onWebSocketError: (error) => print('❌ WebSocket error: $error'),
         onDisconnect: (_) => print('⚠️ WebSocket disconnected'),
       ),
@@ -119,8 +108,6 @@ class LiveLocationService {
   }
 
   // ─── GPS Stream ───────────────────────────────────────────────────────────
-  // Started immediately (not inside onConnect) so iOS gets GPS fixes
-  // even if the WebSocket hasn't connected yet.
 
   void _startLocationStream(int userId, int assignmentId) {
     final locationSettings = Platform.isIOS
@@ -128,9 +115,9 @@ class LiveLocationService {
       accuracy: LocationAccuracy.bestForNavigation,
       activityType: ActivityType.otherNavigation,
       distanceFilter: 0,
-      pauseLocationUpdatesAutomatically: false, // CRITICAL — never pause
-      showBackgroundLocationIndicator: true,    // blue status bar on iOS
-      allowBackgroundLocationUpdates: true,     // CRITICAL — bg wakeups
+      pauseLocationUpdatesAutomatically: false,
+      showBackgroundLocationIndicator: true,
+      allowBackgroundLocationUpdates: true,
     )
         : AndroidSettings(
       accuracy: LocationAccuracy.bestForNavigation,
@@ -149,13 +136,14 @@ class LiveLocationService {
             _lastPosition = pos;
             if (!_isTracking) return;
 
-            // ── Permission safety net ────────────────────────────────────────────
-            final LocationPermission perm = await Geolocator.checkPermission();
-            if (perm != LocationPermission.always) {
-              print('🔒 [Stream] "Always" permission lost — stopping tracking');
-              await _handleRemoteShiftEnd();
-              return;
-            }
+            // ── CRITICAL iOS FIX ────────────────────────────────────────────────
+            // Do NOT call Geolocator.checkPermission() here on iOS.
+            // When iOS wakes the main isolate for a GPS fix in the background,
+            // checkPermission() unreliably returns whileInUse even when the user
+            // granted Always. This was causing tracking to stop itself every time.
+            // Permission is now checked separately via _startPermissionWatcher()
+            // which runs while the app is in the foreground only.
+            // ────────────────────────────────────────────────────────────────────
 
             final now = DateTime.now();
             final secondsSinceLast = _lastSentTime == null
@@ -166,7 +154,6 @@ class LiveLocationService {
               await _sendLocation(userId, assignmentId);
             }
 
-            // Piggyback shift check (throttled)
             _piggybackShiftCheck(assignmentId);
           },
           onError: (error) {
@@ -181,9 +168,7 @@ class LiveLocationService {
           cancelOnError: false,
         );
 
-    // Heartbeat timer — fires even if device barely moves (on Android in foreground)
-    // On iOS this is mostly redundant since the stream fires continuously, but
-    // it adds a safety net for edge cases.
+    // Heartbeat — safety net if device barely moves
     _heartbeatTimer?.cancel();
     _heartbeatTimer = Timer.periodic(
         const Duration(seconds: _locationIntervalSeconds), (_) async {
@@ -193,6 +178,29 @@ class LiveLocationService {
     });
 
     print('📍 Location stream started for user $userId, assignment $assignmentId');
+  }
+
+  // ─── Permission watcher (iOS only, foreground-safe) ───────────────────────
+  // Checks permission every 60s. Because this runs on a timer (not inside a
+  // background wakeup callback), iOS returns the correct permission value.
+
+  void _startPermissionWatcher() {
+    _permissionCheckTimer?.cancel();
+    _permissionCheckTimer = Timer.periodic(const Duration(seconds: 60), (_) async {
+      if (!_isTracking) return;
+      try {
+        final perm = await Geolocator.checkPermission();
+        if (perm == LocationPermission.denied ||
+            perm == LocationPermission.deniedForever) {
+          print('🔒 [PermWatcher] Permission revoked — stopping tracking');
+          await _handleRemoteShiftEnd();
+        }
+        // Note: whileInUse is still allowed — we keep tracking.
+        // Only fully denied should stop us.
+      } catch (e) {
+        print('⚠️ [PermWatcher] Error: $e');
+      }
+    });
   }
 
   // ─── Shift checker ────────────────────────────────────────────────────────
@@ -248,7 +256,6 @@ class LiveLocationService {
       final data = jsonDecode(response.body);
       final bool active = data['Active'] == true;
       final int? serverAssignmentId = data['assignmentId'] as int?;
-
       if (!active) return false;
       if (serverAssignmentId != null && serverAssignmentId != assignmentId) {
         print('⚠️ Assignment mismatch (server=$serverAssignmentId, local=$assignmentId)');
@@ -270,27 +277,22 @@ class LiveLocationService {
     onShiftEndedRemotely?.call();
   }
 
-  // ─── Send location ────────────────────────────────────────────────────────
-  // FIX: Made async so iOS can await the HTTP call inside the GPS stream callback.
-  // FIX: Fixed Dart string interpolation bug (was \\${ instead of ${}).
-  // FIX: iOS always uses HTTP (WebSocket is killed by iOS in background).
-  //      Android tries WebSocket first, falls back to HTTP.
+  // ─── Send ─────────────────────────────────────────────────────────────────
 
   Future<void> _sendLocation(int userId, int assignmentId) async {
     if (!_isTracking || _lastPosition == null) return;
 
     _lastSentTime = DateTime.now();
-
     final lat = _lastPosition!.latitude;
     final lng = _lastPosition!.longitude;
 
-    // ── iOS: always HTTP — WebSocket is unreliable in background on iOS ──────
+    // iOS: always HTTP — WebSocket is killed by iOS in background
     if (Platform.isIOS) {
       await _sendViaHttp(userId, lat, lng);
       return;
     }
 
-    // ── Android: try WebSocket first (lower latency in foreground) ───────────
+    // Android: WebSocket first, HTTP fallback
     final wsBody = jsonEncode({
       'userId': userId,
       'shiftId': assignmentId,
@@ -308,11 +310,9 @@ class LiveLocationService {
       return;
     }
 
-    // WebSocket is down — use HTTP fallback and reconnect
     print('⚠️ WS down — HTTP fallback');
     await _sendViaHttp(userId, lat, lng);
 
-    // Try to reconnect WebSocket for next send
     Future.delayed(const Duration(seconds: 3), () {
       if (_isTracking && (_stompClient == null || !_stompClient!.connected)) {
         _connectWebSocket(userId, assignmentId);

@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
     package="com.blackfabricsecurity.crossplatformblackfabric">
 
     <!-- ============================================================ -->
@@ -134,6 +135,18 @@
         <meta-data
             android:name="flutterEmbedding"
             android:value="2"/>
+
+        <!-- ============================================================ -->
+        <!-- BACKGROUND LOCATION SERVICE (flutter_background_service)     -->
+        <!-- foregroundServiceType=location required for Android 14+      -->
+        <!-- tools:replace resolves conflict with plugin's own manifest   -->
+        <!-- ============================================================ -->
+        <service
+            android:name="id.flutter.flutter_background_service.BackgroundService"
+            android:foregroundServiceType="location"
+            android:exported="true"
+            tools:replace="android:exported" />
+
     </application>
 
 </manifest>
