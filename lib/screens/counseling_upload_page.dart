@@ -209,13 +209,13 @@ class _CounselingUploadPageState extends State<CounselingUploadPage> {
     if (_isPickingMedia || _loading) return;
 
     if (source == ImageSource.camera) {
+      // Camera permission is required to access the camera hardware.
       if (!await _checkPermission(Permission.camera, 'Camera')) return;
-    } else {
-      final perm = Platform.isIOS
-          ? Permission.photos
-          : (await _getAndroidSdkInt() >= 33 ? Permission.photos : Permission.storage);
-      if (!await _checkPermission(perm, 'Photos')) return;
     }
+    // Gallery on Android 13+: image_picker uses the system Photo Picker,
+    // which needs NO permission — do NOT request READ_MEDIA_IMAGES.
+    // Gallery on Android ≤ 12: READ_EXTERNAL_STORAGE (maxSdkVersion="32")
+    // covers it; image_picker handles it internally.
 
     setState(() => _isPickingMedia = true);
     try {
@@ -237,14 +237,14 @@ class _CounselingUploadPageState extends State<CounselingUploadPage> {
     if (_isPickingMedia || _loading) return;
 
     if (source == ImageSource.camera) {
+      // Camera + microphone permissions required for recording.
       if (!await _checkPermission(Permission.camera, 'Camera')) return;
       if (!await _checkPermission(Permission.microphone, 'Microphone')) return;
-    } else {
-      final perm = Platform.isIOS
-          ? Permission.photos
-          : (await _getAndroidSdkInt() >= 33 ? Permission.videos : Permission.storage);
-      if (!await _checkPermission(perm, 'Photos & Videos')) return;
     }
+    // Gallery on Android 13+: image_picker uses the system Photo Picker,
+    // which needs NO permission — do NOT request READ_MEDIA_VIDEO.
+    // Gallery on Android ≤ 12: READ_EXTERNAL_STORAGE (maxSdkVersion="32")
+    // covers it; image_picker handles it internally.
 
     setState(() => _isPickingMedia = true);
     try {

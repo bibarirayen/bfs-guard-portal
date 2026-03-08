@@ -31,25 +31,27 @@
     <!-- ============================================================ -->
     <!-- STORAGE / MEDIA GALLERY                                        -->
     <!--                                                                -->
-    <!-- Android ≤ 12 (SDK ≤ 32): READ/WRITE_EXTERNAL_STORAGE          -->
-    <!-- Android 13+ (SDK 33+):   READ_MEDIA_IMAGES + READ_MEDIA_VIDEO -->
-    <!-- Android 14+ (SDK 34+):   READ_MEDIA_VISUAL_USER_SELECTED      -->
-    <!--   (lets users pick specific photos without full access)        -->
+    <!-- READ_MEDIA_IMAGES and READ_MEDIA_VIDEO have been REMOVED.     -->
+    <!-- Google Play policy only allows those for apps that need       -->
+    <!-- persistent broad access to ALL media (e.g. gallery apps).     -->
+    <!--                                                                -->
+    <!-- This app only needs one-time/infrequent photo/video access    -->
+    <!-- (report attachments, counseling uploads). The Android Photo   -->
+    <!-- Picker — used automatically by image_picker on Android 13+   -->
+    <!-- — does NOT require any storage permission.                    -->
+    <!--                                                                -->
+    <!-- Android ≤ 12 (SDK ≤ 32): READ_EXTERNAL_STORAGE kept with     -->
+    <!--   maxSdkVersion="32" so older devices can still pick files.   -->
+    <!-- Android 14+ (SDK 34+): READ_MEDIA_VISUAL_USER_SELECTED lets  -->
+    <!--   users grant access to specific photos only (partial access).-->
     <!-- ============================================================ -->
 
-    <!-- Legacy (Android 12 and below) -->
+    <!-- Legacy storage — Android 12 and below only -->
     <uses-permission
         android:name="android.permission.READ_EXTERNAL_STORAGE"
         android:maxSdkVersion="32"/>
-    <uses-permission
-        android:name="android.permission.WRITE_EXTERNAL_STORAGE"
-        android:maxSdkVersion="29"/>
 
-    <!-- Android 13+ granular media permissions -->
-    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES"/>
-    <uses-permission android:name="android.permission.READ_MEDIA_VIDEO"/>
-
-    <!-- Android 14+ partial photo access (Photo Picker fallback) -->
+    <!-- Android 14+ partial photo access (Photo Picker) -->
     <uses-permission android:name="android.permission.READ_MEDIA_VISUAL_USER_SELECTED"/>
 
     <!-- ============================================================ -->
@@ -103,12 +105,11 @@
     <!-- ============================================================ -->
     <application
         android:label="BFS Guard Portal"
-        android:icon="@mipmap/ic_launcher"
-        android:requestLegacyExternalStorage="true">
+        android:icon="@mipmap/ic_launcher">
         <!--
-          android:requestLegacyExternalStorage="true"
-          Needed for Android 10 (API 29) devices to access media files
-          the old way before scoped storage became mandatory.
+          android:requestLegacyExternalStorage removed — it only applied
+          to Android 10 (API 29) and Google Play flags it as a policy issue.
+          Scoped storage is used on all supported Android versions.
         -->
 
         <!-- Main Activity -->
