@@ -56,6 +56,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   String _guardName = "";
   DateTime? _shiftStartDateTime;
   DateTime? _shiftEndDateTime;
+  DateTime? _shiftStopDateTime; // ✅ for overnight: today's date + endTime (no +1 day)
+  String _sessionFromDate = "";
+  String _sessionToDate = "";
   double? _siteLat;
   double? _siteLng;
   String _siteName = "";
@@ -129,7 +132,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       if (!mounted) return;
       setState(() {
         _shiftStarted = false;
-        _shiftEnded = true;
+        _shiftEnded = false; // ✅ FIX: let _updateShiftButtons control button visibility
         _assignmentActive = false;
       });
       ScaffoldMessenger.of(context).showSnackBar(
@@ -368,7 +371,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         if (mounted) {
           setState(() {
             _shiftStarted = false;
-            _shiftEnded = true;
+            _shiftEnded = false; // ✅ FIX: don't hide the button — let _updateShiftButtons decide based on time
           });
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
@@ -393,6 +396,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       DateTime? startDateTime;
       DateTime? endDateTime;
       String formattedHours = "0h";
+      String parsedFromDate = "";
+      String parsedToDate = "";
       final prefs = await SharedPreferences.getInstance();
 
       // FIX 3: only wipe keys when no shift today. Previously wiped every 30s
@@ -415,8 +420,15 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           _supervisorPhone = site["supervisornumber"];
         }
 
-        final shiftDateStr = data["date"];
+        final shiftDateStr = data["date"];           // session START date from backend
+        final sessionEndDateStr = data["sessionEndDate"]; // session END date from backend
         final shiftDate = DateTime.parse(shiftDateStr);
+        final sessionEndDate = sessionEndDateStr != null
+            ? DateTime.parse(sessionEndDateStr as String)
+            : shiftDate;
+        String fmtDate(DateTime d) => "${d.month.toString().padLeft(2,"0")}/${d.day.toString().padLeft(2,"0")}/${d.year}";
+        parsedFromDate = fmtDate(shiftDate);
+        parsedToDate = fmtDate(sessionEndDate);
         final startParts = start.split(":");
         final endParts = end.split(":");
 
@@ -432,6 +444,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         final isOvernightShift =
             (endHour * 60 + endMin) <= (startHour * 60 + startMin);
 
+        // endDateTime = used for shift hours display and start window check
         endDateTime = DateTime.utc(
           shiftDate.year, shiftDate.month, shiftDate.day, endHour, endMin,
         );
@@ -441,7 +454,25 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
         _shiftStartDateTime = startDateTime;
         _shiftEndDateTime = endDateTime;
+
+        // ✅ FIX: stopDateTime uses sessionEndDate from backend
+        // Backend already knows if we're on the after-midnight side and sends
+        // the correct end date (today vs tomorrow)
+        _shiftStopDateTime = DateTime.utc(
+          sessionEndDate.year, sessionEndDate.month, sessionEndDate.day,
+          endHour, endMin,
+        );
+
         shiftTime = "${_toAmPm(start)} - ${_toAmPm(end)}";
+
+        debugPrint("📅 [Dashboard] sessionStartDate   : $shiftDateStr");
+        debugPrint("📅 [Dashboard] sessionEndDate     : $sessionEndDateStr");
+        debugPrint("📅 [Dashboard] startTime from API : $start");
+        debugPrint("📅 [Dashboard] endTime from API   : $end");
+        debugPrint("📅 [Dashboard] isOvernightShift   : $isOvernightShift");
+        debugPrint("📅 [Dashboard] startDateTime built: $startDateTime");
+        debugPrint("📅 [Dashboard] stopDateTime built : $_shiftStopDateTime");
+        debugPrint("📅 [Dashboard] Active from API    : ${data["Active"]}");
 
         final totalMins = endDateTime!.difference(startDateTime!).inMinutes;
         final h = totalMins ~/ 60;
@@ -469,6 +500,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         _guardRole = guardRole;
         _isSupervisor = isSupervisor;
         _hoursToday = formattedHours;
+        if (hasShiftToday) {
+          _sessionFromDate = parsedFromDate;
+          _sessionToDate = parsedToDate;
+        }
         _hasAssignment = prefs.getInt('assignmentId') != null;
       });
 
@@ -505,22 +540,50 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   Future<void> _updateShiftButtons() async {
-    if (_shiftStartDateTime == null || _shiftEndDateTime == null) return;
+    if (_shiftStartDateTime == null || _shiftEndDateTime == null) {
+      debugPrint("⛔ [ShiftButtons] Skipping — shiftStart or shiftEnd is null");
+      return;
+    }
 
     DateTime now = DateTime.now().toUtc().subtract(const Duration(hours: 10));
+    debugPrint("🕐 [ShiftButtons] local fallback now (UTC-10): $now");
+
     final serverTime = await _fetchServerTime();
-    if (serverTime != null) now = serverTime.subtract(const Duration(hours: 10));
+    if (serverTime != null) {
+      debugPrint("🌐 [ShiftButtons] raw serverTime from API: $serverTime");
+      now = serverTime.subtract(const Duration(hours: 10));
+      debugPrint("🕐 [ShiftButtons] now after -10h from server: $now");
+    } else {
+      debugPrint("⚠️ [ShiftButtons] serverTime is null, using local fallback");
+    }
 
     final startWindow = _shiftStartDateTime!.subtract(const Duration(minutes: 15));
 
-    setState(() {
-      _canStartShift = !_assignmentActive &&
-          now.isAfter(startWindow) &&
-          now.isBefore(_shiftEndDateTime!.add(const Duration(minutes: 5)));
+    debugPrint("📋 [ShiftButtons] _shiftStartDateTime : $_shiftStartDateTime (isUtc=${_shiftStartDateTime!.isUtc})");
+    debugPrint("📋 [ShiftButtons] _shiftEndDateTime   : $_shiftEndDateTime (isUtc=${_shiftEndDateTime!.isUtc})");
+    debugPrint("📋 [ShiftButtons] _shiftStopDateTime  : $_shiftStopDateTime");
+    debugPrint("📋 [ShiftButtons] startWindow (-15min): $startWindow");
+    debugPrint("📋 [ShiftButtons] now                 : $now");
+    debugPrint("📋 [ShiftButtons] _assignmentActive   : $_assignmentActive");
 
-      _canStopShift = _assignmentActive &&
-          (now.isAfter(_shiftEndDateTime!) ||
-              now.isAtSameMomentAs(_shiftEndDateTime!));
+    final canStart = !_assignmentActive &&
+        now.isAfter(startWindow) &&
+        now.isBefore(_shiftEndDateTime!.add(const Duration(minutes: 5)));
+
+    final canStop = _assignmentActive &&
+        _shiftStopDateTime != null &&
+        (now.isAfter(_shiftStopDateTime!) ||
+            now.isAtSameMomentAs(_shiftStopDateTime!));
+
+    debugPrint("✅ [ShiftButtons] canStart=$canStart  canStop=$canStop");
+    debugPrint("   └─ !_assignmentActive=${!_assignmentActive}");
+    debugPrint("   └─ now.isAfter(startWindow)=${now.isAfter(startWindow)}");
+    debugPrint("   └─ now.isBefore(endTime+5min)=${now.isBefore(_shiftEndDateTime!.add(const Duration(minutes: 5)))}");
+    debugPrint("   └─ now.isAfter(stopTime)=${_shiftStopDateTime != null ? now.isAfter(_shiftStopDateTime!) : 'stopTime null'}");
+
+    setState(() {
+      _canStartShift = canStart;
+      _canStopShift = canStop;
     });
   }
 
@@ -597,7 +660,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           _canStopShift = false;
         });
 
-        ShiftService().startAssignment(assignmentId);
+        await ShiftService().startAssignment(assignmentId);
         _liveLocationService.startTracking(guardId, assignmentId);
 
         await prefs.setBool('shift_active', true);
@@ -646,10 +709,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         await prefs.setBool('shift_active', false);
         await prefs.remove('active_assignment_id');
         await prefs.remove('active_guard_id');
+        await prefs.remove('assignmentId');
 
         setState(() {
           _assignmentActive = false;
-          _shiftEnded = true;
+          _shiftEnded = false; // ✅ let _loadDashboard + _updateShiftButtons control visibility
           _shiftStarted = false;
           _canStopShift = false;
         });
@@ -661,6 +725,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             backgroundColor: Colors.green,
           ),
         );
+
+        // ✅ Reload dashboard so next session's START button appears immediately
+        await _loadDashboard();
       } else {
         final data = jsonDecode(response.body);
         ScaffoldMessenger.of(context).showSnackBar(
@@ -1061,6 +1128,33 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                               ],
                             ),
                           ),
+                          if (_hasShiftToday && _sessionFromDate.isNotEmpty) ...[
+                            const SizedBox(height: 8),
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 12, vertical: 6),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFF59E0B).withOpacity(0.1),
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  const Icon(Icons.calendar_today,
+                                      size: 14, color: Color(0xFFF59E0B)),
+                                  const SizedBox(width: 6),
+                                  Flexible(
+                                    child: Text("$_sessionFromDate → $_sessionToDate",
+                                        overflow: TextOverflow.ellipsis,
+                                        style: TextStyle(
+                                            color: _textColor,
+                                            fontSize: 13,
+                                            fontWeight: FontWeight.w600)),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
                         ],
                       ),
                     ),

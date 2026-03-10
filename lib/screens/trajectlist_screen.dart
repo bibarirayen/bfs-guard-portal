@@ -36,7 +36,7 @@ class _TrajectListPageState extends State<TrajectListPage> {
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
         final parsed = DateTime.parse(data['now'].toString().split('[')[0]);
-        return parsed.subtract(const Duration(hours: 10)).toLocal().subtract(const Duration(hours:1)); // Hawaii time
+        return parsed.subtract(const Duration(hours: 10)); // Hawaii time (UTC-10)
       }
     } catch (_) {}
     return DateTime.now().toUtc(); // fallback
@@ -74,7 +74,8 @@ class _TrajectListPageState extends State<TrajectListPage> {
       final prefs = await SharedPreferences.getInstance();
       final assignmentId = prefs.getInt('assignmentId');
       if (assignmentId == null) {
-        if (mounted) setState(() => isLoading = false);
+        // ✅ No active assignment — clear the list
+        if (mounted) setState(() { trajects = []; isLoading = false; });
         return;
       }
       final results = await Future.wait([
@@ -357,7 +358,7 @@ class _TrajectListPageState extends State<TrajectListPage> {
                         style: TextStyle(
                             color: secondaryTextColor, fontSize: 12)),
                     if (traject.expiresAt != null) ...[
-                      () { debugPrint('📅 [${traject.name}] expiresAt: ${traject.expiresAt}  |  serverNow: $_serverNow  |  isExpired: ${traject.expiresAt!.isBefore(_serverNow ?? DateTime.now())}'); return const SizedBox(); }(),
+                          () { debugPrint('📅 [${traject.name}] expiresAt: ${traject.expiresAt}  |  serverNow: $_serverNow  |  isExpired: ${traject.expiresAt!.isBefore(_serverNow ?? DateTime.now())}'); return const SizedBox(); }(),
                       const SizedBox(width: 12),
                       Icon(Icons.event_outlined,
                           size: 13,
