@@ -1198,13 +1198,6 @@ class _CheckpointsScreenState extends State<CheckpointsScreen> {
                 ],
                 const SizedBox(height: 5),
                 Row(children: [
-                  Icon(Icons.radar, size: 12, color: secondaryTextColor),
-                  const SizedBox(width: 4),
-                  Text(
-                      'Range: ${checkpoint.range.toStringAsFixed(0)} ft',
-                      style: TextStyle(
-                          color: secondaryTextColor, fontSize: 11)),
-                  const SizedBox(width: 12),
                   Icon(Icons.nfc, size: 12, color: secondaryTextColor),
                   const SizedBox(width: 4),
                   Text('NFC',
