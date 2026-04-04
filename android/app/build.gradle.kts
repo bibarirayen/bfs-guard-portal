@@ -31,8 +31,8 @@ android {
         applicationId = "com.blackfabricsecurity.crossplatformblackfabric"
         minSdk = flutter.minSdkVersion
         targetSdk = 36
-        versionCode = 47
-        versionName = "1.0.1"
+        versionCode = 48
+        versionName = "1.0.2"
     }
 
     signingConfigs {

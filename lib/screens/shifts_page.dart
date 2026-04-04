@@ -134,8 +134,9 @@ class _ShiftsPageState extends State<ShiftsPage> {
   // Open in Maps
   // ─────────────────────────────────────────────────────────────────────────
   Future<void> _openInMaps(LatLng location) async {
-    final url = Uri.parse(
-        "https://www.google.com/maps/search/?api=1&query=${location.latitude},${location.longitude}");
+    final lat = location.latitude;
+    final lng = location.longitude;
+    final url = Uri.parse("https://maps.google.com/?q=$lat,$lng");
     await launchUrl(url, mode: LaunchMode.externalApplication);
   }
 

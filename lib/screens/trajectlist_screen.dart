@@ -36,10 +36,10 @@ class _TrajectListPageState extends State<TrajectListPage> {
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
         final parsed = DateTime.parse(data['now'].toString().split('[')[0]);
-        return parsed.subtract(const Duration(hours: 10)); // Hawaii time (UTC-10)
+        return parsed.toUtc(); // keep as UTC — compare UTC vs UTC
       }
     } catch (_) {}
-    return DateTime.now().toUtc(); // fallback
+    return DateTime.now().toUtc();
   }
   Color get backgroundColor =>
       _isDarkMode ? const Color(0xFF0F172A) : const Color(0xFFF8FAFC);
@@ -102,7 +102,7 @@ class _TrajectListPageState extends State<TrajectListPage> {
   void _startTraject(AssignmentTrajectory traject) async {
     try {
       if (traject.expiresAt != null &&
-          traject.expiresAt!.isBefore(DateTime.now())) {
+          traject.expiresAt!.isBefore(_serverNow ?? DateTime.now().toUtc())) {
         _showErrorDialog(
             'This patrol route has expired and cannot be started.');
         return;
@@ -362,7 +362,7 @@ class _TrajectListPageState extends State<TrajectListPage> {
                       const SizedBox(width: 12),
                       Icon(Icons.event_outlined,
                           size: 13,
-                          color:traject.expiresAt!.isBefore(_serverNow ?? DateTime.now())
+                          color: traject.expiresAt!.isBefore(_serverNow ?? DateTime.now().toUtc())
                               ? Colors.red
                               : secondaryTextColor),
                       const SizedBox(width: 4),
@@ -370,7 +370,7 @@ class _TrajectListPageState extends State<TrajectListPage> {
                         _formatExpiry(traject.expiresAt!),
                         style: TextStyle(
                           color:
-                          traject.expiresAt!.isBefore(_serverNow ?? DateTime.now())
+                          traject.expiresAt!.isBefore(_serverNow ?? DateTime.now().toUtc())
                               ? Colors.red
                               : secondaryTextColor,
                           fontSize: 12,
@@ -390,12 +390,15 @@ class _TrajectListPageState extends State<TrajectListPage> {
   }
 
   String _formatExpiry(DateTime dt) {
-    final now = _serverNow ?? DateTime.now().toUtc().subtract(const Duration(hours: 10));
+    // Both dt (expiresAt) and _serverNow are UTC — comparison is correct.
+    final now = _serverNow ?? DateTime.now().toUtc();
     final diff = dt.difference(now);
     if (diff.isNegative) return 'Expired';
     if (diff.inHours < 1) return 'Expires in ${diff.inMinutes}m';
     if (diff.inDays < 1) return 'Expires in ${diff.inHours}h';
-    return 'Exp. ${dt.month}/${dt.day} ${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
+    // Display the expiry time in Hawaii time (UTC-10) for readability.
+    final hawaiiDt = dt.subtract(const Duration(hours: 10));
+    return 'Exp. ${hawaiiDt.month}/${hawaiiDt.day} ${hawaiiDt.hour.toString().padLeft(2, '0')}:${hawaiiDt.minute.toString().padLeft(2, '0')}';
   }
 
   Widget _buildActionButton(AssignmentTrajectory traject) {

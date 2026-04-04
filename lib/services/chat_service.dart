@@ -41,8 +41,8 @@ class ChatMessage {
     receiverId: j['receiverId'] ?? 0,
     content:    j['content'] ?? '',
     sentAt:     j['sentAt'] != null
-        ? (DateTime.tryParse(j['sentAt']) ?? DateTime.now()).toLocal()
-        : DateTime.now(),
+        ? (DateTime.tryParse(j['sentAt'])?.toUtc().subtract(const Duration(hours: 10)) ?? DateTime.now().toUtc().subtract(const Duration(hours: 10)))
+        : DateTime.now().toUtc().subtract(const Duration(hours: 10)),
     isRead:     j['isRead'] ?? false,
   );
 
@@ -89,7 +89,7 @@ class Conversation {
     userRole:        j['userRole'] ?? 'Guard',
     lastMessage:     j['lastMessage'],
     lastMessageTime: j['lastMessageTime'] != null
-        ? DateTime.tryParse(j['lastMessageTime'])?.toLocal()
+        ? DateTime.tryParse(j['lastMessageTime'])?.toUtc().subtract(const Duration(hours: 10))
         : null,
     unreadCount:     j['unreadCount'] ?? 0,
   );

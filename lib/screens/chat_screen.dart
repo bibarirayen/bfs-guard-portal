@@ -445,7 +445,7 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   String _formatDate(DateTime dt) {
-    final now = DateTime.now();
+    final now = DateTime.now().toUtc().subtract(const Duration(hours: 10));
     final today = DateTime(now.year, now.month, now.day);
     final msgDay = DateTime(dt.year, dt.month, dt.day);
     final diff = today.difference(msgDay).inDays;

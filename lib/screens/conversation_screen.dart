@@ -254,7 +254,7 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
   }
 
   String _formatTime(DateTime dt) {
-    final diff = DateTime.now().difference(dt);
+    final diff = DateTime.now().toUtc().subtract(const Duration(hours: 10)).difference(dt);
     if (diff.inMinutes < 1) return 'now';
     if (diff.inHours  < 1)  return '${diff.inMinutes}m';
     if (diff.inDays   < 1)  return '${diff.inHours}h';

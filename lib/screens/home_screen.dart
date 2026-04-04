@@ -882,9 +882,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       );
       return;
     }
-    final url = Uri.parse(
-      "https://www.google.com/maps/search/?api=1&query=$_siteLat,$_siteLng",
-    );
+    final url = Uri.parse("https://maps.google.com/?q=$_siteLat,$_siteLng");
     if (await canLaunchUrl(url)) {
       await launchUrl(url, mode: LaunchMode.externalApplication);
     } else {
