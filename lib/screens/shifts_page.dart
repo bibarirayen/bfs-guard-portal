@@ -137,19 +137,15 @@ class _ShiftsPageState extends State<ShiftsPage> {
   Future<void> _openInMaps(LatLng location) async {
     final lat = location.latitude;
     final lng = location.longitude;
-    Uri url;
+    final Uri url;
     if (Platform.isIOS) {
-      url = Uri.parse('https://maps.apple.com/?ll=$lat,$lng&z=15');
+      // q= drops a pin; ll= centers the map
+      url = Uri.parse('https://maps.apple.com/?q=$lat,$lng&ll=$lat,$lng&z=15');
     } else {
-      url = Uri.parse('geo:$lat,$lng?q=$lat,$lng');
+      // Google Maps web URL — always drops a pin at the given coordinates
+      url = Uri.parse('https://maps.google.com/maps?q=$lat,$lng');
     }
-    if (await canLaunchUrl(url)) {
-      await launchUrl(url, mode: LaunchMode.externalApplication);
-    } else {
-      // fallback to Google Maps web
-      final fallback = Uri.parse('https://www.google.com/maps/@$lat,$lng,15z');
-      await launchUrl(fallback, mode: LaunchMode.externalApplication);
-    }
+    await launchUrl(url, mode: LaunchMode.externalApplication);
   }
 
   // ─────────────────────────────────────────────────────────────────────────

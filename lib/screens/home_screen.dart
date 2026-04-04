@@ -884,25 +884,13 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     }
     final Uri url;
     if (Platform.isIOS) {
-      url = Uri.parse('https://maps.apple.com/?ll=$_siteLat,$_siteLng&z=15');
+      // q= drops a pin; ll= centers the map
+      url = Uri.parse('https://maps.apple.com/?q=$_siteLat,$_siteLng&ll=$_siteLat,$_siteLng&z=15');
     } else {
-      url = Uri.parse('geo:$_siteLat,$_siteLng?q=$_siteLat,$_siteLng');
+      // Google Maps web URL — always drops a pin at the given coordinates
+      url = Uri.parse('https://maps.google.com/maps?q=$_siteLat,$_siteLng');
     }
-    if (await canLaunchUrl(url)) {
-      await launchUrl(url, mode: LaunchMode.externalApplication);
-    } else {
-      // fallback to Google Maps web
-      final fallback = Uri.parse('https://www.google.com/maps/@$_siteLat,$_siteLng,15z');
-      if (mounted) {
-        if (await canLaunchUrl(fallback)) {
-          await launchUrl(fallback, mode: LaunchMode.externalApplication);
-        } else {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Could not open maps')),
-          );
-        }
-      }
-    }
+    await launchUrl(url, mode: LaunchMode.externalApplication);
   }
 
   void _showSupervisorModal() {
