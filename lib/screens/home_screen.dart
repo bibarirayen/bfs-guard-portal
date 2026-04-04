@@ -882,13 +882,26 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       );
       return;
     }
-    final url = Uri.parse("https://maps.google.com/?q=$_siteLat,$_siteLng");
+    final Uri url;
+    if (Platform.isIOS) {
+      url = Uri.parse('https://maps.apple.com/?ll=$_siteLat,$_siteLng&z=15');
+    } else {
+      url = Uri.parse('geo:$_siteLat,$_siteLng?q=$_siteLat,$_siteLng');
+    }
     if (await canLaunchUrl(url)) {
       await launchUrl(url, mode: LaunchMode.externalApplication);
     } else {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Could not open maps")),
-      );
+      // fallback to Google Maps web
+      final fallback = Uri.parse('https://www.google.com/maps/@$_siteLat,$_siteLng,15z');
+      if (mounted) {
+        if (await canLaunchUrl(fallback)) {
+          await launchUrl(fallback, mode: LaunchMode.externalApplication);
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Could not open maps')),
+          );
+        }
+      }
     }
   }
 

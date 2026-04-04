@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -136,8 +137,19 @@ class _ShiftsPageState extends State<ShiftsPage> {
   Future<void> _openInMaps(LatLng location) async {
     final lat = location.latitude;
     final lng = location.longitude;
-    final url = Uri.parse("https://maps.google.com/?q=$lat,$lng");
-    await launchUrl(url, mode: LaunchMode.externalApplication);
+    Uri url;
+    if (Platform.isIOS) {
+      url = Uri.parse('https://maps.apple.com/?ll=$lat,$lng&z=15');
+    } else {
+      url = Uri.parse('geo:$lat,$lng?q=$lat,$lng');
+    }
+    if (await canLaunchUrl(url)) {
+      await launchUrl(url, mode: LaunchMode.externalApplication);
+    } else {
+      // fallback to Google Maps web
+      final fallback = Uri.parse('https://www.google.com/maps/@$lat,$lng,15z');
+      await launchUrl(fallback, mode: LaunchMode.externalApplication);
+    }
   }
 
   // ─────────────────────────────────────────────────────────────────────────

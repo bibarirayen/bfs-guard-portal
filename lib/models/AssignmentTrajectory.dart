@@ -46,8 +46,11 @@ class AssignmentTrajectory {
       completedAt: json['completedAt'] != null
           ? DateTime.parse(json['completedAt'])
           : null,
+      // expiresAt from backend is Hawaii LocalDateTime (UTC-10, no timezone marker).
+      // Appending 'Z' makes Dart treat it as UTC, then +10h converts it to actual UTC
+      // so it can be compared correctly with _serverNow (which is also UTC).
       expiresAt: json['expiresAt'] != null
-          ? DateTime.parse(json['expiresAt'])
+          ? DateTime.parse(json['expiresAt'] + 'Z').add(const Duration(hours: 10))
           : null,
       instanceKey: '${json['id']}',
     );
