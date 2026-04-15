@@ -5,6 +5,7 @@ import 'package:crossplatformblackfabric/screens/home_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'screens/login_screen.dart';
+import 'config/app_globals.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:firebase_crashlytics/firebase_crashlytics.dart';
@@ -12,8 +13,6 @@ import 'services/notifications.dart';
 import 'services/BackgroundLocation_Service.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:http/http.dart' as http;
-
-final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
 const String backendUrl = 'https://api.blackfabricsecurity.com/api/errors/log';
 
@@ -67,6 +66,7 @@ void main() async {
       logError('Initialization error: $e', stack: stack.toString());
     }
 
+    loginScreenBuilder = (_) => const LoginScreen();
     runApp(const BlackFabricApp());
   }, (error, stack) {
     FirebaseCrashlytics.instance.recordError(error, stack);

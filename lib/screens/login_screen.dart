@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:crossplatformblackfabric/screens/home_screen.dart';
 import '../config/ApiService.dart';
+import '../config/app_globals.dart';
 import '../services/HeartbeatService.dart';
 import 'configure_password_screen.dart';
 import 'package:http/http.dart' as http;
@@ -64,7 +65,22 @@ class _LoginScreenState extends State<LoginScreen>
         parent: _animController, curve: Curves.easeOut));
 
     _animController.forward();
-  }
+
+    // Show a banner if the user was auto-logged out because their session expired.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (pendingSessionExpiredMessage && mounted) {
+        pendingSessionExpiredMessage = false;
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text(
+            'Your session has expired. Please sign in again.',
+            style: TextStyle(color: Colors.white),
+          ),
+          backgroundColor: Colors.redAccent,
+          behavior: SnackBarBehavior.floating,
+          duration: Duration(seconds: 5),
+        ));
+      }
+    });
 
   @override
   void dispose() {

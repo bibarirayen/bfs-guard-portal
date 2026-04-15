@@ -31,8 +31,14 @@ android {
         applicationId = "com.blackfabricsecurity.crossplatformblackfabric"
         minSdk = flutter.minSdkVersion
         targetSdk = 36
-        versionCode = 48
-        versionName = "1.0.2"
+        versionCode = 51
+        versionName = "1.0.3"
+
+        // Only build 64-bit ABIs — armeabi-v7a (32-bit) cannot support 16KB pages
+        // and is the most common cause of the Play Store 16KB page size rejection.
+        ndk {
+            abiFilters += listOf("arm64-v8a", "x86_64")
+        }
     }
 
     signingConfigs {
@@ -49,6 +55,14 @@ android {
             signingConfig = signingConfigs.getByName("release")
             isMinifyEnabled = false
             isShrinkResources = false
+        }
+    }
+
+    // 16KB page size: store .so files uncompressed so they can be
+    // loaded directly from the AAB at page-aligned addresses.
+    packaging {
+        jniLibs {
+            useLegacyPackaging = false
         }
     }
 }

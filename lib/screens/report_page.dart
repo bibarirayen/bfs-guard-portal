@@ -107,6 +107,7 @@ class _ReportPageState extends State<ReportPage> {
   double _uploadProgress = 0.0;
   bool _cancelRequested  = false;
   CancelToken? _cancelToken;
+  bool _draftLoading     = false;  // suppresses saves while loading draft
 
   String _selectedReportType = "Incident Report";
   final List<String> _reportTypes = [
@@ -127,6 +128,8 @@ class _ReportPageState extends State<ReportPage> {
   @override
   void initState() {
     super.initState();
+    _attachDraftListeners();
+    _loadDraft();
     _fetchSites();
   }
 
@@ -211,6 +214,7 @@ class _ReportPageState extends State<ReportPage> {
 
   @override
   void dispose() {
+    _removeDraftListeners();
     for (final c in [
       _clientController, _siteController, _officerController, _dateEnteredController,
       _incidentInternalIdController, _incidentDateTimeController, _incidentTypeController,
@@ -231,6 +235,7 @@ class _ReportPageState extends State<ReportPage> {
   }
 
   void _resetPage() {
+    _clearDraft();
     setState(() {
       _mediaItems.clear();
       _selectedReportType = "Incident Report";
@@ -257,6 +262,185 @@ class _ReportPageState extends State<ReportPage> {
       _violationNumberController, _parkingLocationController, _parkingFineController,
       _parkingDetailsController,
     ]) { c.clear(); }
+  }
+
+  // ─── DRAFT SAVE / LOAD ────────────────────────────────────────────────────
+  // The draft is saved to SharedPreferences on every keystroke and every toggle.
+  // It survives: app close, logout, and report-type switches.
+  // It is cleared only after a successful submission.
+
+  List<TextEditingController> get _allControllers => [
+    _clientController, _siteController, _officerController, _dateEnteredController,
+    _incidentInternalIdController, _incidentDateTimeController, _incidentTypeController,
+    _victimNameController, _victimContactController, _suspectNameController,
+    _suspectContactController, _witnessNamesController, _incidentLocationController,
+    _incidentSummaryController, _responderPoliceNamesController, _responderFireTruckController,
+    _responderAmbulanceController, _incidentDetailsController, _incidentActionsController,
+    _dailyShiftStartNotesController, _dailyPostShiftController, _dailySpecialInstructionsController,
+    _dailyPostItemsReceivedController, _dailyObservationsController, _dailyRelievingFirstController,
+    _dailyRelievingLastController, _dailyAdditionalNotesController,
+    _maintenanceTypeController, _maintenanceDetailsController, _maintenanceWhoNotifiedController,
+    _violatorFirstController, _violatorLastController, _vehicleMakeController, _vehicleModelController,
+    _vehicleLPController, _vehicleVINController, _vehicleColorController, _violationTypeController,
+    _violationNumberController, _parkingLocationController, _parkingFineController, _parkingDetailsController,
+  ];
+
+  void _attachDraftListeners() {
+    for (final c in _allControllers) {
+      c.addListener(_saveDraft);
+    }
+  }
+
+  void _removeDraftListeners() {
+    for (final c in _allControllers) {
+      c.removeListener(_saveDraft);
+    }
+  }
+
+  /// Synchronous wrapper — called by text-controller listeners.
+  void _saveDraft() {
+    if (_draftLoading) return;
+    _doSaveDraft();
+  }
+
+  Future<void> _doSaveDraft() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('draft_selectedReportType', _selectedReportType);
+    // Incident Report fields
+    await prefs.setString('draft_incidentInternalId',   _incidentInternalIdController.text);
+    await prefs.setString('draft_incidentDateTime',     _incidentDateTimeController.text);
+    await prefs.setString('draft_incidentType',         _incidentTypeController.text);
+    await prefs.setString('draft_victimName',           _victimNameController.text);
+    await prefs.setString('draft_victimContact',        _victimContactController.text);
+    await prefs.setString('draft_suspectName',          _suspectNameController.text);
+    await prefs.setString('draft_suspectContact',       _suspectContactController.text);
+    await prefs.setString('draft_witnessNames',         _witnessNamesController.text);
+    await prefs.setString('draft_incidentLocation',     _incidentLocationController.text);
+    await prefs.setString('draft_incidentSummary',      _incidentSummaryController.text);
+    await prefs.setString('draft_responderPoliceNames', _responderPoliceNamesController.text);
+    await prefs.setString('draft_responderFireTruck',   _responderFireTruckController.text);
+    await prefs.setString('draft_responderAmbulance',   _responderAmbulanceController.text);
+    await prefs.setString('draft_incidentDetails',      _incidentDetailsController.text);
+    await prefs.setString('draft_incidentActions',      _incidentActionsController.text);
+    await prefs.setBool('draft_policeCalled',           _policeCalled);
+    // Daily Activity Report fields
+    await prefs.setString('draft_dailyShiftStartNotes',     _dailyShiftStartNotesController.text);
+    await prefs.setString('draft_dailyPostShift',           _dailyPostShiftController.text);
+    await prefs.setString('draft_dailySpecialInstructions', _dailySpecialInstructionsController.text);
+    await prefs.setString('draft_dailyPostItemsReceived',   _dailyPostItemsReceivedController.text);
+    await prefs.setString('draft_dailyObservations',        _dailyObservationsController.text);
+    await prefs.setString('draft_dailyRelievingFirst',      _dailyRelievingFirstController.text);
+    await prefs.setString('draft_dailyRelievingLast',       _dailyRelievingLastController.text);
+    await prefs.setString('draft_dailyAdditionalNotes',     _dailyAdditionalNotesController.text);
+    // Maintenance Report fields
+    await prefs.setString('draft_maintenanceType',        _maintenanceTypeController.text);
+    await prefs.setString('draft_maintenanceDetails',     _maintenanceDetailsController.text);
+    await prefs.setString('draft_maintenanceWhoNotified', _maintenanceWhoNotifiedController.text);
+    await prefs.setBool('draft_maintenanceEmailClient',   _maintenanceEmailClient);
+    // Parking Violation Report fields
+    await prefs.setString('draft_violatorFirst',    _violatorFirstController.text);
+    await prefs.setString('draft_violatorLast',     _violatorLastController.text);
+    await prefs.setString('draft_vehicleMake',      _vehicleMakeController.text);
+    await prefs.setString('draft_vehicleModel',     _vehicleModelController.text);
+    await prefs.setString('draft_vehicleLP',        _vehicleLPController.text);
+    await prefs.setString('draft_vehicleVIN',       _vehicleVINController.text);
+    await prefs.setString('draft_vehicleColor',     _vehicleColorController.text);
+    await prefs.setString('draft_violationType',    _violationTypeController.text);
+    await prefs.setString('draft_violationNumber',  _violationNumberController.text);
+    await prefs.setString('draft_parkingLocation',  _parkingLocationController.text);
+    await prefs.setString('draft_parkingFine',      _parkingFineController.text);
+    await prefs.setString('draft_parkingDetails',   _parkingDetailsController.text);
+    await prefs.setBool('draft_vehicleTowed',       _vehicleTowed);
+    // Save attached media file paths
+    await prefs.setStringList(
+      'draft_mediaPaths',
+      _mediaItems.map((m) => '${m.isVideo ? 'v' : 'i'}:${m.file.path}').toList(),
+    );
+  }
+
+  Future<void> _loadDraft() async {
+    _draftLoading = true;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final type = prefs.getString('draft_selectedReportType');
+      if (type != null && _reportTypes.contains(type)) {
+        if (mounted) setState(() => _selectedReportType = type);
+      }
+      // Text fields (setting .text does NOT trigger rebuild, setState not needed)
+      _incidentInternalIdController.text   = prefs.getString('draft_incidentInternalId')   ?? '';
+      _incidentDateTimeController.text     = prefs.getString('draft_incidentDateTime')     ?? '';
+      _incidentTypeController.text         = prefs.getString('draft_incidentType')         ?? '';
+      _victimNameController.text           = prefs.getString('draft_victimName')           ?? '';
+      _victimContactController.text        = prefs.getString('draft_victimContact')        ?? '';
+      _suspectNameController.text          = prefs.getString('draft_suspectName')          ?? '';
+      _suspectContactController.text       = prefs.getString('draft_suspectContact')       ?? '';
+      _witnessNamesController.text         = prefs.getString('draft_witnessNames')         ?? '';
+      _incidentLocationController.text     = prefs.getString('draft_incidentLocation')     ?? '';
+      _incidentSummaryController.text      = prefs.getString('draft_incidentSummary')      ?? '';
+      _responderPoliceNamesController.text = prefs.getString('draft_responderPoliceNames') ?? '';
+      _responderFireTruckController.text   = prefs.getString('draft_responderFireTruck')   ?? '';
+      _responderAmbulanceController.text   = prefs.getString('draft_responderAmbulance')   ?? '';
+      _incidentDetailsController.text      = prefs.getString('draft_incidentDetails')      ?? '';
+      _incidentActionsController.text      = prefs.getString('draft_incidentActions')      ?? '';
+      _dailyShiftStartNotesController.text     = prefs.getString('draft_dailyShiftStartNotes')     ?? '';
+      _dailyPostShiftController.text           = prefs.getString('draft_dailyPostShift')           ?? '';
+      _dailySpecialInstructionsController.text = prefs.getString('draft_dailySpecialInstructions') ?? '';
+      _dailyPostItemsReceivedController.text   = prefs.getString('draft_dailyPostItemsReceived')   ?? '';
+      _dailyObservationsController.text        = prefs.getString('draft_dailyObservations')        ?? '';
+      _dailyRelievingFirstController.text      = prefs.getString('draft_dailyRelievingFirst')      ?? '';
+      _dailyRelievingLastController.text       = prefs.getString('draft_dailyRelievingLast')       ?? '';
+      _dailyAdditionalNotesController.text     = prefs.getString('draft_dailyAdditionalNotes')     ?? '';
+      _maintenanceTypeController.text        = prefs.getString('draft_maintenanceType')        ?? '';
+      _maintenanceDetailsController.text     = prefs.getString('draft_maintenanceDetails')     ?? '';
+      _maintenanceWhoNotifiedController.text = prefs.getString('draft_maintenanceWhoNotified') ?? '';
+      _violatorFirstController.text    = prefs.getString('draft_violatorFirst')   ?? '';
+      _violatorLastController.text     = prefs.getString('draft_violatorLast')    ?? '';
+      _vehicleMakeController.text      = prefs.getString('draft_vehicleMake')     ?? '';
+      _vehicleModelController.text     = prefs.getString('draft_vehicleModel')    ?? '';
+      _vehicleLPController.text        = prefs.getString('draft_vehicleLP')       ?? '';
+      _vehicleVINController.text       = prefs.getString('draft_vehicleVIN')      ?? '';
+      _vehicleColorController.text     = prefs.getString('draft_vehicleColor')    ?? '';
+      _violationTypeController.text    = prefs.getString('draft_violationType')   ?? '';
+      _violationNumberController.text  = prefs.getString('draft_violationNumber') ?? '';
+      _parkingLocationController.text  = prefs.getString('draft_parkingLocation') ?? '';
+      _parkingFineController.text      = prefs.getString('draft_parkingFine')     ?? '';
+      _parkingDetailsController.text   = prefs.getString('draft_parkingDetails')  ?? '';
+      // Boolean toggles
+      if (mounted) {
+        setState(() {
+          _policeCalled           = prefs.getBool('draft_policeCalled')           ?? false;
+          _maintenanceEmailClient = prefs.getBool('draft_maintenanceEmailClient') ?? false;
+          _vehicleTowed           = prefs.getBool('draft_vehicleTowed')           ?? false;
+        });
+      }
+      // Restore attached media files (only if files still exist on device)
+      final paths    = prefs.getStringList('draft_mediaPaths') ?? [];
+      final restored = <_MediaItem>[];
+      for (final p in paths) {
+        if (p.length < 3) continue;
+        final isVideo = p.startsWith('v:');
+        final path    = p.substring(2);
+        final file    = File(path);
+        if (await file.exists()) {
+          final item = _MediaItem(file: file, isVideo: isVideo, thumbLoading: isVideo);
+          restored.add(item);
+          if (isVideo) _generateThumb(item);
+        }
+      }
+      if (restored.isNotEmpty && mounted) {
+        setState(() => _mediaItems.addAll(restored));
+      }
+    } finally {
+      _draftLoading = false;
+    }
+  }
+
+  Future<void> _clearDraft() async {
+    final prefs = await SharedPreferences.getInstance();
+    final keys  = prefs.getKeys().where((k) => k.startsWith('draft_')).toList();
+    for (final k in keys) {
+      await prefs.remove(k);
+    }
   }
 
   // ─── PERMISSIONS ──────────────────────────────────────────────────────────
@@ -323,6 +507,7 @@ class _ReportPageState extends State<ReportPage> {
       if (picked == null || !mounted) return;
       final File stableFile = await _copyToTemp(picked.path, ext: 'jpg');
       setState(() => _mediaItems.add(_MediaItem(file: stableFile, isVideo: false)));
+      _doSaveDraft();
     } finally {
       if (mounted) setState(() => _isPickingMedia = false);
     }
@@ -352,6 +537,7 @@ class _ReportPageState extends State<ReportPage> {
       final item = _MediaItem(file: File(picked.path), isVideo: true, thumbLoading: true);
       setState(() => _mediaItems.add(item));
       _generateThumb(item);
+      _doSaveDraft();
     } finally {
       if (mounted) setState(() => _isPickingMedia = false);
     }
@@ -404,7 +590,7 @@ class _ReportPageState extends State<ReportPage> {
     if (assignmentId == null) {
       setState(() { _hasActiveAssignment = false; _sites = []; });
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(backgroundColor: Colors.redAccent, content: Text("No assignment found!")));
+          const SnackBar(backgroundColor: Colors.redAccent, content: Text("You don't have an active assignment right now. Please contact your supervisor.")));
       return;
     }
     try {
@@ -421,17 +607,17 @@ class _ReportPageState extends State<ReportPage> {
         setState(() { _sites = []; _hasActiveAssignment = false; });
         if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
             backgroundColor: Colors.redAccent,
-            content: Text("No active Assignment found!", style: TextStyle(color: Colors.white))));
+            content: Text("You don't have an active shift right now. Please start your shift before submitting a report.", style: TextStyle(color: Colors.white))));
       }
     } catch (e) {
-      if (mounted) _snackError("Error fetching site: $e");
+      if (mounted) _snackError(ApiService.friendlyError(e));
     }
   }
 
   // ─── SUBMIT ───────────────────────────────────────────────────────────────
   Future<void> _submitReport() async {
-    if (!_hasActiveAssignment) { _snackError("Cannot submit: no active assignment"); return; }
-    if (_selectedSiteId == null) { _snackError("Please select a site"); return; }
+    if (!_hasActiveAssignment) { _snackError("You don't have an active assignment right now. Please contact your supervisor."); return; }
+    if (_selectedSiteId == null) { _snackError("Please select your assigned site before submitting."); return; }
 
     final prefs     = await SharedPreferences.getInstance();
     final officerId = prefs.getInt('userId');
@@ -473,7 +659,7 @@ class _ReportPageState extends State<ReportPage> {
       } else {
         final response = await api.post('reports', payload);
         if (response.statusCode != 200 && response.statusCode != 201) {
-          throw Exception("Server error: ${response.statusCode}");
+          throw Exception("status:${response.statusCode}");
         }
       }
 
@@ -488,18 +674,16 @@ class _ReportPageState extends State<ReportPage> {
     } on DioException catch (e) {
       if (_cancelRequested || e.type == DioExceptionType.cancel) {
         if (mounted) ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Upload cancelled'), backgroundColor: Colors.orange));
+            const SnackBar(content: Text('Upload cancelled.'), backgroundColor: Colors.orange));
       } else {
-        _snackError("Upload failed: ${e.response?.data?.toString() ?? e.message}");
-        print("DATA: ${e.response?.data}");
-        print("ERROR: ${e.message}");
+        _snackError(ApiService.friendlyError(e, statusCode: e.response?.statusCode));
       }
     } catch (e) {
       if (_cancelRequested) {
         if (mounted) ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Upload cancelled'), backgroundColor: Colors.orange));
+            const SnackBar(content: Text('Upload cancelled.'), backgroundColor: Colors.orange));
       } else {
-        _snackError("Error submitting report: $e");
+        _snackError(ApiService.friendlyError(e));
       }
     } finally {
       if (mounted) setState(() { _isSubmitting = false; _uploadProgress = 0.0; _cancelRequested = false; });
@@ -606,7 +790,7 @@ class _ReportPageState extends State<ReportPage> {
                       icon: Icon(Icons.arrow_drop_down, color: _primaryColor),
                       items: _reportTypes.map((t) => DropdownMenuItem(value: t,
                           child: Text(t, style: TextStyle(color: _textColor)))).toList(),
-                      onChanged: (v) => setState(() => _selectedReportType = v!),
+                      onChanged: (v) { setState(() => _selectedReportType = v!); _doSaveDraft(); },
                       style: TextStyle(color: _textColor),
                     ),
                   ])),
@@ -879,6 +1063,7 @@ class _ReportPageState extends State<ReportPage> {
       final item = _MediaItem(file: File(picked.path), isVideo: true, thumbLoading: true);
       setState(() => _mediaItems.add(item));
       _generateThumb(item);
+      _doSaveDraft();
 
     } finally {
       if (mounted) setState(() => _isPickingMedia = false);
@@ -973,7 +1158,7 @@ class _ReportPageState extends State<ReportPage> {
 
           Positioned(top: 4, right: 4,
             child: GestureDetector(
-              onTap: () => setState(() => _mediaItems.removeAt(i)),
+              onTap: () { setState(() => _mediaItems.removeAt(i)); _doSaveDraft(); },
               child: Container(
                 padding: const EdgeInsets.all(3),
                 decoration: const BoxDecoration(color: Colors.red, shape: BoxShape.circle),
@@ -1116,7 +1301,7 @@ class _ReportPageState extends State<ReportPage> {
         Row(children: [
           Text("Police Called:", style: TextStyle(color: _textColor, fontWeight: FontWeight.w500)),
           const SizedBox(width: 8),
-          Switch(value: _policeCalled, onChanged: (v) => setState(() => _policeCalled = v), activeColor: Colors.blueAccent),
+          Switch(value: _policeCalled, onChanged: (v) { setState(() => _policeCalled = v); _doSaveDraft(); }, activeColor: Colors.blueAccent),
           Expanded(child: TextFormField(controller: _responderPoliceNamesController,
               decoration: _modernInput("Police Name(s) & Badge(s)"), style: TextStyle(color: _textColor))),
         ]),
@@ -1150,7 +1335,7 @@ class _ReportPageState extends State<ReportPage> {
         const Icon(Icons.email, color: Colors.amber, size: 20), const SizedBox(width: 12),
         Text("Email Client:", style: TextStyle(color: _textColor, fontWeight: FontWeight.w500)),
         const SizedBox(width: 12),
-        Switch(value: _maintenanceEmailClient, onChanged: (v) => setState(() => _maintenanceEmailClient = v), activeColor: Colors.amber),
+        Switch(value: _maintenanceEmailClient, onChanged: (v) { setState(() => _maintenanceEmailClient = v); _doSaveDraft(); }, activeColor: Colors.amber),
       ]),
     ),
   ];
@@ -1173,7 +1358,7 @@ class _ReportPageState extends State<ReportPage> {
         Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Text("Vehicle Towed?", style: TextStyle(color: _textColor, fontWeight: FontWeight.w500)),
           const SizedBox(height: 8),
-          Switch(value: _vehicleTowed, onChanged: (v) => setState(() => _vehicleTowed = v), activeColor: Colors.redAccent),
+          Switch(value: _vehicleTowed, onChanged: (v) { setState(() => _vehicleTowed = v); _doSaveDraft(); }, activeColor: Colors.redAccent),
         ]),
       ]),
     ),
