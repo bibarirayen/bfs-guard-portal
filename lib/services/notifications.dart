@@ -3,7 +3,7 @@ import 'package:crossplatformblackfabric/screens/late_arrivals_page.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
-import '../main.dart'; // imports navigatorKey
+import '../config/app_globals.dart'; // imports navigatorKey
 
 final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
 FlutterLocalNotificationsPlugin();
