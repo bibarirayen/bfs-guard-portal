@@ -400,6 +400,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       String formattedHours = "0h";
       String parsedFromDate = "";
       String parsedToDate = "";
+      String? parsedInstructions;
       final prefs = await SharedPreferences.getInstance();
 
       // FIX 3: only wipe keys when no shift today. Previously wiped every 30s
@@ -423,7 +424,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         }
 
         final rawInstructions = data["shift"]["specialInstructions"];
-        final parsedInstructions = (rawInstructions != null && rawInstructions.toString().trim().isNotEmpty)
+        parsedInstructions = (rawInstructions != null && rawInstructions.toString().trim().isNotEmpty)
             ? rawInstructions.toString().trim()
             : null;
 
