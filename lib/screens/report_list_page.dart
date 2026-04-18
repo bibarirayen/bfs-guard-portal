@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:video_player/video_player.dart';
 import '../models/report.dart';
@@ -215,7 +216,7 @@ class _ReportListPageState extends State<ReportListPage> {
                 Text("Details", style: TextStyle(fontWeight: FontWeight.bold, color: _textColor)),
                 // ✅ every raw field value auto-formatted
                 ...report.raw.entries
-                    .where((e) => !['id', 'type', 'client', 'site', 'officer', 'images', 'dateEntered']
+                    .where((e) => !['id', 'type', 'client', 'site', 'officer', 'images', 'dateEntered', 'dailySpecialInstructions', 'maintenanceEmailClient', 'dailyObservations']
                     .contains(e.key))
                     .map((e) {
                   final key = e.key.toLowerCase();
@@ -232,6 +233,11 @@ class _ReportListPageState extends State<ReportListPage> {
 
                   return _infoRow(e.key.replaceAll('_', ' '), formatted);
                 }),
+                // ── Observations (DAR structured list) ───────────────────
+                if (report.raw['dailyObservations'] != null &&
+                    report.raw['dailyObservations'].toString().trim().isNotEmpty &&
+                    report.raw['dailyObservations'].toString().trim() != '[]') ..._buildObservationsSection(report.raw['dailyObservations'].toString()),
+
                 if (report.images.isNotEmpty) ...[
                   const SizedBox(height: 16),
                   Text("Media", style: TextStyle(fontWeight: FontWeight.bold, color: _textColor)),
@@ -280,6 +286,66 @@ class _ReportListPageState extends State<ReportListPage> {
         ),
       ),
     );
+  }
+
+  // Parses dailyObservations JSON and returns styled widgets
+  List<Widget> _buildObservationsSection(String json) {
+    List<Map<String, dynamic>> obs = [];
+    try {
+      final decoded = jsonDecode(json) as List;
+      obs = decoded.cast<Map<String, dynamic>>();
+    } catch (_) { return []; }
+    if (obs.isEmpty) return [];
+
+    return [
+      const SizedBox(height: 12),
+      Text("Observations", style: TextStyle(fontWeight: FontWeight.bold, color: _textColor, fontSize: 14)),
+      const SizedBox(height: 8),
+      ...obs.asMap().entries.map((entry) {
+        final i = entry.key;
+        final o = entry.value;
+        final type = o['type']?.toString() ?? '';
+        final desc = o['description']?.toString() ?? '';
+        return Container(
+          margin: const EdgeInsets.only(bottom: 10),
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: _isDarkMode ? const Color(0xFF1E293B) : const Color(0xFFF8FAFC),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: _borderColor),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(children: [
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF4F46E5).withOpacity(0.15),
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: Text("Observation ${i + 1}", style: const TextStyle(color: Color(0xFF818CF8), fontSize: 11, fontWeight: FontWeight.w700)),
+                ),
+                const SizedBox(width: 8),
+                if (type.isNotEmpty)
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: Colors.amber.withOpacity(0.15),
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Text(type, style: const TextStyle(color: Colors.amber, fontSize: 11, fontWeight: FontWeight.w600)),
+                  ),
+              ]),
+              if (desc.isNotEmpty) ...[
+                const SizedBox(height: 8),
+                Text(desc, style: TextStyle(color: _textColor, fontSize: 13, height: 1.4)),
+              ],
+            ],
+          ),
+        );
+      }),
+    ];
   }
 
   Widget _infoRow(String label, String? value) {

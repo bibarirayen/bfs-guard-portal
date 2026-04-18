@@ -33,6 +33,17 @@ class _MediaItem {
   File get uploadFile => file;
 }
 
+// ─── DAR Observation entry ───────────────────────────────────────────────────
+class _DarObservation {
+  String type;
+  String description;
+  _DarObservation({this.type = '', this.description = ''});
+
+  Map<String, dynamic> toJson() => {'type': type, 'description': description};
+  factory _DarObservation.fromJson(Map<String, dynamic> j) =>
+      _DarObservation(type: j['type'] ?? '', description: j['description'] ?? '');
+}
+
 class ReportPage extends StatefulWidget {
   const ReportPage({super.key});
   @override
@@ -77,10 +88,12 @@ class _ReportPageState extends State<ReportPage> {
   final TextEditingController _dailyPostShiftController          = TextEditingController();
   final TextEditingController _dailySpecialInstructionsController = TextEditingController();
   final TextEditingController _dailyPostItemsReceivedController  = TextEditingController();
-  final TextEditingController _dailyObservationsController       = TextEditingController();
   final TextEditingController _dailyRelievingFirstController     = TextEditingController();
   final TextEditingController _dailyRelievingLastController      = TextEditingController();
   final TextEditingController _dailyAdditionalNotesController    = TextEditingController();
+
+  // Structured DAR observations list
+  final List<_DarObservation> _darObservations = [];
 
   final TextEditingController _maintenanceTypeController        = TextEditingController();
   final TextEditingController _maintenanceDetailsController     = TextEditingController();
@@ -223,7 +236,7 @@ class _ReportPageState extends State<ReportPage> {
       _incidentSummaryController, _responderPoliceNamesController, _responderFireTruckController,
       _responderAmbulanceController, _incidentDetailsController, _incidentActionsController,
       _dailyShiftStartNotesController, _dailyPostShiftController, _dailySpecialInstructionsController,
-      _dailyPostItemsReceivedController, _dailyObservationsController, _dailyRelievingFirstController,
+      _dailyPostItemsReceivedController, _dailyRelievingFirstController,
       _dailyRelievingLastController, _dailyAdditionalNotesController, _maintenanceTypeController,
       _maintenanceDetailsController, _maintenanceWhoNotifiedController, _violatorFirstController,
       _violatorLastController, _vehicleMakeController, _vehicleModelController, _vehicleLPController,
@@ -245,6 +258,7 @@ class _ReportPageState extends State<ReportPage> {
       _uploadProgress      = 0.0;
       _isSubmitting        = false;
       _cancelRequested     = false;
+      _darObservations.clear();
     });
     for (final c in [
       _clientController, _siteController, _officerController, _dateEnteredController,
@@ -254,7 +268,7 @@ class _ReportPageState extends State<ReportPage> {
       _incidentSummaryController, _responderPoliceNamesController, _responderFireTruckController,
       _responderAmbulanceController, _incidentDetailsController, _incidentActionsController,
       _dailyShiftStartNotesController, _dailyPostShiftController, _dailySpecialInstructionsController,
-      _dailyPostItemsReceivedController, _dailyObservationsController, _dailyRelievingFirstController,
+      _dailyPostItemsReceivedController, _dailyRelievingFirstController,
       _dailyRelievingLastController, _dailyAdditionalNotesController, _maintenanceTypeController,
       _maintenanceDetailsController, _maintenanceWhoNotifiedController, _violatorFirstController,
       _violatorLastController, _vehicleMakeController, _vehicleModelController, _vehicleLPController,
@@ -277,7 +291,7 @@ class _ReportPageState extends State<ReportPage> {
     _incidentSummaryController, _responderPoliceNamesController, _responderFireTruckController,
     _responderAmbulanceController, _incidentDetailsController, _incidentActionsController,
     _dailyShiftStartNotesController, _dailyPostShiftController, _dailySpecialInstructionsController,
-    _dailyPostItemsReceivedController, _dailyObservationsController, _dailyRelievingFirstController,
+    _dailyPostItemsReceivedController, _dailyRelievingFirstController,
     _dailyRelievingLastController, _dailyAdditionalNotesController,
     _maintenanceTypeController, _maintenanceDetailsController, _maintenanceWhoNotifiedController,
     _violatorFirstController, _violatorLastController, _vehicleMakeController, _vehicleModelController,
@@ -328,10 +342,11 @@ class _ReportPageState extends State<ReportPage> {
     await prefs.setString('draft_dailyPostShift',           _dailyPostShiftController.text);
     await prefs.setString('draft_dailySpecialInstructions', _dailySpecialInstructionsController.text);
     await prefs.setString('draft_dailyPostItemsReceived',   _dailyPostItemsReceivedController.text);
-    await prefs.setString('draft_dailyObservations',        _dailyObservationsController.text);
     await prefs.setString('draft_dailyRelievingFirst',      _dailyRelievingFirstController.text);
     await prefs.setString('draft_dailyRelievingLast',       _dailyRelievingLastController.text);
     await prefs.setString('draft_dailyAdditionalNotes',     _dailyAdditionalNotesController.text);
+    await prefs.setString('draft_darObservations',
+        jsonEncode(_darObservations.map((o) => o.toJson()).toList()));
     // Maintenance Report fields
     await prefs.setString('draft_maintenanceType',        _maintenanceTypeController.text);
     await prefs.setString('draft_maintenanceDetails',     _maintenanceDetailsController.text);
@@ -386,10 +401,20 @@ class _ReportPageState extends State<ReportPage> {
       _dailyPostShiftController.text           = prefs.getString('draft_dailyPostShift')           ?? '';
       _dailySpecialInstructionsController.text = prefs.getString('draft_dailySpecialInstructions') ?? '';
       _dailyPostItemsReceivedController.text   = prefs.getString('draft_dailyPostItemsReceived')   ?? '';
-      _dailyObservationsController.text        = prefs.getString('draft_dailyObservations')        ?? '';
       _dailyRelievingFirstController.text      = prefs.getString('draft_dailyRelievingFirst')      ?? '';
       _dailyRelievingLastController.text       = prefs.getString('draft_dailyRelievingLast')       ?? '';
       _dailyAdditionalNotesController.text     = prefs.getString('draft_dailyAdditionalNotes')     ?? '';
+      // Restore structured DAR observations
+      final obsJson = prefs.getString('draft_darObservations');
+      if (obsJson != null) {
+        try {
+          final decoded = jsonDecode(obsJson) as List;
+          final loaded = decoded.map((e) => _DarObservation.fromJson(e as Map<String, dynamic>)).toList();
+          if (mounted) setState(() { _darObservations
+            ..clear()
+            ..addAll(loaded); });
+        } catch (_) {}
+      }
       _maintenanceTypeController.text        = prefs.getString('draft_maintenanceType')        ?? '';
       _maintenanceDetailsController.text     = prefs.getString('draft_maintenanceDetails')     ?? '';
       _maintenanceWhoNotifiedController.text = prefs.getString('draft_maintenanceWhoNotified') ?? '';
@@ -716,7 +741,7 @@ class _ReportPageState extends State<ReportPage> {
         "dailyPostShift":           _dailyPostShiftController.text,
         "dailySpecialInstructions": _dailySpecialInstructionsController.text,
         "dailyPostItemsReceived":   _dailyPostItemsReceivedController.text,
-        "dailyObservations":        _dailyObservationsController.text,
+        "dailyObservations":        jsonEncode(_darObservations.map((o) => o.toJson()).toList()),
         "dailyRelievingFirst":      _dailyRelievingFirstController.text,
         "dailyRelievingLast":       _dailyRelievingLastController.text,
         "dailyAdditionalNotes":     _dailyAdditionalNotesController.text,
@@ -1316,9 +1341,8 @@ class _ReportPageState extends State<ReportPage> {
   List<Widget> _dailyFields() => [
     _single(_dailyShiftStartNotesController, "Shift Start Notes / Post"),
     _single(_dailyPostShiftController, "Post/Shift (e.g. Swingshift)"),
-    _single(_dailySpecialInstructionsController, "Special Instructions"),
     _single(_dailyPostItemsReceivedController, "Post Items Received (phone, keys)"),
-    _multi(_dailyObservationsController, "Observations (time / comment list)"),
+    _buildDarObservationsSection(),
     _rowTwo(_dailyRelievingFirstController, "Relieving Officer - First Name", _dailyRelievingLastController, "Relieving Officer - Last Name"),
     _multi(_dailyAdditionalNotesController, "Additional Notes"),
   ];
@@ -1327,17 +1351,6 @@ class _ReportPageState extends State<ReportPage> {
     _single(_maintenanceTypeController, "Maintenance Type (e.g. Lights Out)"),
     _multi(_maintenanceDetailsController, "Problem Details"),
     _single(_maintenanceWhoNotifiedController, "Who has been notified"),
-    Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(borderRadius: BorderRadius.circular(12),
-          color: _isDarkMode ? const Color(0xFF374151) : Colors.grey[100]),
-      child: Row(children: [
-        const Icon(Icons.email, color: Colors.amber, size: 20), const SizedBox(width: 12),
-        Text("Email Client:", style: TextStyle(color: _textColor, fontWeight: FontWeight.w500)),
-        const SizedBox(width: 12),
-        Switch(value: _maintenanceEmailClient, onChanged: (v) { setState(() => _maintenanceEmailClient = v); _doSaveDraft(); }, activeColor: Colors.amber),
-      ]),
-    ),
   ];
 
   List<Widget> _parkingFields() => [
@@ -1381,4 +1394,164 @@ class _ReportPageState extends State<ReportPage> {
       Expanded(child: TextFormField(controller: c2, decoration: _modernInput(l2), style: TextStyle(color: _textColor))),
     ]),
   );
+
+  // ── Observation types — update this list when the client provides full set ──
+  static const List<String> _observationTypes = [
+    'Suspicious Activity',
+    'Trespassing',
+    'Disturbance / Noise',
+    'Visitor / Guest',
+    'Vehicle',
+    'Maintenance Issue',
+    'Medical / First Aid',
+    'Fire / Hazard',
+    'Theft / Vandalism',
+    'Other',
+  ];
+
+  Widget _buildDarObservationsSection() {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Header row
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                "Observations",
+                style: TextStyle(
+                  color: _textColor,
+                  fontWeight: FontWeight.w600,
+                  fontSize: 14,
+                ),
+              ),
+              TextButton.icon(
+                onPressed: () {
+                  setState(() {
+                    _darObservations.add(_DarObservation());
+                  });
+                  _doSaveDraft();
+                },
+                icon: const Icon(Icons.add_circle_outline, size: 18),
+                label: const Text("Add"),
+                style: TextButton.styleFrom(foregroundColor: _primaryColor),
+              ),
+            ],
+          ),
+          if (_darObservations.isEmpty)
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 16),
+              decoration: BoxDecoration(
+                color: _isDarkMode ? const Color(0xFF2D3748) : Colors.grey[50],
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: _borderColor),
+              ),
+              child: Text(
+                "No observations added yet. Tap \"Add\" to add one.",
+                style: TextStyle(color: _secondaryTextColor, fontSize: 13),
+              ),
+            )
+          else
+            ListView.builder(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              itemCount: _darObservations.length,
+              itemBuilder: (context, index) {
+                final obs = _darObservations[index];
+                return Container(
+                  margin: const EdgeInsets.only(bottom: 12),
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: _isDarkMode ? const Color(0xFF1E293B) : Colors.white,
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(color: _borderColor),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.05),
+                        blurRadius: 4,
+                        offset: const Offset(0, 2),
+                      )
+                    ],
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // Top row: index badge + delete button
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: _primaryColor.withOpacity(0.15),
+                              borderRadius: BorderRadius.circular(20),
+                            ),
+                            child: Text(
+                              "Observation ${index + 1}",
+                              style: TextStyle(
+                                color: _accentColor,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                          GestureDetector(
+                            onTap: () {
+                              setState(() => _darObservations.removeAt(index));
+                              _doSaveDraft();
+                            },
+                            child: Container(
+                              padding: const EdgeInsets.all(4),
+                              decoration: BoxDecoration(
+                                color: Colors.red.withOpacity(0.1),
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: const Icon(Icons.close, color: Colors.redAccent, size: 16),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      // Type dropdown
+                      DropdownButtonFormField<String>(
+                        value: obs.type.isNotEmpty ? obs.type : null,
+                        hint: Text("Select type", style: TextStyle(color: _secondaryTextColor, fontSize: 14)),
+                        dropdownColor: _cardColor,
+                        style: TextStyle(color: _textColor, fontSize: 14),
+                        decoration: _modernInput("Observation Type").copyWith(contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10)),
+                        items: _observationTypes.map((t) => DropdownMenuItem(
+                          value: t,
+                          child: Text(t, style: TextStyle(color: _textColor)),
+                        )).toList(),
+                        onChanged: (val) {
+                          if (val != null) {
+                            setState(() => _darObservations[index].type = val);
+                            _doSaveDraft();
+                          }
+                        },
+                      ),
+                      const SizedBox(height: 12),
+                      // Description
+                      TextFormField(
+                        initialValue: obs.description,
+                        maxLines: 3,
+                        style: TextStyle(color: _textColor, fontSize: 14),
+                        decoration: _modernInput("Description"),
+                        onChanged: (val) {
+                          _darObservations[index].description = val;
+                          _doSaveDraft();
+                        },
+                      ),
+                    ],
+                  ),
+                );
+              },
+            ),
+        ],
+      ),
+    );
+  }
 }

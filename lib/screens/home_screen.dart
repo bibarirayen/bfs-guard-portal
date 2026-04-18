@@ -66,6 +66,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   String? _supervisorName;
   String? _supervisorEmail;
   String? _supervisorPhone;
+  String? _shiftInstructions;
 
   late LiveLocationService _liveLocationService;
 
@@ -97,6 +98,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   Position? _currentPosition;
   bool _tracking = false;
   bool _isEmergencyActive = false;
+  bool _isSendingEmergency = false;   // prevents double-tap / duplicate sends
   bool _assignmentActive = false;
 
   bool _isLocationDialogVisible = false;
@@ -420,6 +422,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           _supervisorPhone = site["supervisornumber"];
         }
 
+        final rawInstructions = data["shift"]["specialInstructions"];
+        final parsedInstructions = (rawInstructions != null && rawInstructions.toString().trim().isNotEmpty)
+            ? rawInstructions.toString().trim()
+            : null;
+
         final shiftDateStr = data["date"];           // session START date from backend
         final sessionEndDateStr = data["sessionEndDate"]; // session END date from backend
         final shiftDate = DateTime.parse(shiftDateStr);
@@ -503,6 +510,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         if (hasShiftToday) {
           _sessionFromDate = parsedFromDate;
           _sessionToDate = parsedToDate;
+          _shiftInstructions = parsedInstructions;
+        } else {
+          _shiftInstructions = null;
         }
         _hasAssignment = prefs.getInt('assignmentId') != null;
       });
@@ -588,6 +598,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   Future<void> _sendEmergencyAlert() async {
+    // Hard guard — prevents any second call while first is in flight
+    if (_isSendingEmergency || _isEmergencyActive) return;
+    setState(() {
+      _isSendingEmergency = true;
+      _isEmergencyActive  = true;   // flip immediately so UI blocks re-taps
+    });
     try {
       final prefs = await SharedPreferences.getInstance();
       final guardId = prefs.getInt('userId');
@@ -616,6 +632,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text("Error sending emergency alert: $e")),
       );
+    } finally {
+      if (mounted) setState(() => _isSendingEmergency = false);
     }
   }
 
@@ -980,6 +998,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   void _toggleEmergency() {
+    // Block if already sending or already active
+    if (_isSendingEmergency || _isEmergencyActive) return;
+    bool _confirmed = false;   // local flag — blocks dialog button double-tap
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
@@ -1013,9 +1034,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           ),
           ElevatedButton(
             onPressed: () async {
+              if (_confirmed) return;
+              _confirmed = true;
               Navigator.pop(context);
               await _sendEmergencyAlert();
-              setState(() => _isEmergencyActive = true);
             },
             style: ElevatedButton.styleFrom(
               backgroundColor: Colors.redAccent,
@@ -1413,6 +1435,66 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                         ],
                       ),
                     ),
+                  ),
+                ),
+
+              const SizedBox(height: 16),
+
+              // ── Shift Instructions Box ──────────────────────────────────
+              if (_hasShiftToday)
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(16),
+                    color: _shiftInstructions != null
+                        ? const Color(0xFFFEF3C7)
+                        : (_isDarkMode ? const Color(0xFF374151) : const Color(0xFFF3F4F6)),
+                    border: Border.all(
+                      color: _shiftInstructions != null
+                          ? const Color(0xFFF59E0B)
+                          : (_isDarkMode ? const Color(0xFF4B5563) : const Color(0xFFD1D5DB)),
+                      width: 1.5,
+                    ),
+                  ),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Icon(
+                        _shiftInstructions != null ? Icons.info_outline : Icons.check_circle_outline,
+                        color: _shiftInstructions != null ? const Color(0xFFD97706) : Colors.grey,
+                        size: 20,
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              "Shift Instructions",
+                              style: TextStyle(
+                                fontWeight: FontWeight.w700,
+                                fontSize: 13,
+                                color: _shiftInstructions != null
+                                    ? const Color(0xFF92400E)
+                                    : (_isDarkMode ? Colors.grey[400] : Colors.grey[600]),
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              _shiftInstructions ?? "No special instructions",
+                              style: TextStyle(
+                                fontSize: 13,
+                                height: 1.5,
+                                color: _shiftInstructions != null
+                                    ? const Color(0xFF78350F)
+                                    : (_isDarkMode ? Colors.grey[500] : Colors.grey[500]),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
                   ),
                 ),
 
