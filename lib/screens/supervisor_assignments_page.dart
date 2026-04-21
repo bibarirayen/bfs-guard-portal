@@ -165,14 +165,16 @@ class _SupervisorAssignmentsPageState
     setState(() => _submitting = true);
     try {
       final api = ApiService();
-      final body = jsonEncode({
+      final bodyMap = <String, dynamic>{
         'shiftId': _selectedShift!['id'],
-        'guardId': _selectedGuard?['id'],
         'fromDate': _fromDate!.toIso8601String().split('T').first,
         'toDate': _toDate!.toIso8601String().split('T').first,
         'openShift': _selectedGuard == null,
-      });
-      final res = await api.post('assignments', body);
+      };
+      if (_selectedGuard != null) {
+        bodyMap['guardId'] = _selectedGuard!['id'];
+      }
+      final res = await api.post('assignments', bodyMap);
       if (res.statusCode == 200 || res.statusCode == 201) {
         setState(() {
           _showAddForm = false;
