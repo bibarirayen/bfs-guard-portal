@@ -30,6 +30,9 @@ import 'package:crossplatformblackfabric/screens/counseling_upload_page.dart';
 import 'package:crossplatformblackfabric/screens/counseling_list_page.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:crossplatformblackfabric/screens/Late_Arrivals_page.dart';
+import 'package:crossplatformblackfabric/screens/supervisor_assignments_page.dart';
+import 'package:crossplatformblackfabric/screens/supervisor_live_map_page.dart';
+import 'package:crossplatformblackfabric/screens/supervisor_attendance_page.dart';
 
 class HomeScreen extends StatefulWidget {
   final String guardName;
@@ -1620,6 +1623,34 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                     ),
                   ],
                 ),
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    Expanded(
+                      child: _buildSimpleActionButton(
+                        Icons.assignment_outlined,
+                        "Assignments",
+                        const Color(0xFF06B6D4),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: _buildSimpleActionButton(
+                        Icons.map_outlined,
+                        "Live Map",
+                        const Color(0xFF10B981),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: _buildSimpleActionButton(
+                        Icons.history,
+                        "Attendance",
+                        const Color(0xFFF59E0B),
+                      ),
+                    ),
+                  ],
+                ),
               ],
 
               const SizedBox(height: 90),
@@ -1694,6 +1725,15 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           _onItemTapped(7);
         } else if (label.contains("New Counseling\nReport")) {
           _onItemTapped(8);
+        } else if (label.contains("Assignments")) {
+          Navigator.push(context,
+              MaterialPageRoute(builder: (_) => const SupervisorAssignmentsPage()));
+        } else if (label.contains("Live Map")) {
+          Navigator.push(context,
+              MaterialPageRoute(builder: (_) => const SupervisorLiveMapPage()));
+        } else if (label.contains("Attendance")) {
+          Navigator.push(context,
+              MaterialPageRoute(builder: (_) => const SupervisorAttendancePage()));
         } else {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(

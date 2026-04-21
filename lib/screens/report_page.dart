@@ -248,34 +248,53 @@ class _ReportPageState extends State<ReportPage> {
   }
 
   void _resetPage() {
+    final submittedType = _selectedReportType;
     _clearDraft();
     setState(() {
       _mediaItems.clear();
-      _selectedReportType = "Incident Report";
-      _policeCalled        = false;
-      _maintenanceEmailClient = false;
-      _vehicleTowed        = false;
-      _uploadProgress      = 0.0;
-      _isSubmitting        = false;
-      _cancelRequested     = false;
-      _darObservations.clear();
+      _uploadProgress  = 0.0;
+      _isSubmitting    = false;
+      _cancelRequested = false;
+      // Only reset the type back to Incident if we just submitted an Incident Report,
+      // otherwise keep the current type so the other drafts stay selected.
+      if (submittedType == _selectedReportType) {
+        _selectedReportType = "Incident Report";
+      }
     });
-    for (final c in [
-      _clientController, _siteController, _officerController, _dateEnteredController,
-      _incidentInternalIdController, _incidentDateTimeController, _incidentTypeController,
-      _victimNameController, _victimContactController, _suspectNameController,
-      _suspectContactController, _witnessNamesController, _incidentLocationController,
-      _incidentSummaryController, _responderPoliceNamesController, _responderFireTruckController,
-      _responderAmbulanceController, _incidentDetailsController, _incidentActionsController,
-      _dailyShiftStartNotesController, _dailyPostShiftController, _dailySpecialInstructionsController,
-      _dailyPostItemsReceivedController, _dailyRelievingFirstController,
-      _dailyRelievingLastController, _dailyAdditionalNotesController, _maintenanceTypeController,
-      _maintenanceDetailsController, _maintenanceWhoNotifiedController, _violatorFirstController,
-      _violatorLastController, _vehicleMakeController, _vehicleModelController, _vehicleLPController,
-      _vehicleVINController, _vehicleColorController, _violationTypeController,
-      _violationNumberController, _parkingLocationController, _parkingFineController,
-      _parkingDetailsController,
-    ]) { c.clear(); }
+
+    // Only clear controllers for the report type that was submitted
+    if (submittedType == 'Incident Report') {
+      for (final c in [
+        _incidentInternalIdController, _incidentDateTimeController, _incidentTypeController,
+        _victimNameController, _victimContactController, _suspectNameController,
+        _suspectContactController, _witnessNamesController, _incidentLocationController,
+        _incidentSummaryController, _responderPoliceNamesController, _responderFireTruckController,
+        _responderAmbulanceController, _incidentDetailsController, _incidentActionsController,
+      ]) { c.clear(); }
+      setState(() { _policeCalled = false; });
+    } else if (submittedType == 'Daily Activity Report') {
+      for (final c in [
+        _dailyShiftStartNotesController, _dailyPostShiftController,
+        _dailySpecialInstructionsController, _dailyPostItemsReceivedController,
+        _dailyRelievingFirstController, _dailyRelievingLastController,
+        _dailyAdditionalNotesController,
+      ]) { c.clear(); }
+      setState(() { _darObservations.clear(); });
+    } else if (submittedType == 'Maintenance Report') {
+      for (final c in [
+        _maintenanceTypeController, _maintenanceDetailsController,
+        _maintenanceWhoNotifiedController,
+      ]) { c.clear(); }
+      setState(() { _maintenanceEmailClient = false; });
+    } else if (submittedType == 'Parking Violation Report') {
+      for (final c in [
+        _violatorFirstController, _violatorLastController, _vehicleMakeController,
+        _vehicleModelController, _vehicleLPController, _vehicleVINController,
+        _vehicleColorController, _violationTypeController, _violationNumberController,
+        _parkingLocationController, _parkingFineController, _parkingDetailsController,
+      ]) { c.clear(); }
+      setState(() { _vehicleTowed = false; });
+    }
   }
 
   // ─── DRAFT SAVE / LOAD ────────────────────────────────────────────────────
@@ -462,8 +481,42 @@ class _ReportPageState extends State<ReportPage> {
 
   Future<void> _clearDraft() async {
     final prefs = await SharedPreferences.getInstance();
-    final keys  = prefs.getKeys().where((k) => k.startsWith('draft_')).toList();
-    for (final k in keys) {
+
+    // Keys shared across all report types
+    const sharedKeys = ['draft_selectedReportType', 'draft_mediaPaths'];
+
+    // Keys specific to each report type
+    const keysByType = <String, List<String>>{
+      'Incident Report': [
+        'draft_incidentInternalId', 'draft_incidentDateTime', 'draft_incidentType',
+        'draft_victimName', 'draft_victimContact', 'draft_suspectName', 'draft_suspectContact',
+        'draft_witnessNames', 'draft_incidentLocation', 'draft_incidentSummary',
+        'draft_responderPoliceNames', 'draft_responderFireTruck', 'draft_responderAmbulance',
+        'draft_incidentDetails', 'draft_incidentActions', 'draft_policeCalled',
+      ],
+      'Daily Activity Report': [
+        'draft_dailyShiftStartNotes', 'draft_dailyPostShift', 'draft_dailySpecialInstructions',
+        'draft_dailyPostItemsReceived', 'draft_dailyRelievingFirst', 'draft_dailyRelievingLast',
+        'draft_dailyAdditionalNotes', 'draft_darObservations',
+      ],
+      'Maintenance Report': [
+        'draft_maintenanceType', 'draft_maintenanceDetails', 'draft_maintenanceWhoNotified',
+        'draft_maintenanceEmailClient',
+      ],
+      'Parking Violation Report': [
+        'draft_violatorFirst', 'draft_violatorLast', 'draft_vehicleMake', 'draft_vehicleModel',
+        'draft_vehicleLP', 'draft_vehicleVIN', 'draft_vehicleColor', 'draft_violationType',
+        'draft_violationNumber', 'draft_parkingLocation', 'draft_parkingFine',
+        'draft_parkingDetails', 'draft_vehicleTowed',
+      ],
+    };
+
+    // Only clear the keys for the report type that was just submitted, plus shared keys
+    final keysToRemove = [
+      ...sharedKeys,
+      ...(keysByType[_selectedReportType] ?? []),
+    ];
+    for (final k in keysToRemove) {
       await prefs.remove(k);
     }
   }
