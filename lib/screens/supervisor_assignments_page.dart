@@ -26,7 +26,7 @@ class _SupervisorAssignmentsPageState
   List<Map<String, dynamic>> _mySites = [];
   bool _loading = true;
   String? _error;
-  String? _userId;
+  int? _userId;
 
   // ─── add form state ────────────────────────────────────────────────────────
   bool _showAddForm = false;
@@ -49,7 +49,7 @@ class _SupervisorAssignmentsPageState
 
   Future<void> _init() async {
     final prefs = await SharedPreferences.getInstance();
-    _userId = prefs.getString('userId');
+    _userId = prefs.getInt('userId');
     await _fetchData();
   }
 
@@ -88,7 +88,7 @@ class _SupervisorAssignmentsPageState
       // Filter sites where this user is a supervisor
       final mySitesList = allSites.where((s) {
         final ids = (s['supervisorIds'] as List?)?.cast<dynamic>() ?? [];
-        return ids.any((id) => id.toString() == _userId.toString());
+        return ids.any((id) => (id as num?)?.toInt() == _userId);
       }).map((s) => s as Map<String, dynamic>).toList();
 
       final mySiteIds = mySitesList.map((s) => s['id']).toSet();

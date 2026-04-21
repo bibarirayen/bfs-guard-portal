@@ -25,7 +25,7 @@ class _SupervisorAttendancePageState
   List<Map<String, dynamic>> _records = [];
   bool _loading = true;
   String? _error;
-  String? _userId;
+  int? _userId;
   Set<dynamic> _mySiteIds = {};
   List<String> _siteNames = [];
 
@@ -42,7 +42,7 @@ class _SupervisorAttendancePageState
 
   Future<void> _init() async {
     final prefs = await SharedPreferences.getInstance();
-    _userId = prefs.getString('userId');
+    _userId = prefs.getInt('userId');
     await _fetchData();
   }
 
@@ -69,7 +69,7 @@ class _SupervisorAttendancePageState
 
       final mySites = allSites.where((s) {
         final ids = (s['supervisorIds'] as List?)?.cast<dynamic>() ?? [];
-        return ids.any((id) => id.toString() == _userId.toString());
+        return ids.any((id) => (id as num?)?.toInt() == _userId);
       }).toList();
 
       final mySiteIds =
