@@ -1450,6 +1450,7 @@ class _ReportPageState extends State<ReportPage> {
 
   // ── Observation types — update this list when the client provides full set ──
   static const List<String> _observationTypes = [
+    'General notes',
     'Light fixture',
     'Doors',
     'Gate',
@@ -1471,6 +1472,8 @@ class _ReportPageState extends State<ReportPage> {
     'Mold',
     'Pests',
     'General cleanliness',
+    'Elevator',
+    'Pool',
     'Other',
   ];
 

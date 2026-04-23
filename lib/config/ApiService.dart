@@ -16,17 +16,41 @@ class ApiService {
   // ─── SESSION EXPIRY ───────────────────────────────────────────────────────
   // Triggered automatically when the server returns 401 or 403.
   // Clears the session, stops background services, and routes back to login.
+  // Draft keys (draft_*) are preserved so guards don't lose in-progress reports.
   Future<void> _handleSessionExpiry() async {
     final prefs         = await SharedPreferences.getInstance();
     final savedEmail    = prefs.getString('saved_email');
     final savedPassword = prefs.getString('saved_password');
     final rememberMe    = prefs.getBool('remember_me') ?? false;
+
+    // ── Snapshot every draft_* key before wiping ─────────────────────────────
+    final Map<String, Object> draftSnapshot = {};
+    for (final key in prefs.getKeys()) {
+      if (key.startsWith('draft_')) {
+        final value = prefs.get(key);
+        if (value != null) draftSnapshot[key] = value;
+      }
+    }
+
     await prefs.clear();
+
+    // ── Restore saved credentials ─────────────────────────────────────────────
     if (rememberMe && savedEmail != null && savedPassword != null) {
       await prefs.setString('saved_email',    savedEmail);
       await prefs.setString('saved_password', savedPassword);
       await prefs.setBool('remember_me',      true);
     }
+
+    // ── Restore draft keys ────────────────────────────────────────────────────
+    for (final entry in draftSnapshot.entries) {
+      final v = entry.value;
+      if (v is String)       await prefs.setString(entry.key, v);
+      else if (v is bool)    await prefs.setBool(entry.key, v);
+      else if (v is int)     await prefs.setInt(entry.key, v);
+      else if (v is double)  await prefs.setDouble(entry.key, v);
+      else if (v is List)    await prefs.setStringList(entry.key, v.cast<String>());
+    }
+
     HeartbeatService().stopHeartbeat();
     pendingSessionExpiredMessage = true;
     final builder = loginScreenBuilder;
