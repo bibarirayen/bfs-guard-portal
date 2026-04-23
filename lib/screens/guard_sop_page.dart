@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../services/sop_service.dart';
+import 'sop_pdf_viewer_page.dart';
+import 'sop_web_viewer_page.dart';
 
 /// Shown to guards during an active shift.
 /// Displays the SOP for their current active site.
@@ -49,9 +51,37 @@ class _GuardSopPageState extends State<GuardSopPage> {
 
   Future<void> _openFile({bool download = false}) async {
     if (_sopFileUrl == null) return;
-    final url = Uri.parse(download
-        ? '$_sopFileUrl?download=1'
-        : _sopFileUrl!);
+
+    final lower = (_sopFileName ?? _sopFileUrl!).toLowerCase();
+    final isPdf = lower.endsWith('.pdf');
+    final isOffice = lower.endsWith('.pptx') || lower.endsWith('.ppt') ||
+        lower.endsWith('.docx') || lower.endsWith('.doc');
+
+    if (!download) {
+      if (isPdf) {
+        Navigator.push(context, MaterialPageRoute(
+          builder: (_) => SopPdfViewerPage(
+            url: _sopFileUrl!,
+            fileName: _sopFileName ?? 'sop.pdf',
+            siteName: widget.siteName,
+          ),
+        ));
+        return;
+      }
+      if (isOffice) {
+        Navigator.push(context, MaterialPageRoute(
+          builder: (_) => SopWebViewerPage(
+            fileUrl: _sopFileUrl!,
+            fileName: _sopFileName ?? 'sop',
+            siteName: widget.siteName,
+          ),
+        ));
+        return;
+      }
+    }
+
+    // Download or unsupported type: open in external app
+    final url = Uri.parse(_sopFileUrl!);
     if (await canLaunchUrl(url)) {
       await launchUrl(url, mode: LaunchMode.externalApplication);
     } else {

@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../services/sop_service.dart';
+import 'sop_pdf_viewer_page.dart';
+import 'sop_web_viewer_page.dart';
 
 /// Shown to supervisors and admins.
 /// Lists all sites; tapping a site opens its SOP.
@@ -58,8 +60,38 @@ class _AdminSopPageState extends State<AdminSopPage> {
     });
   }
 
-  Future<void> _openFile(String url, {bool download = false}) async {
-    final uri = Uri.parse(download ? '$url?download=1' : url);
+  Future<void> _openFile(String url, {bool download = false, String? fileName, String? siteName}) async {
+    final lower = (fileName ?? url).toLowerCase();
+    final isPdf = lower.endsWith('.pdf');
+    final isOffice = lower.endsWith('.pptx') || lower.endsWith('.ppt') ||
+        lower.endsWith('.docx') || lower.endsWith('.doc');
+
+    if (!download) {
+      if (isPdf) {
+        if (!mounted) return;
+        Navigator.push(context, MaterialPageRoute(
+          builder: (_) => SopPdfViewerPage(
+            url: url,
+            fileName: fileName ?? 'sop.pdf',
+            siteName: siteName ?? '',
+          ),
+        ));
+        return;
+      }
+      if (isOffice) {
+        if (!mounted) return;
+        Navigator.push(context, MaterialPageRoute(
+          builder: (_) => SopWebViewerPage(
+            fileUrl: url,
+            fileName: fileName ?? 'sop',
+            siteName: siteName ?? '',
+          ),
+        ));
+        return;
+      }
+    }
+
+    final uri = Uri.parse(url);
     if (await canLaunchUrl(uri)) {
       await launchUrl(uri, mode: LaunchMode.externalApplication);
     } else {
@@ -148,7 +180,10 @@ class _AdminSopPageState extends State<AdminSopPage> {
                   shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(12)),
                 ),
-                onPressed: () => _openFile(url),
+                onPressed: () {
+                  Navigator.pop(context);
+                  _openFile(url, fileName: name, siteName: siteName);
+                },
                 icon: const Icon(Icons.open_in_new),
                 label: const Text('View SOP',
                     style: TextStyle(
@@ -166,7 +201,10 @@ class _AdminSopPageState extends State<AdminSopPage> {
                   shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(12)),
                 ),
-                onPressed: () => _openFile(url, download: true),
+                onPressed: () {
+                  Navigator.pop(context);
+                  _openFile(url, download: true, fileName: name, siteName: siteName);
+                },
                 icon: const Icon(Icons.download_outlined),
                 label: const Text('Download', style: TextStyle(fontSize: 15)),
               ),
