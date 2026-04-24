@@ -21,37 +21,36 @@ class SupervisorLiveMapPage extends StatefulWidget {
 class _SupervisorLiveMapPageState extends State<SupervisorLiveMapPage>
     with TickerProviderStateMixin {
   // ─── theme ───────────────────────────────────────────────────────────────
-  static const _bg        = Color(0xFF0F172A);
-  static const _card      = Color(0xFF1E293B);
-  static const _cardBdr   = Color(0xFF334155);
-  static const _primary   = Color(0xFF6366F1);
-  static const _green     = Color(0xFF10B981);
-  static const _amber     = Color(0xFFF59E0B);
+  static const _bg      = Color(0xFF0F172A);
+  static const _card    = Color(0xFF1E293B);
+  static const _cardBdr = Color(0xFF334155);
+  static const _primary = Color(0xFF6366F1);
+  static const _green   = Color(0xFF10B981);
+  static const _amber   = Color(0xFFF59E0B);
 
   Color get _text => Colors.white;
   Color get _sub  => Colors.grey[400]!;
 
   // ─── state ───────────────────────────────────────────────────────────────
-  bool   _loading = true;
+  bool    _loading = true;
   String? _error;
-  int?   _userId;
+  int?    _userId;
 
-  List<Map<String, dynamic>>          _mySites      = [];
-  Set<dynamic>                        _mySiteIds    = {};
-  Map<String, Map<String, dynamic>>   _guardLocations = {};
+  List<Map<String, dynamic>>        _mySites        = [];
+  Set<dynamic>                      _mySiteIds      = {};
+  Map<String, Map<String, dynamic>> _guardLocations = {};
 
-  String? _selectedSiteFilter; // null = all
+  String? _selectedSiteFilter;
   String? _selectedGuardKey;
-  int _sheetTab = 0; // 0 = guards, 1 = sites
+  int     _sheetTab = 0; // 0 = guards, 1 = sites
 
-  StompClient?   _stompClient;
+  StompClient? _stompClient;
+  // Separate MapController so it is NEVER recreated on rebuild
   final MapController _mapController = MapController();
   bool _mapReady = false;
 
-  // Pulsing animation for live markers
   late AnimationController _pulseCtrl;
   late Animation<double>   _pulseAnim;
-
   final DraggableScrollableController _sheetCtrl =
       DraggableScrollableController();
 
@@ -62,7 +61,7 @@ class _SupervisorLiveMapPageState extends State<SupervisorLiveMapPage>
       vsync: this,
       duration: const Duration(milliseconds: 1400),
     )..repeat(reverse: true);
-    _pulseAnim = Tween<double>(begin: 0.7, end: 1.0).animate(
+    _pulseAnim = Tween<double>(begin: 0.75, end: 1.0).animate(
       CurvedAnimation(parent: _pulseCtrl, curve: Curves.easeInOut),
     );
     _init();
@@ -88,14 +87,14 @@ class _SupervisorLiveMapPageState extends State<SupervisorLiveMapPage>
     try {
       final res = await ApiService().get('sites');
       if (res.statusCode == 200) {
-        final List allSites = jsonDecode(res.body) as List;
-        final mySites = allSites.where((s) {
+        final List all = jsonDecode(res.body) as List;
+        final my = all.where((s) {
           final ids = (s['supervisorIds'] as List?)?.cast<dynamic>() ?? [];
           return ids.any((id) => (id as num?)?.toInt() == _userId);
         }).map((s) => s as Map<String, dynamic>).toList();
         setState(() {
-          _mySites   = mySites;
-          _mySiteIds = mySites.map((s) => s['id']).toSet();
+          _mySites   = my;
+          _mySiteIds = my.map((s) => s['id']).toSet();
         });
       }
     } catch (_) {}
@@ -153,24 +152,23 @@ class _SupervisorLiveMapPageState extends State<SupervisorLiveMapPage>
   }
 
   // ─── helpers ─────────────────────────────────────────────────────────────
-  List<Map<String, dynamic>> get _filteredGuards {
-    return _guardLocations.values.where((loc) {
-      if (_selectedSiteFilter == null) return true;
-      return loc['site']?.toString() == _selectedSiteFilter;
-    }).toList();
-  }
+  List<Map<String, dynamic>> get _filteredGuards =>
+      _guardLocations.values.where((loc) {
+        if (_selectedSiteFilter == null) return true;
+        return loc['site']?.toString() == _selectedSiteFilter;
+      }).toList();
 
-  bool _isStale(String? lastUpdate) {
-    if (lastUpdate == null) return true;
+  bool _isStale(String? ts) {
+    if (ts == null) return true;
     try {
-      return DateTime.now().difference(DateTime.parse(lastUpdate)).inMinutes > 5;
+      return DateTime.now().difference(DateTime.parse(ts)).inMinutes > 5;
     } catch (_) { return true; }
   }
 
-  String _staleness(String? lastUpdate) {
-    if (lastUpdate == null) return 'Unknown';
+  String _staleness(String? ts) {
+    if (ts == null) return 'Unknown';
     try {
-      final diff = DateTime.now().difference(DateTime.parse(lastUpdate));
+      final diff = DateTime.now().difference(DateTime.parse(ts));
       if (diff.inSeconds < 60) return 'Just now';
       if (diff.inMinutes < 60) return '${diff.inMinutes}m ago';
       return '${diff.inHours}h ago';
@@ -178,35 +176,30 @@ class _SupervisorLiveMapPageState extends State<SupervisorLiveMapPage>
   }
 
   void _fitAll() {
-    final points = <LatLng>[];
+    final pts = <LatLng>[];
     for (final loc in _guardLocations.values) {
       final lat = loc['latitude'];
       final lng = loc['longitude'];
-      if (lat != null && lng != null) {
-        points.add(LatLng((lat as num).toDouble(), (lng as num).toDouble()));
-      }
+      if (lat != null && lng != null)
+        pts.add(LatLng((lat as num).toDouble(), (lng as num).toDouble()));
     }
-    for (final site in _mySites) {
-      final lat = site['latitude'];
-      final lng = site['longitude'];
-      if (lat != null && lng != null) {
-        points.add(LatLng((lat as num).toDouble(), (lng as num).toDouble()));
-      }
+    for (final s in _mySites) {
+      final lat = s['latitude'];
+      final lng = s['longitude'];
+      if (lat != null && lng != null)
+        pts.add(LatLng((lat as num).toDouble(), (lng as num).toDouble()));
     }
-    if (points.isEmpty) return;
-    if (points.length == 1) {
-      _mapController.move(points.first, 15);
-      return;
-    }
-    final lats = points.map((p) => p.latitude);
-    final lngs = points.map((p) => p.longitude);
+    if (pts.isEmpty) return;
+    if (pts.length == 1) { _mapController.move(pts.first, 15); return; }
+    final lats = pts.map((p) => p.latitude);
+    final lngs = pts.map((p) => p.longitude);
     _mapController.fitCamera(
       CameraFit.bounds(
         bounds: LatLngBounds(
           LatLng(lats.reduce(min), lngs.reduce(min)),
           LatLng(lats.reduce(max), lngs.reduce(max)),
         ),
-        padding: const EdgeInsets.all(60),
+        padding: const EdgeInsets.all(70),
       ),
     );
   }
@@ -216,12 +209,10 @@ class _SupervisorLiveMapPageState extends State<SupervisorLiveMapPage>
     final lng = loc['longitude'];
     if (lat == null || lng == null) return;
     _mapController.move(
-      LatLng((lat as num).toDouble(), (lng as num).toDouble()),
-      16,
-    );
+      LatLng((lat as num).toDouble(), (lng as num).toDouble()), 16);
     setState(() => _selectedGuardKey = loc['id']?.toString());
-    _sheetCtrl.animateTo(0.38,
-        duration: const Duration(milliseconds: 300), curve: Curves.easeOut);
+    _sheetCtrl.animateTo(0.35,
+        duration: const Duration(milliseconds: 280), curve: Curves.easeOut);
   }
 
   // ─── build ───────────────────────────────────────────────────────────────
@@ -230,7 +221,24 @@ class _SupervisorLiveMapPageState extends State<SupervisorLiveMapPage>
     return Scaffold(
       backgroundColor: _bg,
       extendBodyBehindAppBar: true,
-      appBar: _buildAppBar(),
+      appBar: AppBar(
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        foregroundColor: Colors.white,
+        title: const Text('Live Map',
+            style: TextStyle(
+                color: Colors.white, fontWeight: FontWeight.bold, fontSize: 18)),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.refresh_rounded, color: _primary),
+            tooltip: 'Refresh',
+            onPressed: () async {
+              await _loadSupervisorSites();
+              await _loadInitialLocations();
+            },
+          ),
+        ],
+      ),
       body: _loading
           ? const Center(child: CircularProgressIndicator(color: _primary))
           : _error != null
@@ -244,29 +252,6 @@ class _SupervisorLiveMapPageState extends State<SupervisorLiveMapPage>
                     _buildBottomSheet(),
                   ],
                 ),
-    );
-  }
-
-  PreferredSizeWidget _buildAppBar() {
-    return AppBar(
-      backgroundColor: Colors.transparent,
-      elevation: 0,
-      foregroundColor: Colors.white,
-      title: const Text('Live Map',
-          style: TextStyle(
-              color: Colors.white,
-              fontWeight: FontWeight.bold,
-              fontSize: 18)),
-      actions: [
-        IconButton(
-          icon: const Icon(Icons.refresh_rounded, color: _primary),
-          tooltip: 'Refresh',
-          onPressed: () async {
-            await _loadSupervisorSites();
-            await _loadInitialLocations();
-          },
-        ),
-      ],
     );
   }
 
@@ -295,81 +280,94 @@ class _SupervisorLiveMapPageState extends State<SupervisorLiveMapPage>
 
   // ─── Map ─────────────────────────────────────────────────────────────────
   Widget _buildMap() {
+    final initialCenter = _guardLocations.isNotEmpty
+        ? LatLng(
+            (_guardLocations.values.first['latitude'] as num).toDouble(),
+            (_guardLocations.values.first['longitude'] as num).toDouble())
+        : _mySites.isNotEmpty
+            ? LatLng(
+                (_mySites.first['latitude'] as num).toDouble(),
+                (_mySites.first['longitude'] as num).toDouble())
+            : const LatLng(21.3069, -157.8583);
+
     return FlutterMap(
       mapController: _mapController,
       options: MapOptions(
-        initialCenter: _guardLocations.isNotEmpty
-            ? LatLng(
-                (_guardLocations.values.first['latitude'] as num).toDouble(),
-                (_guardLocations.values.first['longitude'] as num).toDouble())
-            : _mySites.isNotEmpty
-                ? LatLng(
-                    (_mySites.first['latitude'] as num).toDouble(),
-                    (_mySites.first['longitude'] as num).toDouble())
-                : const LatLng(21.3069, -157.8583),
+        initialCenter: initialCenter,
         initialZoom: 13,
+        minZoom: 3,
+        maxZoom: 19,
+        // Suppress interaction from rebuilding children
         onMapReady: () {
           _mapReady = true;
           if (!_loading) _fitAll();
         },
       ),
       children: [
-        // CartoDB dark tiles — free, no API key needed
+        // ── Tile layer ─────────────────────────────────────────────────────
+        // Standard OpenStreetMap tiles — 100% free, no API key, no signup.
+        // keepBuffer + panBuffer keep tiles in memory while panning
+        // so the map NEVER goes black.
         TileLayer(
-          urlTemplate:
-              'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
-          subdomains: const ['a', 'b', 'c', 'd'],
+          urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
           userAgentPackageName: 'com.blackfabricsecurity.app',
-          retinaMode: MediaQuery.of(context).devicePixelRatio > 1.0,
+          // NO retinaMode — it causes MediaQuery reads during build
+          // which trigger tile layer rebuilds while panning → black tiles.
+          retinaMode: false,
+          keepBuffer: 6,      // tiles kept outside viewport in each direction
+          panBuffer: 3,       // pre-fetch tiles while panning
+          maxZoom: 19,
+          evictErrorTileStrategy: EvictErrorTileStrategy.dispose,
         ),
-        // Site boundary rings
+        // ── Site radius circles ────────────────────────────────────────────
         CircleLayer(
-          circles: _mySites.where((s) {
-            final id = s['id']?.toString();
-            return _selectedSiteFilter == null ||
-                s['name']?.toString() == _selectedSiteFilter;
-          }).where((s) => s['latitude'] != null && s['longitude'] != null).map((site) {
-            return CircleMarker(
-              point: LatLng(
-                (site['latitude'] as num).toDouble(),
-                (site['longitude'] as num).toDouble(),
-              ),
-              radius: 80,
-              color: _primary.withOpacity(0.06),
-              borderColor: _primary.withOpacity(0.35),
-              borderStrokeWidth: 1.5,
-            );
-          }).toList(),
+          circles: _mySites
+              .where((s) =>
+                  s['latitude'] != null &&
+                  s['longitude'] != null &&
+                  (_selectedSiteFilter == null ||
+                      s['name']?.toString() == _selectedSiteFilter))
+              .map((s) => CircleMarker(
+                    point: LatLng(
+                      (s['latitude'] as num).toDouble(),
+                      (s['longitude'] as num).toDouble(),
+                    ),
+                    radius: 80,
+                    color: _primary.withOpacity(0.07),
+                    borderColor: _primary.withOpacity(0.4),
+                    borderStrokeWidth: 1.5,
+                  ))
+              .toList(),
         ),
-        // Site markers
+        // ── Site markers ───────────────────────────────────────────────────
         MarkerLayer(
           markers: _mySites
-              .where((s) {
-                return (_selectedSiteFilter == null ||
-                    s['name']?.toString() == _selectedSiteFilter) &&
-                    s['latitude'] != null && s['longitude'] != null;
-              })
-              .map((site) => Marker(
+              .where((s) =>
+                  s['latitude'] != null &&
+                  s['longitude'] != null &&
+                  (_selectedSiteFilter == null ||
+                      s['name']?.toString() == _selectedSiteFilter))
+              .map((s) => Marker(
                     point: LatLng(
-                      (site['latitude'] as num).toDouble(),
-                      (site['longitude'] as num).toDouble(),
+                      (s['latitude'] as num).toDouble(),
+                      (s['longitude'] as num).toDouble(),
                     ),
                     width: 120,
-                    height: 56,
+                    height: 54,
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         Container(
                           padding: const EdgeInsets.symmetric(
-                              horizontal: 8, vertical: 3),
+                              horizontal: 7, vertical: 3),
                           decoration: BoxDecoration(
-                            color: const Color(0xFF0F172A).withOpacity(0.85),
-                            borderRadius: BorderRadius.circular(8),
+                            color: const Color(0xFF1E293B).withOpacity(0.92),
+                            borderRadius: BorderRadius.circular(7),
                             border: Border.all(
-                                color: _primary.withOpacity(0.5)),
+                                color: _primary.withOpacity(0.55)),
                           ),
                           child: Text(
-                            site['name']?.toString() ?? 'Site',
+                            s['name']?.toString() ?? 'Site',
                             style: const TextStyle(
                                 color: Colors.white,
                                 fontSize: 9,
@@ -379,31 +377,30 @@ class _SupervisorLiveMapPageState extends State<SupervisorLiveMapPage>
                         ),
                         const SizedBox(height: 2),
                         Container(
-                          width: 28,
-                          height: 28,
+                          width: 26,
+                          height: 26,
                           decoration: BoxDecoration(
                             color: _primary.withOpacity(0.15),
                             shape: BoxShape.circle,
-                            border:
-                                Border.all(color: _primary, width: 1.5),
+                            border: Border.all(color: _primary, width: 1.5),
                           ),
                           child: const Icon(Icons.location_city_rounded,
-                              color: _primary, size: 14),
+                              color: _primary, size: 13),
                         ),
                       ],
                     ),
                   ))
               .toList(),
         ),
-        // Guard markers with pulse
+        // ── Guard markers with pulsing animation ───────────────────────────
         MarkerLayer(
           markers: _filteredGuards
               .where((loc) =>
                   loc['latitude'] != null && loc['longitude'] != null)
               .map((loc) {
-            final key    = loc['id']?.toString() ?? '';
-            final stale  = _isStale(loc['lastUpdate']?.toString());
-            final color  = stale ? Colors.grey : _green;
+            final key        = loc['id']?.toString() ?? '';
+            final stale      = _isStale(loc['lastUpdate']?.toString());
+            final color      = stale ? Colors.grey : _green;
             final isSelected = _selectedGuardKey == key;
 
             return Marker(
@@ -426,14 +423,14 @@ class _SupervisorLiveMapPageState extends State<SupervisorLiveMapPage>
                           if (!stale)
                             Transform.scale(
                               scale: isSelected
-                                  ? 1.35
-                                  : _pulseAnim.value * 1.55,
+                                  ? 1.4
+                                  : _pulseAnim.value * 1.6,
                               child: Container(
                                 width: 34,
                                 height: 34,
                                 decoration: BoxDecoration(
                                   shape: BoxShape.circle,
-                                  color: color.withOpacity(0.18),
+                                  color: color.withOpacity(0.2),
                                 ),
                               ),
                             ),
@@ -444,23 +441,21 @@ class _SupervisorLiveMapPageState extends State<SupervisorLiveMapPage>
                               shape: BoxShape.circle,
                               color: isSelected
                                   ? color
-                                  : color.withOpacity(0.22),
+                                  : color.withOpacity(0.25),
                               border: Border.all(
                                   color: color,
-                                  width: isSelected ? 2.5 : 1.8),
+                                  width: isSelected ? 2.5 : 2.0),
                               boxShadow: isSelected
                                   ? [
                                       BoxShadow(
                                           color: color.withOpacity(0.5),
-                                          blurRadius: 10,
+                                          blurRadius: 12,
                                           spreadRadius: 2)
                                     ]
                                   : [],
                             ),
                             child: Icon(Icons.security_rounded,
-                                color: isSelected
-                                    ? Colors.white
-                                    : color,
+                                color: isSelected ? Colors.white : color,
                                 size: 17),
                           ),
                         ],
@@ -470,16 +465,13 @@ class _SupervisorLiveMapPageState extends State<SupervisorLiveMapPage>
                         padding: const EdgeInsets.symmetric(
                             horizontal: 5, vertical: 1),
                         decoration: BoxDecoration(
-                          color: const Color(0xFF0F172A).withOpacity(0.88),
+                          color: const Color(0xFF0F172A).withOpacity(0.9),
                           borderRadius: BorderRadius.circular(5),
-                          border: Border.all(
-                              color: color.withOpacity(0.4), width: 1),
+                          border:
+                              Border.all(color: color.withOpacity(0.45)),
                         ),
                         child: Text(
-                          (loc['name'] ?? '')
-                              .toString()
-                              .split(' ')
-                              .first,
+                          (loc['name'] ?? '').toString().split(' ').first,
                           style: TextStyle(
                               color: color,
                               fontSize: 8.5,
@@ -500,8 +492,10 @@ class _SupervisorLiveMapPageState extends State<SupervisorLiveMapPage>
   // ─── Top stats bar ────────────────────────────────────────────────────────
   Widget _buildTopStatsBar() {
     final total  = _filteredGuards.length;
-    final active = _filteredGuards.where((l) => !_isStale(l['lastUpdate']?.toString())).length;
-    final sites  = _mySites.length;
+    final active = _filteredGuards
+        .where((l) => !_isStale(l['lastUpdate']?.toString()))
+        .length;
+    final sites = _mySites.length;
 
     return Positioned(
       top: kToolbarHeight + MediaQuery.of(context).padding.top + 8,
@@ -522,12 +516,17 @@ class _SupervisorLiveMapPageState extends State<SupervisorLiveMapPage>
   Widget _statChip(IconData icon, String value, String label, Color color) {
     return Expanded(
       child: Container(
-        padding:
-            const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
         decoration: BoxDecoration(
           color: const Color(0xFF0F172A).withOpacity(0.88),
           borderRadius: BorderRadius.circular(12),
           border: Border.all(color: color.withOpacity(0.35)),
+          boxShadow: [
+            BoxShadow(
+                color: Colors.black.withOpacity(0.3),
+                blurRadius: 6,
+                offset: const Offset(0, 2))
+          ],
         ),
         child: Row(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -535,13 +534,12 @@ class _SupervisorLiveMapPageState extends State<SupervisorLiveMapPage>
             Icon(icon, color: color, size: 13),
             const SizedBox(width: 5),
             Text(value,
-                style: TextStyle(
+                style: const TextStyle(
                     color: Colors.white,
                     fontWeight: FontWeight.bold,
                     fontSize: 13)),
             const SizedBox(width: 3),
-            Text(label,
-                style: TextStyle(color: _sub, fontSize: 10)),
+            Text(label, style: TextStyle(color: _sub, fontSize: 10)),
           ],
         ),
       ),
@@ -555,12 +553,12 @@ class _SupervisorLiveMapPageState extends State<SupervisorLiveMapPage>
       bottom: 280,
       child: Column(
         children: [
-          _mapBtn(Icons.add, 'Zoom in',
+          _mapBtn(Icons.add_rounded, 'Zoom in',
               () => _mapController.move(
                   _mapController.camera.center,
                   _mapController.camera.zoom + 1)),
           const SizedBox(height: 6),
-          _mapBtn(Icons.remove, 'Zoom out',
+          _mapBtn(Icons.remove_rounded, 'Zoom out',
               () => _mapController.move(
                   _mapController.camera.center,
                   _mapController.camera.zoom - 1)),
@@ -579,20 +577,20 @@ class _SupervisorLiveMapPageState extends State<SupervisorLiveMapPage>
       child: GestureDetector(
         onTap: onTap,
         child: Container(
-          width: 42,
-          height: 42,
+          width: 44,
+          height: 44,
           decoration: BoxDecoration(
-            color: const Color(0xFF1E293B).withOpacity(0.95),
+            color: const Color(0xFF1E293B).withOpacity(0.96),
             borderRadius: BorderRadius.circular(12),
             border: Border.all(color: const Color(0xFF334155)),
             boxShadow: [
               BoxShadow(
-                  color: Colors.black.withOpacity(0.3),
+                  color: Colors.black.withOpacity(0.35),
                   blurRadius: 8,
-                  offset: const Offset(0, 2)),
+                  offset: const Offset(0, 3))
             ],
           ),
-          child: Icon(icon, color: color, size: 20),
+          child: Icon(icon, color: color, size: 22),
         ),
       ),
     );
@@ -625,24 +623,21 @@ class _SupervisorLiveMapPageState extends State<SupervisorLiveMapPage>
     return GestureDetector(
       onTap: () => setState(() => _selectedSiteFilter = value),
       child: AnimatedContainer(
-        duration: const Duration(milliseconds: 200),
+        duration: const Duration(milliseconds: 180),
         margin: const EdgeInsets.only(right: 8),
-        padding:
-            const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
         decoration: BoxDecoration(
           color: selected
               ? _primary
               : const Color(0xFF0F172A).withOpacity(0.88),
           borderRadius: BorderRadius.circular(20),
           border: Border.all(
-              color: selected
-                  ? _primary
-                  : const Color(0xFF334155)),
+              color: selected ? _primary : const Color(0xFF334155)),
           boxShadow: [
             BoxShadow(
                 color: Colors.black.withOpacity(0.25),
                 blurRadius: 6,
-                offset: const Offset(0, 2)),
+                offset: const Offset(0, 2))
           ],
         ),
         child: Text(label,
@@ -654,15 +649,15 @@ class _SupervisorLiveMapPageState extends State<SupervisorLiveMapPage>
     );
   }
 
-  // ─── Draggable bottom sheet with guard cards ──────────────────────────────
+  // ─── Draggable bottom sheet ───────────────────────────────────────────────
   Widget _buildBottomSheet() {
     return DraggableScrollableSheet(
       controller: _sheetCtrl,
       initialChildSize: 0.22,
       minChildSize: 0.1,
-      maxChildSize: 0.55,
+      maxChildSize: 0.58,
       snap: true,
-      snapSizes: const [0.1, 0.22, 0.55],
+      snapSizes: const [0.1, 0.22, 0.58],
       builder: (context, scrollCtrl) {
         return Container(
           decoration: BoxDecoration(
@@ -674,7 +669,7 @@ class _SupervisorLiveMapPageState extends State<SupervisorLiveMapPage>
               BoxShadow(
                   color: Colors.black.withOpacity(0.4),
                   blurRadius: 20,
-                  offset: const Offset(0, -4)),
+                  offset: const Offset(0, -4))
             ],
           ),
           child: Column(
@@ -682,9 +677,9 @@ class _SupervisorLiveMapPageState extends State<SupervisorLiveMapPage>
               // Drag handle
               GestureDetector(
                 onTap: () {
-                  final current = _sheetCtrl.size;
+                  final cur = _sheetCtrl.size;
                   _sheetCtrl.animateTo(
-                      current < 0.4 ? 0.55 : 0.22,
+                      cur < 0.4 ? 0.58 : 0.22,
                       duration: const Duration(milliseconds: 300),
                       curve: Curves.easeOut);
                 },
@@ -696,29 +691,30 @@ class _SupervisorLiveMapPageState extends State<SupervisorLiveMapPage>
                     width: 40,
                     height: 4,
                     decoration: BoxDecoration(
-                      color: _cardBdr,
-                      borderRadius: BorderRadius.circular(2),
-                    ),
+                        color: _cardBdr,
+                        borderRadius: BorderRadius.circular(2)),
                   ),
                 ),
               ),
-              // Tab bar
+              // Tabs
               Padding(
-                padding: const EdgeInsets.fromLTRB(12, 2, 12, 8),
+                padding:
+                    const EdgeInsets.fromLTRB(12, 2, 12, 8),
                 child: Row(
                   children: [
-                    _sheetTabBtn(0, Icons.people_alt_rounded,
-                        'Guards', _filteredGuards.length),
+                    _sheetTabBtn(
+                        0, Icons.people_alt_rounded, 'Guards',
+                        _filteredGuards.length),
                     const SizedBox(width: 8),
-                    _sheetTabBtn(1, Icons.location_city_rounded,
-                        'Sites', _mySites.length),
+                    _sheetTabBtn(
+                        1, Icons.location_city_rounded, 'Sites',
+                        _mySites.length),
                     const Spacer(),
                     Container(
-                      width: 7,
-                      height: 7,
-                      decoration: const BoxDecoration(
-                        color: _green, shape: BoxShape.circle),
-                    ),
+                        width: 7,
+                        height: 7,
+                        decoration: const BoxDecoration(
+                            color: _green, shape: BoxShape.circle)),
                     const SizedBox(width: 4),
                     Text('Live',
                         style: TextStyle(color: _sub, fontSize: 11)),
@@ -738,7 +734,6 @@ class _SupervisorLiveMapPageState extends State<SupervisorLiveMapPage>
     );
   }
 
-  // ─── Sheet tab button ────────────────────────────────────────────────────
   Widget _sheetTabBtn(int index, IconData icon, String label, int count) {
     final active = _sheetTab == index;
     return GestureDetector(
@@ -755,8 +750,7 @@ class _SupervisorLiveMapPageState extends State<SupervisorLiveMapPage>
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(icon,
-                color: active ? Colors.white : _sub, size: 13),
+            Icon(icon, color: active ? Colors.white : _sub, size: 13),
             const SizedBox(width: 5),
             Text(label,
                 style: TextStyle(
@@ -765,8 +759,7 @@ class _SupervisorLiveMapPageState extends State<SupervisorLiveMapPage>
                     fontWeight: FontWeight.w600)),
             const SizedBox(width: 5),
             Container(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
               decoration: BoxDecoration(
                 color: active
                     ? Colors.white.withOpacity(0.2)
@@ -785,7 +778,7 @@ class _SupervisorLiveMapPageState extends State<SupervisorLiveMapPage>
     );
   }
 
-  // ─── Guard list (tab 0) ───────────────────────────────────────────────────
+  // ─── Guard list ───────────────────────────────────────────────────────────
   Widget _buildGuardList(ScrollController scrollCtrl) {
     if (_filteredGuards.isEmpty) {
       return Center(
@@ -807,7 +800,124 @@ class _SupervisorLiveMapPageState extends State<SupervisorLiveMapPage>
     );
   }
 
-  // ─── Site list (tab 1) ────────────────────────────────────────────────────
+  Widget _buildGuardCard(Map<String, dynamic> loc) {
+    final key        = loc['id']?.toString() ?? '';
+    final stale      = _isStale(loc['lastUpdate']?.toString());
+    final color      = stale ? Colors.grey : _green;
+    final isSelected = _selectedGuardKey == key;
+
+    return GestureDetector(
+      onTap: () => _flyToGuard(loc),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        margin: const EdgeInsets.only(bottom: 8),
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: isSelected ? _primary.withOpacity(0.1) : _bg,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(
+              color: isSelected
+                  ? _primary.withOpacity(0.6)
+                  : _cardBdr.withOpacity(0.5)),
+          boxShadow: isSelected
+              ? [
+                  BoxShadow(
+                      color: _primary.withOpacity(0.15),
+                      blurRadius: 10,
+                      offset: const Offset(0, 2))
+                ]
+              : [],
+        ),
+        child: Row(
+          children: [
+            Stack(
+              clipBehavior: Clip.none,
+              children: [
+                Container(
+                  width: 44,
+                  height: 44,
+                  decoration: BoxDecoration(
+                    color: color.withOpacity(0.12),
+                    shape: BoxShape.circle,
+                    border: Border.all(color: color, width: 1.5),
+                  ),
+                  child: Icon(Icons.security_rounded, color: color, size: 20),
+                ),
+                Positioned(
+                  right: 0,
+                  bottom: 0,
+                  child: Container(
+                    width: 12,
+                    height: 12,
+                    decoration: BoxDecoration(
+                      color: color,
+                      shape: BoxShape.circle,
+                      border: Border.all(color: _card, width: 1.5),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(loc['name'] ?? '--',
+                      style: TextStyle(
+                          color: _text,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 13),
+                      overflow: TextOverflow.ellipsis),
+                  const SizedBox(height: 2),
+                  Row(children: [
+                    Icon(Icons.location_city_rounded, color: _sub, size: 11),
+                    const SizedBox(width: 3),
+                    Expanded(
+                        child: Text(loc['site'] ?? '--',
+                            style: TextStyle(color: _sub, fontSize: 11),
+                            overflow: TextOverflow.ellipsis)),
+                  ]),
+                  const SizedBox(height: 2),
+                  Row(children: [
+                    Icon(Icons.access_time_rounded, color: _sub, size: 11),
+                    const SizedBox(width: 3),
+                    Text(loc['worktime'] ?? '--',
+                        style: TextStyle(color: _sub, fontSize: 11)),
+                  ]),
+                ],
+              ),
+            ),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: color.withOpacity(0.12),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text(
+                    _staleness(loc['lastUpdate']?.toString()),
+                    style: TextStyle(
+                        color: color,
+                        fontSize: 10,
+                        fontWeight: FontWeight.w600),
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Icon(Icons.my_location_rounded,
+                    color: isSelected ? _primary : _sub, size: 16),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ─── Site list ────────────────────────────────────────────────────────────
   Widget _buildSiteList(ScrollController scrollCtrl) {
     final sites = _selectedSiteFilter == null
         ? _mySites
@@ -827,7 +937,6 @@ class _SupervisorLiveMapPageState extends State<SupervisorLiveMapPage>
         ),
       );
     }
-
     return ListView.builder(
       controller: scrollCtrl,
       padding: const EdgeInsets.fromLTRB(12, 0, 12, 16),
@@ -837,29 +946,25 @@ class _SupervisorLiveMapPageState extends State<SupervisorLiveMapPage>
   }
 
   Widget _buildSiteCard(Map<String, dynamic> site) {
-    final lat = site['latitude'];
-    final lng = site['longitude'];
-    final hasCoords = lat != null && lng != null;
+    final lat        = site['latitude'];
+    final lng        = site['longitude'];
+    final hasCoords  = lat != null && lng != null;
+    final isFiltered = _selectedSiteFilter == site['name']?.toString();
 
-    // Count guards currently at this site
     final guardCount = _guardLocations.values
-        .where((loc) => loc['site']?.toString() == site['name']?.toString())
+        .where((l) => l['site']?.toString() == site['name']?.toString())
         .length;
     final activeCount = _guardLocations.values
-        .where((loc) =>
-            loc['site']?.toString() == site['name']?.toString() &&
-            !_isStale(loc['lastUpdate']?.toString()))
+        .where((l) =>
+            l['site']?.toString() == site['name']?.toString() &&
+            !_isStale(l['lastUpdate']?.toString()))
         .length;
-
-    final isFiltered = _selectedSiteFilter == site['name']?.toString();
 
     return GestureDetector(
       onTap: () {
         if (hasCoords) {
           _mapController.move(
-            LatLng((lat as num).toDouble(), (lng as num).toDouble()),
-            15,
-          );
+              LatLng((lat as num).toDouble(), (lng as num).toDouble()), 15);
         }
         setState(() {
           _selectedSiteFilter =
@@ -880,21 +985,19 @@ class _SupervisorLiveMapPageState extends State<SupervisorLiveMapPage>
         ),
         child: Row(
           children: [
-            // Icon
             Container(
               width: 44,
               height: 44,
               decoration: BoxDecoration(
                 color: _primary.withOpacity(0.12),
                 shape: BoxShape.circle,
-                border: Border.all(
-                    color: _primary.withOpacity(0.4), width: 1.5),
+                border:
+                    Border.all(color: _primary.withOpacity(0.4), width: 1.5),
               ),
               child: const Icon(Icons.location_city_rounded,
                   color: _primary, size: 20),
             ),
             const SizedBox(width: 12),
-            // Info
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -905,49 +1008,41 @@ class _SupervisorLiveMapPageState extends State<SupervisorLiveMapPage>
                           fontWeight: FontWeight.bold,
                           fontSize: 13),
                       overflow: TextOverflow.ellipsis),
-                  const SizedBox(height: 3),
-                  Row(
-                    children: [
-                      Icon(Icons.domain_rounded, color: _sub, size: 11),
-                      const SizedBox(width: 3),
-                      Expanded(
+                  const SizedBox(height: 2),
+                  Row(children: [
+                    Icon(Icons.domain_rounded, color: _sub, size: 11),
+                    const SizedBox(width: 3),
+                    Expanded(
                         child: Text(
                             site['clientName']?.toString() ??
                                 site['client']?.toString() ??
                                 '--',
                             style: TextStyle(color: _sub, fontSize: 11),
-                            overflow: TextOverflow.ellipsis),
-                      ),
-                    ],
-                  ),
+                            overflow: TextOverflow.ellipsis)),
+                  ]),
                   if (site['description'] != null &&
                       site['description'].toString().isNotEmpty) ...[
                     const SizedBox(height: 2),
-                    Row(
-                      children: [
-                        Icon(Icons.info_outline_rounded,
-                            color: _sub, size: 11),
-                        const SizedBox(width: 3),
-                        Expanded(
-                          child: Text(
-                              site['description'].toString(),
+                    Row(children: [
+                      Icon(Icons.info_outline_rounded,
+                          color: _sub, size: 11),
+                      const SizedBox(width: 3),
+                      Expanded(
+                          child: Text(site['description'].toString(),
                               style: TextStyle(color: _sub, fontSize: 11),
-                              overflow: TextOverflow.ellipsis),
-                        ),
-                      ],
-                    ),
+                              overflow: TextOverflow.ellipsis)),
+                    ]),
                   ],
                 ],
               ),
             ),
             const SizedBox(width: 8),
-            // Guard count + filter indicator
             Column(
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
                 Container(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 8, vertical: 3),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                   decoration: BoxDecoration(
                     color: activeCount > 0
                         ? _green.withOpacity(0.12)
@@ -962,8 +1057,7 @@ class _SupervisorLiveMapPageState extends State<SupervisorLiveMapPage>
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       Icon(Icons.security_rounded,
-                          color: activeCount > 0 ? _green : _sub,
-                          size: 11),
+                          color: activeCount > 0 ? _green : _sub, size: 11),
                       const SizedBox(width: 4),
                       Text('$activeCount/$guardCount',
                           style: TextStyle(
@@ -989,138 +1083,7 @@ class _SupervisorLiveMapPageState extends State<SupervisorLiveMapPage>
     );
   }
 
-  Widget _buildGuardCard(Map<String, dynamic> loc) {
-    final key     = loc['id']?.toString() ?? '';
-    final stale   = _isStale(loc['lastUpdate']?.toString());
-    final color   = stale ? Colors.grey : _green;
-    final isSelected = _selectedGuardKey == key;
-
-    return GestureDetector(
-      onTap: () => _flyToGuard(loc),
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 200),
-        margin: const EdgeInsets.only(bottom: 8),
-        padding: const EdgeInsets.all(12),
-        decoration: BoxDecoration(
-          color: isSelected
-              ? _primary.withOpacity(0.12)
-              : _bg,
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(
-              color: isSelected
-                  ? _primary.withOpacity(0.6)
-                  : _cardBdr.withOpacity(0.5)),
-          boxShadow: isSelected
-              ? [
-                  BoxShadow(
-                      color: _primary.withOpacity(0.15),
-                      blurRadius: 10,
-                      offset: const Offset(0, 2))
-                ]
-              : [],
-        ),
-        child: Row(
-          children: [
-            // Status dot + icon
-            Stack(
-              clipBehavior: Clip.none,
-              children: [
-                Container(
-                  width: 44,
-                  height: 44,
-                  decoration: BoxDecoration(
-                    color: color.withOpacity(0.12),
-                    shape: BoxShape.circle,
-                    border: Border.all(color: color, width: 1.5),
-                  ),
-                  child: Icon(Icons.security_rounded,
-                      color: color, size: 20),
-                ),
-                Positioned(
-                  right: 0,
-                  bottom: 0,
-                  child: Container(
-                    width: 12,
-                    height: 12,
-                    decoration: BoxDecoration(
-                      color: color,
-                      shape: BoxShape.circle,
-                      border: Border.all(color: _card, width: 1.5),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(width: 12),
-            // Info
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(loc['name'] ?? '--',
-                      style: TextStyle(
-                          color: _text,
-                          fontWeight: FontWeight.bold,
-                          fontSize: 13),
-                      overflow: TextOverflow.ellipsis),
-                  const SizedBox(height: 2),
-                  Row(
-                    children: [
-                      Icon(Icons.location_city_rounded,
-                          color: _sub, size: 11),
-                      const SizedBox(width: 3),
-                      Expanded(
-                        child: Text(loc['site'] ?? '--',
-                            style: TextStyle(color: _sub, fontSize: 11),
-                            overflow: TextOverflow.ellipsis),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 2),
-                  Row(
-                    children: [
-                      Icon(Icons.access_time_rounded,
-                          color: _sub, size: 11),
-                      const SizedBox(width: 3),
-                      Text(loc['worktime'] ?? '--',
-                          style:
-                              TextStyle(color: _sub, fontSize: 11)),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-            // Last update + navigate
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 7, vertical: 3),
-                  decoration: BoxDecoration(
-                    color: color.withOpacity(0.12),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Text(
-                    _staleness(loc['lastUpdate']?.toString()),
-                    style: TextStyle(
-                        color: color,
-                        fontSize: 10,
-                        fontWeight: FontWeight.w600),
-                  ),
-                ),
-                const SizedBox(height: 6),
-                Icon(Icons.my_location_rounded,
-                    color: isSelected ? _primary : _sub, size: 16),
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  // ─── Guard bottom sheet (tap on map marker) ───────────────────────────────
+  // ─── Guard detail bottom sheet (tap marker) ───────────────────────────────
   void _showGuardSheet(BuildContext ctx, Map<String, dynamic> loc) {
     setState(() => _selectedGuardKey = loc['id']?.toString());
     final stale = _isStale(loc['lastUpdate']?.toString());
@@ -1137,12 +1100,11 @@ class _SupervisorLiveMapPageState extends State<SupervisorLiveMapPage>
           mainAxisSize: MainAxisSize.min,
           children: [
             Container(
-              width: 36,
-              height: 4,
-              decoration: BoxDecoration(
-                  color: _cardBdr,
-                  borderRadius: BorderRadius.circular(2)),
-            ),
+                width: 36,
+                height: 4,
+                decoration: BoxDecoration(
+                    color: _cardBdr,
+                    borderRadius: BorderRadius.circular(2))),
             const SizedBox(height: 16),
             Row(
               children: [
@@ -1154,8 +1116,7 @@ class _SupervisorLiveMapPageState extends State<SupervisorLiveMapPage>
                     shape: BoxShape.circle,
                     border: Border.all(color: color, width: 2),
                   ),
-                  child: Icon(Icons.security_rounded,
-                      color: color, size: 26),
+                  child: Icon(Icons.security_rounded, color: color, size: 26),
                 ),
                 const SizedBox(width: 14),
                 Expanded(
@@ -1168,19 +1129,16 @@ class _SupervisorLiveMapPageState extends State<SupervisorLiveMapPage>
                               fontSize: 17,
                               fontWeight: FontWeight.bold)),
                       const SizedBox(height: 2),
-                      Row(
-                        children: [
-                          Container(
+                      Row(children: [
+                        Container(
                             width: 8,
                             height: 8,
                             decoration: BoxDecoration(
-                                color: color, shape: BoxShape.circle),
-                          ),
-                          const SizedBox(width: 5),
-                          Text(stale ? 'Inactive' : 'Active',
-                              style: TextStyle(color: color, fontSize: 12)),
-                        ],
-                      ),
+                                color: color, shape: BoxShape.circle)),
+                        const SizedBox(width: 5),
+                        Text(stale ? 'Inactive' : 'Active',
+                            style: TextStyle(color: color, fontSize: 12)),
+                      ]),
                     ],
                   ),
                 ),
@@ -1188,12 +1146,12 @@ class _SupervisorLiveMapPageState extends State<SupervisorLiveMapPage>
             ),
             const SizedBox(height: 18),
             _infoTile(Icons.location_city_rounded, 'Site', loc['site']),
-            const SizedBox(height: 10),
+            const SizedBox(height: 8),
             _infoTile(Icons.access_time_rounded, 'Shift', loc['worktime']),
-            const SizedBox(height: 10),
+            const SizedBox(height: 8),
             _infoTile(Icons.update_rounded, 'Last update',
                 _staleness(loc['lastUpdate']?.toString())),
-            const SizedBox(height: 10),
+            const SizedBox(height: 8),
             _infoTile(
               Icons.gps_fixed_rounded,
               'Coordinates',
@@ -1218,15 +1176,12 @@ class _SupervisorLiveMapPageState extends State<SupervisorLiveMapPage>
         children: [
           Icon(icon, color: _sub, size: 15),
           const SizedBox(width: 10),
-          Text('$label  ',
-              style: TextStyle(color: _sub, fontSize: 13)),
+          Text('$label  ', style: TextStyle(color: _sub, fontSize: 13)),
           Expanded(
             child: Text(
               value ?? '--',
               style: TextStyle(
-                  color: _text,
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600),
+                  color: _text, fontSize: 13, fontWeight: FontWeight.w600),
               textAlign: TextAlign.end,
               overflow: TextOverflow.ellipsis,
             ),
