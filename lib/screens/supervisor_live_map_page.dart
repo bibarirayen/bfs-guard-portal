@@ -48,6 +48,8 @@ class _SupervisorLiveMapPageState extends State<SupervisorLiveMapPage>
   // Separate MapController so it is NEVER recreated on rebuild
   final MapController _mapController = MapController();
   bool _mapReady = false;
+  // Computed once; never changes so flutter_map never resets the camera.
+  LatLng? _initialMapCenter;
 
   late AnimationController _pulseCtrl;
   late Animation<double>   _pulseAnim;
@@ -114,6 +116,16 @@ class _SupervisorLiveMapPageState extends State<SupervisorLiveMapPage>
           }
         }
         setState(() { _guardLocations = locs; _loading = false; });
+        // Cache center once so MapOptions.initialCenter is stable across rebuilds.
+        _initialMapCenter ??= locs.isNotEmpty
+            ? LatLng(
+                (locs.values.first['latitude'] as num).toDouble(),
+                (locs.values.first['longitude'] as num).toDouble())
+            : _mySites.isNotEmpty
+                ? LatLng(
+                    (_mySites.first['latitude'] as num).toDouble(),
+                    (_mySites.first['longitude'] as num).toDouble())
+                : const LatLng(21.3069, -157.8583);
         if (_mapReady) _fitAll();
       } else {
         setState(() { _error = 'Server error (${res.statusCode})'; _loading = false; });
@@ -211,7 +223,7 @@ class _SupervisorLiveMapPageState extends State<SupervisorLiveMapPage>
     _mapController.move(
       LatLng((lat as num).toDouble(), (lng as num).toDouble()), 16);
     setState(() => _selectedGuardKey = loc['id']?.toString());
-    _sheetCtrl.animateTo(0.35,
+    _sheetCtrl.animateTo(0.367,
         duration: const Duration(milliseconds: 280), curve: Curves.easeOut);
   }
 
@@ -280,20 +292,14 @@ class _SupervisorLiveMapPageState extends State<SupervisorLiveMapPage>
 
   // ─── Map ─────────────────────────────────────────────────────────────────
   Widget _buildMap() {
-    final initialCenter = _guardLocations.isNotEmpty
-        ? LatLng(
-            (_guardLocations.values.first['latitude'] as num).toDouble(),
-            (_guardLocations.values.first['longitude'] as num).toDouble())
-        : _mySites.isNotEmpty
-            ? LatLng(
-                (_mySites.first['latitude'] as num).toDouble(),
-                (_mySites.first['longitude'] as num).toDouble())
-            : const LatLng(21.3069, -157.8583);
+    // Use the cached center — a new LatLng on every rebuild would cause
+    // flutter_map to detect an options change and reset the camera position.
+    final center = _initialMapCenter ?? const LatLng(21.3069, -157.8583);
 
     return FlutterMap(
       mapController: _mapController,
       options: MapOptions(
-        initialCenter: initialCenter,
+        initialCenter: center,
         initialZoom: 13,
         minZoom: 3,
         maxZoom: 19,
@@ -548,9 +554,11 @@ class _SupervisorLiveMapPageState extends State<SupervisorLiveMapPage>
 
   // ─── Map control buttons ──────────────────────────────────────────────────
   Widget _buildMapControls() {
+    // Keep controls above the minimum sheet height + filter chips row.
+    final bottom = MediaQuery.of(context).size.height * 0.22 + 58;
     return Positioned(
       right: 12,
-      bottom: 280,
+      bottom: bottom,
       child: Column(
         children: [
           _mapBtn(Icons.add_rounded, 'Zoom in',
@@ -599,10 +607,12 @@ class _SupervisorLiveMapPageState extends State<SupervisorLiveMapPage>
   // ─── Site filter chips ────────────────────────────────────────────────────
   Widget _buildSiteFilterChips() {
     if (_mySites.isEmpty) return const SizedBox.shrink();
+    // Sit just above the collapsed sheet handle.
+    final bottom = MediaQuery.of(context).size.height * 0.22 + 8;
     return Positioned(
       left: 0,
       right: 0,
-      bottom: 240,
+      bottom: bottom,
       child: SingleChildScrollView(
         scrollDirection: Axis.horizontal,
         padding: const EdgeInsets.symmetric(horizontal: 12),
@@ -651,13 +661,28 @@ class _SupervisorLiveMapPageState extends State<SupervisorLiveMapPage>
 
   // ─── Draggable bottom sheet ───────────────────────────────────────────────
   Widget _buildBottomSheet() {
-    return DraggableScrollableSheet(
+    // CRITICAL: wrap in Positioned so the sheet's hit-test area is confined
+    // to the bottom 60% of the screen. Without this, DraggableScrollableSheet
+    // fills the full Stack height, stealing vertical drag gestures from
+    // flutter_map and causing the map to teleport on every tiny pan.
+    final sh = MediaQuery.of(context).size.height;
+    // The container is exactly 60% of screen (our max sheet size).
+    // All childSize values below are expressed relative to this container.
+    // 0.22*sh / 0.60*sh = 0.367  (initial)
+    // 0.10*sh / 0.60*sh = 0.167  (min/collapsed)
+    // 1.0                         (max = fills container = 60% of screen)
+    return Positioned(
+      bottom: 0,
+      left: 0,
+      right: 0,
+      height: sh * 0.60,
+      child: DraggableScrollableSheet(
       controller: _sheetCtrl,
-      initialChildSize: 0.22,
-      minChildSize: 0.1,
-      maxChildSize: 0.58,
+      initialChildSize: 0.367,
+      minChildSize: 0.167,
+      maxChildSize: 1.0,
       snap: true,
-      snapSizes: const [0.1, 0.22, 0.58],
+      snapSizes: const [0.167, 0.367, 1.0],
       builder: (context, scrollCtrl) {
         return Container(
           decoration: BoxDecoration(
@@ -679,7 +704,7 @@ class _SupervisorLiveMapPageState extends State<SupervisorLiveMapPage>
                 onTap: () {
                   final cur = _sheetCtrl.size;
                   _sheetCtrl.animateTo(
-                      cur < 0.4 ? 0.58 : 0.22,
+                      cur < 0.65 ? 1.0 : 0.367,
                       duration: const Duration(milliseconds: 300),
                       curve: Curves.easeOut);
                 },
@@ -731,7 +756,8 @@ class _SupervisorLiveMapPageState extends State<SupervisorLiveMapPage>
           ),
         );
       },
-    );
+      ),   // closes DraggableScrollableSheet
+    );     // closes Positioned
   }
 
   Widget _sheetTabBtn(int index, IconData icon, String label, int count) {
