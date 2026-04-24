@@ -53,8 +53,9 @@ class _SupervisorLiveMapPageState extends State<SupervisorLiveMapPage>
 
   late AnimationController _pulseCtrl;
   late Animation<double>   _pulseAnim;
-  final DraggableScrollableController _sheetCtrl =
-      DraggableScrollableController();
+  bool _panelExpanded = false;
+  final ScrollController _guardListCtrl = ScrollController();
+  final ScrollController _siteListCtrl  = ScrollController();
 
   @override
   void initState() {
@@ -72,6 +73,8 @@ class _SupervisorLiveMapPageState extends State<SupervisorLiveMapPage>
   @override
   void dispose() {
     _pulseCtrl.dispose();
+    _guardListCtrl.dispose();
+    _siteListCtrl.dispose();
     _stompClient?.deactivate();
     super.dispose();
   }
@@ -222,9 +225,10 @@ class _SupervisorLiveMapPageState extends State<SupervisorLiveMapPage>
     if (lat == null || lng == null) return;
     _mapController.move(
       LatLng((lat as num).toDouble(), (lng as num).toDouble()), 16);
-    setState(() => _selectedGuardKey = loc['id']?.toString());
-    _sheetCtrl.animateTo(0.367,
-        duration: const Duration(milliseconds: 280), curve: Curves.easeOut);
+    setState(() {
+      _selectedGuardKey = loc['id']?.toString();
+      _panelExpanded = true;
+    });
   }
 
   // ─── build ───────────────────────────────────────────────────────────────
@@ -255,13 +259,19 @@ class _SupervisorLiveMapPageState extends State<SupervisorLiveMapPage>
           ? const Center(child: CircularProgressIndicator(color: _primary))
           : _error != null
               ? _buildError()
-              : Stack(
+              : Column(
                   children: [
-                    _buildMap(),
-                    _buildTopStatsBar(),
-                    _buildMapControls(),
-                    _buildSiteFilterChips(),
-                    _buildBottomSheet(),
+                    Expanded(
+                      child: Stack(
+                        children: [
+                          _buildMap(),
+                          _buildTopStatsBar(),
+                          _buildMapControls(),
+                          _buildSiteFilterChips(),
+                        ],
+                      ),
+                    ),
+                    _buildBottomPanel(),
                   ],
                 ),
     );
@@ -554,11 +564,9 @@ class _SupervisorLiveMapPageState extends State<SupervisorLiveMapPage>
 
   // ─── Map control buttons ──────────────────────────────────────────────────
   Widget _buildMapControls() {
-    // Keep controls above the minimum sheet height + filter chips row.
-    final bottom = MediaQuery.of(context).size.height * 0.22 + 58;
     return Positioned(
       right: 12,
-      bottom: bottom,
+      bottom: 66,
       child: Column(
         children: [
           _mapBtn(Icons.add_rounded, 'Zoom in',
@@ -607,12 +615,10 @@ class _SupervisorLiveMapPageState extends State<SupervisorLiveMapPage>
   // ─── Site filter chips ────────────────────────────────────────────────────
   Widget _buildSiteFilterChips() {
     if (_mySites.isEmpty) return const SizedBox.shrink();
-    // Sit just above the collapsed sheet handle.
-    final bottom = MediaQuery.of(context).size.height * 0.22 + 8;
     return Positioned(
       left: 0,
       right: 0,
-      bottom: bottom,
+      bottom: 8,
       child: SingleChildScrollView(
         scrollDirection: Axis.horizontal,
         padding: const EdgeInsets.symmetric(horizontal: 12),
@@ -659,59 +665,49 @@ class _SupervisorLiveMapPageState extends State<SupervisorLiveMapPage>
     );
   }
 
-  // ─── Draggable bottom sheet ───────────────────────────────────────────────
-  Widget _buildBottomSheet() {
-    // CRITICAL: wrap in Positioned so the sheet's hit-test area is confined
-    // to the bottom 60% of the screen. Without this, DraggableScrollableSheet
-    // fills the full Stack height, stealing vertical drag gestures from
-    // flutter_map and causing the map to teleport on every tiny pan.
-    final sh = MediaQuery.of(context).size.height;
-    // The container is exactly 60% of screen (our max sheet size).
-    // All childSize values below are expressed relative to this container.
-    // 0.22*sh / 0.60*sh = 0.367  (initial)
-    // 0.10*sh / 0.60*sh = 0.167  (min/collapsed)
-    // 1.0                         (max = fills container = 60% of screen)
-    return Positioned(
-      bottom: 0,
-      left: 0,
-      right: 0,
-      height: sh * 0.60,
-      child: DraggableScrollableSheet(
-      controller: _sheetCtrl,
-      initialChildSize: 0.367,
-      minChildSize: 0.167,
-      maxChildSize: 1.0,
-      snap: true,
-      snapSizes: const [0.167, 0.367, 1.0],
-      builder: (context, scrollCtrl) {
-        return Container(
-          decoration: BoxDecoration(
-            color: _card,
-            borderRadius:
-                const BorderRadius.vertical(top: Radius.circular(22)),
-            border: Border.all(color: _cardBdr.withOpacity(0.6)),
-            boxShadow: [
-              BoxShadow(
-                  color: Colors.black.withOpacity(0.4),
-                  blurRadius: 20,
-                  offset: const Offset(0, -4))
-            ],
-          ),
+  // ─── Bottom panel (no gesture overlap with map) ───────────────────────────
+  Widget _buildBottomPanel() {
+    return GestureDetector(
+      behavior: HitTestBehavior.translucent,
+      onVerticalDragUpdate: (d) {
+        if (d.delta.dy < -4 && !_panelExpanded)
+          setState(() => _panelExpanded = true);
+        if (d.delta.dy > 4 && _panelExpanded)
+          setState(() => _panelExpanded = false);
+      },
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 280),
+        curve: Curves.easeOut,
+        // 124 collapsed (handle + tabs visible), 50% expanded for the list.
+        height: _panelExpanded
+            ? MediaQuery.of(context).size.height * 0.50
+            : 124,
+        decoration: BoxDecoration(
+          color: _card,
+          borderRadius:
+              const BorderRadius.vertical(top: Radius.circular(22)),
+          border: Border.all(color: _cardBdr.withOpacity(0.6)),
+          boxShadow: [
+            BoxShadow(
+                color: Colors.black.withOpacity(0.4),
+                blurRadius: 20,
+                offset: const Offset(0, -4))
+          ],
+        ),
+        child: ClipRRect(
+          borderRadius:
+              const BorderRadius.vertical(top: Radius.circular(22)),
           child: Column(
             children: [
-              // Drag handle
+              // Drag handle — tap or swipe to expand/collapse
               GestureDetector(
-                onTap: () {
-                  final cur = _sheetCtrl.size;
-                  _sheetCtrl.animateTo(
-                      cur < 0.65 ? 1.0 : 0.367,
-                      duration: const Duration(milliseconds: 300),
-                      curve: Curves.easeOut);
-                },
+                onTap: () =>
+                    setState(() => _panelExpanded = !_panelExpanded),
                 child: Container(
                   padding: const EdgeInsets.symmetric(vertical: 10),
                   width: double.infinity,
                   alignment: Alignment.center,
+                  color: Colors.transparent,
                   child: Container(
                     width: 40,
                     height: 4,
@@ -723,8 +719,7 @@ class _SupervisorLiveMapPageState extends State<SupervisorLiveMapPage>
               ),
               // Tabs
               Padding(
-                padding:
-                    const EdgeInsets.fromLTRB(12, 2, 12, 8),
+                padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
                 child: Row(
                   children: [
                     _sheetTabBtn(
@@ -746,18 +741,18 @@ class _SupervisorLiveMapPageState extends State<SupervisorLiveMapPage>
                   ],
                 ),
               ),
-              // Content
-              Expanded(
-                child: _sheetTab == 0
-                    ? _buildGuardList(scrollCtrl)
-                    : _buildSiteList(scrollCtrl),
-              ),
+              // List — only rendered (and sized) when expanded
+              if (_panelExpanded)
+                Expanded(
+                  child: _sheetTab == 0
+                      ? _buildGuardList(_guardListCtrl)
+                      : _buildSiteList(_siteListCtrl),
+                ),
             ],
           ),
-        );
-      },
-      ),   // closes DraggableScrollableSheet
-    );     // closes Positioned
+        ),
+      ),
+    );
   }
 
   Widget _sheetTabBtn(int index, IconData icon, String label, int count) {
