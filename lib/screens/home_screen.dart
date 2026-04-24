@@ -1568,6 +1568,97 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                 ),
               ],
 
+              const SizedBox(height: 12),
+
+              Row(
+                children: [
+                  Expanded(
+                    child: _buildSimpleActionButton(
+                      Icons.beach_access, "Vacation\nRequest",
+                      const Color(0xFF3B82F6),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: _buildSimpleActionButton(
+                      Icons.access_time_filled, "Shift\nMarketplace",
+                      const Color(0xFF10B981),
+                    ),
+                  ),
+                ],
+              ),
+
+              const SizedBox(height: 12),
+
+              Row(
+                children: [
+                  Expanded(
+                    child: _buildSimpleActionButton(
+                      Icons.description_outlined, "Reports",
+                      const Color(0xFF6366F1),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: _buildSimpleActionButton(
+                      Icons.support_agent, "Dispatch\nContacts",
+                      const Color(0xFF8B5CF6),
+                    ),
+                  ),
+                ],
+              ),
+
+              if (_isSupervisor) ...[
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    Expanded(
+                      child: _buildSimpleActionButton(
+                        Icons.article_outlined,
+                        "Counseling\nStatements",
+                        const Color(0xFFF59E0B),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: _buildSimpleActionButton(
+                        Icons.note_add_outlined,
+                        "New Counseling\nReport",
+                        const Color(0xFFEF4444),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    Expanded(
+                      child: _buildSimpleActionButton(
+                        Icons.assignment_outlined,
+                        "Assignments",
+                        const Color(0xFF06B6D4),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: _buildSimpleActionButton(
+                        Icons.map_outlined,
+                        "Live Map",
+                        const Color(0xFF10B981),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: _buildSimpleActionButton(
+                        Icons.history,
+                        "Attendance",
+                        const Color(0xFFF59E0B),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+
               // SOP button — guards (active shift only) and supervisors/admins
               const SizedBox(height: 12),
               GestureDetector(
@@ -1694,97 +1785,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                   ),
                 ),
               ),
-
-              const SizedBox(height: 12),
-
-              Row(
-                children: [
-                  Expanded(
-                    child: _buildSimpleActionButton(
-                      Icons.beach_access, "Vacation\nRequest",
-                      const Color(0xFF3B82F6),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: _buildSimpleActionButton(
-                      Icons.access_time_filled, "Shift\nMarketplace",
-                      const Color(0xFF10B981),
-                    ),
-                  ),
-                ],
-              ),
-
-              const SizedBox(height: 12),
-
-              Row(
-                children: [
-                  Expanded(
-                    child: _buildSimpleActionButton(
-                      Icons.description_outlined, "Reports",
-                      const Color(0xFF6366F1),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: _buildSimpleActionButton(
-                      Icons.support_agent, "Dispatch\nContacts",
-                      const Color(0xFF8B5CF6),
-                    ),
-                  ),
-                ],
-              ),
-
-              if (_isSupervisor) ...[
-                const SizedBox(height: 12),
-                Row(
-                  children: [
-                    Expanded(
-                      child: _buildSimpleActionButton(
-                        Icons.article_outlined,
-                        "Counseling\nStatements",
-                        const Color(0xFFF59E0B),
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: _buildSimpleActionButton(
-                        Icons.note_add_outlined,
-                        "New Counseling\nReport",
-                        const Color(0xFFEF4444),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                Row(
-                  children: [
-                    Expanded(
-                      child: _buildSimpleActionButton(
-                        Icons.assignment_outlined,
-                        "Assignments",
-                        const Color(0xFF06B6D4),
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: _buildSimpleActionButton(
-                        Icons.map_outlined,
-                        "Live Map",
-                        const Color(0xFF10B981),
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: _buildSimpleActionButton(
-                        Icons.history,
-                        "Attendance",
-                        const Color(0xFFF59E0B),
-                      ),
-                    ),
-                  ],
-                ),
-              ],
 
               const SizedBox(height: 90),
             ],

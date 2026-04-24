@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../config/ApiService.dart';
 
 /// Displayed when a supervisor taps the "Late Arrivals" notification or
@@ -43,8 +44,17 @@ class _LateArrivalsPageState extends State<LateArrivalsPage> {
       _error   = null;
     });
     try {
+      final prefs      = await SharedPreferences.getInstance();
+      final supervisorId = prefs.getInt('userId');
+      if (supervisorId == null) {
+        setState(() {
+          _error   = 'Supervisor ID not found. Please log in again.';
+          _loading = false;
+        });
+        return;
+      }
       final api      = ApiService();
-      final response = await api.get('attendance/late');
+      final response = await api.get('attendance/late?supervisorId=$supervisorId');
 
       if (response.statusCode == 200) {
         final List data = jsonDecode(response.body);
@@ -90,6 +100,13 @@ class _LateArrivalsPageState extends State<LateArrivalsPage> {
     } catch (_) {
       return raw;
     }
+  }
+
+  String _formatAvgLate(int mins) {
+    if (mins < 60) return '$mins min';
+    final h = mins ~/ 60;
+    final m = mins % 60;
+    return m == 0 ? '${h}h' : '${h}h ${m}m';
   }
 
   String _lateLabel(int? mins) {
@@ -284,7 +301,7 @@ class _LateArrivalsPageState extends State<LateArrivalsPage> {
         children: [
           _statItem(total.toString(), 'Late Guards'),
           Container(width: 1, height: 40, color: Colors.white30),
-          _statItem('$avgLate min', 'Avg Delay'),
+          _statItem(_formatAvgLate(avgLate), 'Avg Delay'),
         ],
       ),
     );
