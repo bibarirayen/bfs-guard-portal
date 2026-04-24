@@ -320,19 +320,15 @@ class _SupervisorLiveMapPageState extends State<SupervisorLiveMapPage>
         },
       ),
       children: [
-        // ── Tile layer ─────────────────────────────────────────────────────
-        // Standard OpenStreetMap tiles — 100% free, no API key, no signup.
-        // keepBuffer + panBuffer keep tiles in memory while panning
-        // so the map NEVER goes black.
+        // ── Tile layer — MapTiler Streets Dark ────────────────────────────
         TileLayer(
-          urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+          urlTemplate:
+              'https://api.maptiler.com/maps/streets-v2/{z}/{x}/{y}.png?key=47791121-2fe8-4f52-9b1e-c1735eaa416a',
           userAgentPackageName: 'com.blackfabricsecurity.app',
-          // NO retinaMode — it causes MediaQuery reads during build
-          // which trigger tile layer rebuilds while panning → black tiles.
           retinaMode: false,
-          keepBuffer: 6,      // tiles kept outside viewport in each direction
-          panBuffer: 3,       // pre-fetch tiles while panning
-          maxZoom: 19,
+          keepBuffer: 6,
+          panBuffer: 3,
+          maxZoom: 20,
           evictErrorTileStrategy: EvictErrorTileStrategy.dispose,
         ),
         // ── Site radius circles ────────────────────────────────────────────
