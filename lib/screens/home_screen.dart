@@ -35,6 +35,8 @@ import 'package:crossplatformblackfabric/screens/supervisor_live_map_page.dart';
 import 'package:crossplatformblackfabric/screens/supervisor_attendance_page.dart';
 import 'package:crossplatformblackfabric/screens/guard_sop_page.dart';
 import 'package:crossplatformblackfabric/screens/admin_sop_page.dart';
+import 'package:crossplatformblackfabric/screens/employee_handbook_page.dart';
+import 'package:crossplatformblackfabric/screens/employee_handbook_page.dart';
 
 class HomeScreen extends StatefulWidget {
   final String guardName;
@@ -1633,6 +1635,61 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                       ),
                       const Icon(Icons.arrow_forward_ios,
                           size: 14, color: Color(0xFF6366F1)),
+                    ],
+                  ),
+                ),
+              ),
+
+              // ── Employee Handbook — visible to everyone ──────────
+              const SizedBox(height: 12),
+              GestureDetector(
+                onTap: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                      builder: (_) => const EmployeeHandbookPage()),
+                ),
+                child: Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF10B981).withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(
+                        color: const Color(0xFF10B981).withOpacity(0.3)),
+                  ),
+                  child: Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(8),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF10B981).withOpacity(0.15),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: const Icon(Icons.import_contacts_outlined,
+                            color: Color(0xFF10B981), size: 22),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Employee Handbook',
+                              style: TextStyle(
+                                  color: _textColor,
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 13),
+                            ),
+                            Text(
+                              'Company documents & policies',
+                              style: TextStyle(
+                                  color: _secondaryTextColor,
+                                  fontSize: 11),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const Icon(Icons.arrow_forward_ios,
+                          size: 14, color: Color(0xFF10B981)),
                     ],
                   ),
                 ),
