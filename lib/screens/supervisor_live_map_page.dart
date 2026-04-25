@@ -2,8 +2,7 @@
 import 'dart:convert';
 import 'dart:math';
 import 'package:flutter/material.dart';
-import 'package:flutter_map/flutter_map.dart';
-import 'package:latlong2/latlong.dart';
+import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:stomp_dart_client/stomp.dart';
 import 'package:stomp_dart_client/stomp_config.dart';
@@ -45,11 +44,9 @@ class _SupervisorLiveMapPageState extends State<SupervisorLiveMapPage>
   int     _sheetTab = 0; // 0 = guards, 1 = sites
 
   StompClient? _stompClient;
-  // Separate MapController so it is NEVER recreated on rebuild
-  final MapController _mapController = MapController();
+  GoogleMapController? _googleMapController;
+  final Set<Marker>   _gMarkers = {};
   bool _mapReady = false;
-  // Computed once; never changes so flutter_map never resets the camera.
-  LatLng? _initialMapCenter;
 
   late AnimationController _pulseCtrl;
   late Animation<double>   _pulseAnim;
@@ -119,16 +116,7 @@ class _SupervisorLiveMapPageState extends State<SupervisorLiveMapPage>
           }
         }
         setState(() { _guardLocations = locs; _loading = false; });
-        // Cache center once so MapOptions.initialCenter is stable across rebuilds.
-        _initialMapCenter ??= locs.isNotEmpty
-            ? LatLng(
-                (locs.values.first['latitude'] as num).toDouble(),
-                (locs.values.first['longitude'] as num).toDouble())
-            : _mySites.isNotEmpty
-                ? LatLng(
-                    (_mySites.first['latitude'] as num).toDouble(),
-                    (_mySites.first['longitude'] as num).toDouble())
-                : const LatLng(21.3069, -157.8583);
+        _rebuildMarkers();
         if (_mapReady) _fitAll();
       } else {
         setState(() { _error = 'Server error (${res.statusCode})'; _loading = false; });
@@ -154,7 +142,10 @@ class _SupervisorLiveMapPageState extends State<SupervisorLiveMapPage>
                 final siteId = data['siteId'];
                 if (siteId != null && _mySiteIds.contains(siteId)) {
                   final key = data['id'].toString();
-                  if (mounted) setState(() => _guardLocations[key] = data);
+                  if (mounted) {
+                  setState(() => _guardLocations[key] = data);
+                  _rebuildMarkers();
+                }
                 }
               } catch (_) {}
             },
@@ -191,40 +182,80 @@ class _SupervisorLiveMapPageState extends State<SupervisorLiveMapPage>
   }
 
   void _fitAll() {
-    final pts = <LatLng>[];
+    if (_googleMapController == null) return;
+    final lats = <double>[];
+    final lngs = <double>[];
     for (final loc in _guardLocations.values) {
-      final lat = loc['latitude'];
-      final lng = loc['longitude'];
-      if (lat != null && lng != null)
-        pts.add(LatLng((lat as num).toDouble(), (lng as num).toDouble()));
+      final lat = loc['latitude']; final lng = loc['longitude'];
+      if (lat != null && lng != null) {
+        lats.add((lat as num).toDouble()); lngs.add((lng as num).toDouble());
+      }
     }
     for (final s in _mySites) {
-      final lat = s['latitude'];
-      final lng = s['longitude'];
-      if (lat != null && lng != null)
-        pts.add(LatLng((lat as num).toDouble(), (lng as num).toDouble()));
+      final lat = s['latitude']; final lng = s['longitude'];
+      if (lat != null && lng != null) {
+        lats.add((lat as num).toDouble()); lngs.add((lng as num).toDouble());
+      }
     }
-    if (pts.isEmpty) return;
-    if (pts.length == 1) { _mapController.move(pts.first, 15); return; }
-    final lats = pts.map((p) => p.latitude);
-    final lngs = pts.map((p) => p.longitude);
-    _mapController.fitCamera(
-      CameraFit.bounds(
-        bounds: LatLngBounds(
-          LatLng(lats.reduce(min), lngs.reduce(min)),
-          LatLng(lats.reduce(max), lngs.reduce(max)),
+    if (lats.isEmpty) return;
+    if (lats.length == 1) {
+      _googleMapController!.animateCamera(
+        CameraUpdate.newLatLngZoom(LatLng(lats.first, lngs.first), 15));
+      return;
+    }
+    _googleMapController!.animateCamera(
+      CameraUpdate.newLatLngBounds(
+        LatLngBounds(
+          southwest: LatLng(lats.reduce(min), lngs.reduce(min)),
+          northeast: LatLng(lats.reduce(max), lngs.reduce(max)),
         ),
-        padding: const EdgeInsets.all(70),
+        70,
       ),
     );
   }
 
+  void _rebuildMarkers() {
+    final markers = <Marker>{};
+    for (final loc in _filteredGuards) {
+      final lat = loc['latitude']; final lng = loc['longitude'];
+      if (lat == null || lng == null) continue;
+      final stale = _isStale(loc['lastUpdate']?.toString());
+      final key   = loc['id']?.toString() ?? '';
+      markers.add(Marker(
+        markerId: MarkerId(key),
+        position: LatLng((lat as num).toDouble(), (lng as num).toDouble()),
+        infoWindow: InfoWindow(
+          title: loc['name']?.toString() ?? 'Guard',
+          snippet: loc['site']?.toString(),
+        ),
+        icon: stale
+            ? BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueAzure)
+            : BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueGreen),
+        onTap: () => _showGuardSheet(context, loc),
+      ));
+    }
+    for (final s in _mySites) {
+      final lat = s['latitude']; final lng = s['longitude'];
+      if (lat == null || lng == null) continue;
+      if (_selectedSiteFilter != null && s['name']?.toString() != _selectedSiteFilter) continue;
+      markers.add(Marker(
+        markerId: MarkerId('site_${s['id']}'),
+        position: LatLng((lat as num).toDouble(), (lng as num).toDouble()),
+        infoWindow: InfoWindow(title: s['name']?.toString() ?? 'Site'),
+        icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueViolet),
+      ));
+    }
+    setState(() => _gMarkers
+      ..clear()
+      ..addAll(markers));
+  }
+
   void _flyToGuard(Map<String, dynamic> loc) {
-    final lat = loc['latitude'];
-    final lng = loc['longitude'];
+    final lat = loc['latitude']; final lng = loc['longitude'];
     if (lat == null || lng == null) return;
-    _mapController.move(
-      LatLng((lat as num).toDouble(), (lng as num).toDouble()), 16);
+    _googleMapController?.animateCamera(
+      CameraUpdate.newLatLngZoom(
+        LatLng((lat as num).toDouble(), (lng as num).toDouble()), 16));
     setState(() {
       _selectedGuardKey = loc['id']?.toString();
       _panelExpanded = true;
@@ -300,204 +331,36 @@ class _SupervisorLiveMapPageState extends State<SupervisorLiveMapPage>
     );
   }
 
-  // ─── Map ─────────────────────────────────────────────────────────────────
+  // ─── Map (Google Maps) ────────────────────────────────────────────────────
   Widget _buildMap() {
-    // Use the cached center — a new LatLng on every rebuild would cause
-    // flutter_map to detect an options change and reset the camera position.
-    final center = _initialMapCenter ?? const LatLng(21.3069, -157.8583);
+    // Pick a sensible initial camera position.
+    LatLng center = const LatLng(21.3069, -157.8583); // Hawaii fallback
+    if (_guardLocations.isNotEmpty) {
+      final first = _guardLocations.values.first;
+      center = LatLng((first['latitude'] as num).toDouble(),
+          (first['longitude'] as num).toDouble());
+    } else if (_mySites.isNotEmpty) {
+      final s = _mySites.first;
+      if (s['latitude'] != null && s['longitude'] != null)
+        center = LatLng((s['latitude'] as num).toDouble(),
+            (s['longitude'] as num).toDouble());
+    }
 
-    return FlutterMap(
-      mapController: _mapController,
-      options: MapOptions(
-        initialCenter: center,
-        initialZoom: 13,
-        minZoom: 3,
-        maxZoom: 19,
-        // Suppress interaction from rebuilding children
-        onMapReady: () {
-          _mapReady = true;
-          if (!_loading) _fitAll();
-        },
-      ),
-      children: [
-        // ── Tile layer — MapTiler Streets Dark ────────────────────────────
-        TileLayer(
-          urlTemplate:
-              'https://api.maptiler.com/maps/streets-v2/{z}/{x}/{y}.png?key=47791121-2fe8-4f52-9b1e-c1735eaa416a',
-          userAgentPackageName: 'com.blackfabricsecurity.app',
-          retinaMode: false,
-          keepBuffer: 6,
-          panBuffer: 3,
-          maxZoom: 20,
-          evictErrorTileStrategy: EvictErrorTileStrategy.dispose,
-        ),
-        // ── Site radius circles ────────────────────────────────────────────
-        CircleLayer(
-          circles: _mySites
-              .where((s) =>
-                  s['latitude'] != null &&
-                  s['longitude'] != null &&
-                  (_selectedSiteFilter == null ||
-                      s['name']?.toString() == _selectedSiteFilter))
-              .map((s) => CircleMarker(
-                    point: LatLng(
-                      (s['latitude'] as num).toDouble(),
-                      (s['longitude'] as num).toDouble(),
-                    ),
-                    radius: 80,
-                    color: _primary.withOpacity(0.07),
-                    borderColor: _primary.withOpacity(0.4),
-                    borderStrokeWidth: 1.5,
-                  ))
-              .toList(),
-        ),
-        // ── Site markers ───────────────────────────────────────────────────
-        MarkerLayer(
-          markers: _mySites
-              .where((s) =>
-                  s['latitude'] != null &&
-                  s['longitude'] != null &&
-                  (_selectedSiteFilter == null ||
-                      s['name']?.toString() == _selectedSiteFilter))
-              .map((s) => Marker(
-                    point: LatLng(
-                      (s['latitude'] as num).toDouble(),
-                      (s['longitude'] as num).toDouble(),
-                    ),
-                    width: 120,
-                    height: 54,
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 7, vertical: 3),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFF1E293B).withOpacity(0.92),
-                            borderRadius: BorderRadius.circular(7),
-                            border: Border.all(
-                                color: _primary.withOpacity(0.55)),
-                          ),
-                          child: Text(
-                            s['name']?.toString() ?? 'Site',
-                            style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 9,
-                                fontWeight: FontWeight.bold),
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                        const SizedBox(height: 2),
-                        Container(
-                          width: 26,
-                          height: 26,
-                          decoration: BoxDecoration(
-                            color: _primary.withOpacity(0.15),
-                            shape: BoxShape.circle,
-                            border: Border.all(color: _primary, width: 1.5),
-                          ),
-                          child: const Icon(Icons.location_city_rounded,
-                              color: _primary, size: 13),
-                        ),
-                      ],
-                    ),
-                  ))
-              .toList(),
-        ),
-        // ── Guard markers with pulsing animation ───────────────────────────
-        MarkerLayer(
-          markers: _filteredGuards
-              .where((loc) =>
-                  loc['latitude'] != null && loc['longitude'] != null)
-              .map((loc) {
-            final key        = loc['id']?.toString() ?? '';
-            final stale      = _isStale(loc['lastUpdate']?.toString());
-            final color      = stale ? Colors.grey : _green;
-            final isSelected = _selectedGuardKey == key;
-
-            return Marker(
-              point: LatLng(
-                (loc['latitude'] as num).toDouble(),
-                (loc['longitude'] as num).toDouble(),
-              ),
-              width: 60,
-              height: 70,
-              child: GestureDetector(
-                onTap: () => _showGuardSheet(context, loc),
-                child: AnimatedBuilder(
-                  animation: _pulseAnim,
-                  builder: (_, __) => Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Stack(
-                        alignment: Alignment.center,
-                        children: [
-                          if (!stale)
-                            Transform.scale(
-                              scale: isSelected
-                                  ? 1.4
-                                  : _pulseAnim.value * 1.6,
-                              child: Container(
-                                width: 34,
-                                height: 34,
-                                decoration: BoxDecoration(
-                                  shape: BoxShape.circle,
-                                  color: color.withOpacity(0.2),
-                                ),
-                              ),
-                            ),
-                          Container(
-                            width: 34,
-                            height: 34,
-                            decoration: BoxDecoration(
-                              shape: BoxShape.circle,
-                              color: isSelected
-                                  ? color
-                                  : color.withOpacity(0.25),
-                              border: Border.all(
-                                  color: color,
-                                  width: isSelected ? 2.5 : 2.0),
-                              boxShadow: isSelected
-                                  ? [
-                                      BoxShadow(
-                                          color: color.withOpacity(0.5),
-                                          blurRadius: 12,
-                                          spreadRadius: 2)
-                                    ]
-                                  : [],
-                            ),
-                            child: Icon(Icons.security_rounded,
-                                color: isSelected ? Colors.white : color,
-                                size: 17),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 2),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 5, vertical: 1),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFF0F172A).withOpacity(0.9),
-                          borderRadius: BorderRadius.circular(5),
-                          border:
-                              Border.all(color: color.withOpacity(0.45)),
-                        ),
-                        child: Text(
-                          (loc['name'] ?? '').toString().split(' ').first,
-                          style: TextStyle(
-                              color: color,
-                              fontSize: 8.5,
-                              fontWeight: FontWeight.bold),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            );
-          }).toList(),
-        ),
-      ],
+    return GoogleMap(
+      initialCameraPosition: CameraPosition(target: center, zoom: 13),
+      markers: _gMarkers,
+      myLocationEnabled: true,
+      myLocationButtonEnabled: false,
+      zoomControlsEnabled: false,
+      mapToolbarEnabled: false,
+      compassEnabled: true,
+      mapType: MapType.normal,
+      onMapCreated: (ctrl) {
+        _googleMapController = ctrl;
+        _mapReady = true;
+        _rebuildMarkers();
+        if (!_loading) _fitAll();
+      },
     );
   }
 
@@ -566,14 +429,10 @@ class _SupervisorLiveMapPageState extends State<SupervisorLiveMapPage>
       child: Column(
         children: [
           _mapBtn(Icons.add_rounded, 'Zoom in',
-              () => _mapController.move(
-                  _mapController.camera.center,
-                  _mapController.camera.zoom + 1)),
+              () => _googleMapController?.animateCamera(CameraUpdate.zoomIn())),
           const SizedBox(height: 6),
           _mapBtn(Icons.remove_rounded, 'Zoom out',
-              () => _mapController.move(
-                  _mapController.camera.center,
-                  _mapController.camera.zoom - 1)),
+              () => _googleMapController?.animateCamera(CameraUpdate.zoomOut())),
           const SizedBox(height: 14),
           _mapBtn(Icons.fit_screen_rounded, 'Fit all', _fitAll,
               color: _primary),
@@ -633,7 +492,10 @@ class _SupervisorLiveMapPageState extends State<SupervisorLiveMapPage>
   Widget _siteChip(String label, String? value) {
     final selected = _selectedSiteFilter == value;
     return GestureDetector(
-      onTap: () => setState(() => _selectedSiteFilter = value),
+      onTap: () {
+        setState(() => _selectedSiteFilter = value);
+        _rebuildMarkers();
+      },
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 180),
         margin: const EdgeInsets.only(right: 8),
@@ -980,13 +842,14 @@ class _SupervisorLiveMapPageState extends State<SupervisorLiveMapPage>
     return GestureDetector(
       onTap: () {
         if (hasCoords) {
-          _mapController.move(
-              LatLng((lat as num).toDouble(), (lng as num).toDouble()), 15);
+          _googleMapController?.animateCamera(CameraUpdate.newLatLngZoom(
+              LatLng((lat as num).toDouble(), (lng as num).toDouble()), 15));
         }
         setState(() {
           _selectedSiteFilter =
               isFiltered ? null : site['name']?.toString();
         });
+        _rebuildMarkers();
       },
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 200),
