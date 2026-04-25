@@ -83,6 +83,7 @@ class BlackFabricApp extends StatelessWidget {
       title: 'Black Fabric Security',
       debugShowCheckedModeBanner: false,
       navigatorKey: navigatorKey,
+      locale: const Locale('en', 'US'),
       theme: ThemeData(
         primarySwatch: Colors.blue,
       ),

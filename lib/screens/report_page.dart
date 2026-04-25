@@ -37,11 +37,12 @@ class _MediaItem {
 class _DarObservation {
   String type;
   String description;
-  _DarObservation({this.type = '', this.description = ''});
+  String time; // HST timestamp assigned when observation is created
+  _DarObservation({this.type = '', this.description = '', this.time = ''});
 
-  Map<String, dynamic> toJson() => {'type': type, 'description': description};
+  Map<String, dynamic> toJson() => {'type': type, 'description': description, 'time': time};
   factory _DarObservation.fromJson(Map<String, dynamic> j) =>
-      _DarObservation(type: j['type'] ?? '', description: j['description'] ?? '');
+      _DarObservation(type: j['type'] ?? '', description: j['description'] ?? '', time: j['time'] ?? '');
 }
 
 class ReportPage extends StatefulWidget {
@@ -841,7 +842,10 @@ class _ReportPageState extends State<ReportPage> {
   @override
   Widget build(BuildContext context) {
 
-    return Stack(children: [
+    return GestureDetector(
+      onTap: () => FocusScope.of(context).unfocus(),
+      behavior: HitTestBehavior.translucent,
+      child: Stack(children: [
       AbsorbPointer(
         absorbing: _isSubmitting,
         child: Scaffold(
@@ -1084,7 +1088,8 @@ class _ReportPageState extends State<ReportPage> {
             ),
           ),
         ),
-    ]);
+    ]),
+    );
   }
   Future<void> _pickVideoCamera() async {
     if (_isPickingMedia) return;
@@ -1437,7 +1442,7 @@ class _ReportPageState extends State<ReportPage> {
   );
   Widget _multi(TextEditingController c, String l) => Padding(
     padding: const EdgeInsets.only(bottom: 16),
-    child: TextFormField(controller: c, maxLines: 4, decoration: _modernInput(l), style: TextStyle(color: _textColor)),
+    child: TextFormField(controller: c, maxLines: 4, keyboardType: TextInputType.multiline, textInputAction: TextInputAction.newline, decoration: _modernInput(l), style: TextStyle(color: _textColor)),
   );
   Widget _rowTwo(TextEditingController c1, String l1, TextEditingController c2, String l2) => Padding(
     padding: const EdgeInsets.only(bottom: 16),
@@ -1447,6 +1452,16 @@ class _ReportPageState extends State<ReportPage> {
       Expanded(child: TextFormField(controller: c2, decoration: _modernInput(l2), style: TextStyle(color: _textColor))),
     ]),
   );
+
+  /// Returns the current date/time in Hawaii Standard Time (UTC-10, no DST).
+  static String _hawaiiTimeNow() {
+    final hst = DateTime.now().toUtc().subtract(const Duration(hours: 10));
+    final h   = hst.hour;
+    final m   = hst.minute.toString().padLeft(2, '0');
+    final ampm = h >= 12 ? 'PM' : 'AM';
+    final h12  = h % 12 == 0 ? 12 : h % 12;
+    return '${hst.month}/${hst.day}/${hst.year} $h12:$m $ampm HST';
+  }
 
   // ── Observation types — update this list when the client provides full set ──
   static const List<String> _observationTypes = [
@@ -1498,7 +1513,7 @@ class _ReportPageState extends State<ReportPage> {
               TextButton.icon(
                 onPressed: () {
                   setState(() {
-                    _darObservations.add(_DarObservation());
+                    _darObservations.add(_DarObservation(time: _hawaiiTimeNow()));
                   });
                   _doSaveDraft();
                 },
@@ -1557,13 +1572,26 @@ class _ReportPageState extends State<ReportPage> {
                               color: _primaryColor.withOpacity(0.15),
                               borderRadius: BorderRadius.circular(20),
                             ),
-                            child: Text(
-                              "Observation ${index + 1}",
-                              style: TextStyle(
-                                color: _accentColor,
-                                fontSize: 12,
-                                fontWeight: FontWeight.w600,
-                              ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  "Observation ${index + 1}",
+                                  style: TextStyle(
+                                    color: _accentColor,
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                                if (obs.time.isNotEmpty)
+                                  Text(
+                                    obs.time,
+                                    style: TextStyle(
+                                      color: _secondaryTextColor,
+                                      fontSize: 10,
+                                    ),
+                                  ),
+                              ],
                             ),
                           ),
                           GestureDetector(
@@ -1606,6 +1634,8 @@ class _ReportPageState extends State<ReportPage> {
                       TextFormField(
                         initialValue: obs.description,
                         maxLines: 3,
+                        keyboardType: TextInputType.multiline,
+                        textInputAction: TextInputAction.newline,
                         style: TextStyle(color: _textColor, fontSize: 14),
                         decoration: _modernInput("Description"),
                         onChanged: (val) {

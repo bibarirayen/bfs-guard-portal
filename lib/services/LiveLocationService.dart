@@ -30,6 +30,20 @@ class LiveLocationService {
   int? _currentUserId;
   int? _currentAssignmentId;
 
+  // ─── Geofence state ───────────────────────────────────────────────────────
+  // Site info loaded once when shift starts.
+  double? _siteLat;
+  double? _siteLng;
+  double? _siteRange;       // metres, from site.range
+  String? _siteName;
+  bool _wasInsideGeofence = true;
+  DateTime? _lastGeofenceAlert;
+  // 15 metres ≈ 50 feet of GPS-drift tolerance so normal standing near the
+  // boundary doesn't trigger false alerts.
+  static const double _geofenceBufferMetres = 45.72; // ≈ 150 ft GPS drift buffer
+  // Minimum gap between repeated alerts for the same exit event (10 min).
+  static const int _geofenceAlertCooldownMinutes = 10;
+
   VoidCallback? onShiftEndedRemotely;
 
   static const int _locationIntervalSeconds = 30;
@@ -45,7 +59,10 @@ class LiveLocationService {
     _currentUserId = userId;
     _currentAssignmentId = assignmentId;
     _isTracking = true;
+    _wasInsideGeofence = true;
+    _lastGeofenceAlert = null;
 
+    _loadSiteInfo(assignmentId); // non-blocking — populates geofence data
     _connectWebSocket(userId, assignmentId);
     _startLocationStream(userId, assignmentId);
     _startShiftChecker(userId, assignmentId);
@@ -74,7 +91,77 @@ class LiveLocationService {
     _currentUserId = null;
     _currentAssignmentId = null;
 
+    // reset geofence
+    _siteLat = null;
+    _siteLng = null;
+    _siteRange = null;
+    _siteName = null;
+    _wasInsideGeofence = true;
+    _lastGeofenceAlert = null;
+
     stopBackgroundLocationService();
+  }
+
+  // ─── Geofence ─────────────────────────────────────────────────────────────
+  /// Fetches the assignment's site info once so we know the geofence centre + radius.
+  Future<void> _loadSiteInfo(int assignmentId) async {
+    try {
+      final api = ApiService();
+      final res = await api
+          .get('assignments/$assignmentId')
+          .timeout(const Duration(seconds: 10));
+      if (res.statusCode == 200) {
+        final data = jsonDecode(res.body);
+        final site = data['site'];
+        if (site != null) {
+          _siteLat   = (site['latitude']  as num?)?.toDouble();
+          _siteLng   = (site['longitude'] as num?)?.toDouble();
+          _siteRange = (site['range']     as num?)?.toDouble() ?? 100.0;
+          _siteName  = site['name']?.toString();
+        }
+      }
+    } catch (_) {}
+  }
+
+  /// Called on every position update. Sends a geofence-exit alert to the backend
+  /// (which will push-notify the site supervisors) if the guard has just left the
+  /// site geofence.  Uses _geofenceBufferMetres (≈ 150 ft) of tolerance to avoid
+  /// false positives from normal GPS drift.
+  Future<void> _checkGeofence(double lat, double lng) async {
+    if (_siteLat == null || _siteLng == null || _siteRange == null) return;
+
+    final distanceMetres = Geolocator.distanceBetween(lat, lng, _siteLat!, _siteLng!);
+    final effectiveRadius = _siteRange! + _geofenceBufferMetres;
+    final isInside = distanceMetres <= effectiveRadius;
+
+    if (!isInside && _wasInsideGeofence) {
+      // Guard just crossed the boundary — send alert (with cooldown guard).
+      final now = DateTime.now();
+      final sinceLastAlert = _lastGeofenceAlert == null
+          ? _geofenceAlertCooldownMinutes + 1
+          : now.difference(_lastGeofenceAlert!).inMinutes;
+
+      if (sinceLastAlert >= _geofenceAlertCooldownMinutes) {
+        _lastGeofenceAlert = now;
+        _wasInsideGeofence = false;
+        await _sendGeofenceAlert(lat, lng);
+      }
+    } else if (isInside && !_wasInsideGeofence) {
+      // Guard came back inside — reset so next exit triggers again.
+      _wasInsideGeofence = true;
+    }
+  }
+
+  Future<void> _sendGeofenceAlert(double lat, double lng) async {
+    if (_currentAssignmentId == null) return;
+    try {
+      final api = ApiService();
+      await api.post('geofence/alert', {
+        'assignmentId': _currentAssignmentId,
+        'latitude': lat,
+        'longitude': lng,
+      }).timeout(const Duration(seconds: 10));
+    } catch (_) {}
   }
 
   void _connectWebSocket(int userId, int assignmentId) {
@@ -123,6 +210,9 @@ class LiveLocationService {
             if (secondsSinceLast >= _locationIntervalSeconds) {
               await _sendLocation(userId, assignmentId);
             }
+
+            // Check geofence on every position update (independent of send interval).
+            _checkGeofence(pos.latitude, pos.longitude);
 
             _piggybackShiftCheck(assignmentId);
           },
