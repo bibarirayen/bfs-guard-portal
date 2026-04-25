@@ -93,11 +93,6 @@ class _SopPdfViewerPageState extends State<SopPdfViewerPage> {
               '$_currentPage / $_totalPages',
               style: const TextStyle(color: Colors.white60, fontSize: 13),
             ),
-          IconButton(
-            tooltip: 'Download',
-            icon: const Icon(Icons.download_outlined),
-            onPressed: _download,
-          ),
         ],
       ),
       body: _loading
