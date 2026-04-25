@@ -2,6 +2,7 @@ import UIKit
 import Flutter
 import FirebaseCore
 import FirebaseMessaging
+import GoogleMaps
 
 @main
 @objc class AppDelegate: FlutterAppDelegate {
@@ -9,7 +10,10 @@ import FirebaseMessaging
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
   ) -> Bool {
-    // 🔥 CRITICAL: Initialize Firebase FIRST before anything else
+    // �️ Initialize Google Maps BEFORE GeneratedPluginRegistrant
+    GMSServices.provideAPIKey("AIzaSyDY1jNZ7QtRbJ_X9vDvuSlUZYk8f7N-BdI")
+
+    // �🔥 CRITICAL: Initialize Firebase FIRST before anything else
     FirebaseApp.configure()
 
     GeneratedPluginRegistrant.register(with: self)
