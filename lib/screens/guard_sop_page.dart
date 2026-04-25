@@ -251,29 +251,6 @@ class _GuardSopPageState extends State<GuardSopPage> {
                                           fontSize: 15)),
                                 ),
                               ),
-
-                              const SizedBox(height: 12),
-
-                              // Download button
-                              SizedBox(
-                                width: double.infinity,
-                                child: OutlinedButton.icon(
-                                  style: OutlinedButton.styleFrom(
-                                    foregroundColor: Colors.white70,
-                                    side: BorderSide(
-                                        color: Colors.white.withOpacity(0.2)),
-                                    padding: const EdgeInsets.symmetric(
-                                        vertical: 14),
-                                    shape: RoundedRectangleBorder(
-                                        borderRadius:
-                                            BorderRadius.circular(12)),
-                                  ),
-                                  onPressed: () => _openFile(download: true),
-                                  icon: const Icon(Icons.download_outlined),
-                                  label: const Text('Download',
-                                      style: TextStyle(fontSize: 15)),
-                                ),
-                              ),
                             ],
                           ),
                         ),

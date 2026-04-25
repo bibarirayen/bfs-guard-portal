@@ -191,24 +191,6 @@ class _AdminSopPageState extends State<AdminSopPage> {
               ),
             ),
             const SizedBox(height: 10),
-            SizedBox(
-              width: double.infinity,
-              child: OutlinedButton.icon(
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: Colors.white70,
-                  side: const BorderSide(color: Colors.white24),
-                  padding: const EdgeInsets.symmetric(vertical: 14),
-                  shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12)),
-                ),
-                onPressed: () {
-                  Navigator.pop(context);
-                  _openFile(url, download: true, fileName: name, siteName: siteName);
-                },
-                icon: const Icon(Icons.download_outlined),
-                label: const Text('Download', style: TextStyle(fontSize: 15)),
-              ),
-            ),
             const SizedBox(height: 12),
           ],
         ),
