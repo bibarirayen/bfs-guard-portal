@@ -472,7 +472,7 @@ class _SupervisorAssignmentsPageState
                       child:
                           CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
                   : const Text('Create Assignment',
-                      style: TextStyle(fontWeight: FontWeight.bold)),
+                      style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white)),
             ),
           ),
         ],
