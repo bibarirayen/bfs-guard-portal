@@ -5,6 +5,7 @@ import 'package:crossplatformblackfabric/screens/home_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'screens/login_screen.dart';
+import 'screens/force_update_screen.dart';
 import 'config/app_globals.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
@@ -87,7 +88,7 @@ class BlackFabricApp extends StatelessWidget {
       theme: ThemeData(
         primarySwatch: Colors.blue,
       ),
-      home: const LoginScreen(),
+      home: const ForceUpdateScreen(),
     );
   }
 }

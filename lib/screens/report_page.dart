@@ -660,6 +660,82 @@ class _ReportPageState extends State<ReportPage> {
 
 
 
+  // ─── EMPTY REPORT GUARD ───────────────────────────────────────────────────
+  /// Returns true when every text field for the current report type is blank.
+  bool _isReportEmpty() {
+    switch (_selectedReportType) {
+      case "Incident Report":
+        return [
+          _incidentInternalIdController, _incidentDateTimeController,
+          _incidentTypeController, _victimNameController, _victimContactController,
+          _suspectNameController, _suspectContactController, _witnessNamesController,
+          _incidentLocationController, _incidentSummaryController,
+          _responderPoliceNamesController, _responderFireTruckController,
+          _responderAmbulanceController, _incidentDetailsController,
+          _incidentActionsController,
+        ].every((c) => c.text.trim().isEmpty);
+      case "Daily Activity Report":
+        return _darObservations.isEmpty &&
+            [
+              _dailyShiftStartNotesController, _dailyPostShiftController,
+              _dailySpecialInstructionsController, _dailyPostItemsReceivedController,
+              _dailyRelievingFirstController, _dailyRelievingLastController,
+              _dailyAdditionalNotesController,
+            ].every((c) => c.text.trim().isEmpty);
+      case "Maintenance Report":
+        return [
+          _maintenanceTypeController,
+          _maintenanceDetailsController,
+          _maintenanceWhoNotifiedController,
+        ].every((c) => c.text.trim().isEmpty);
+      case "Parking Violation Report":
+        return [
+          _violatorFirstController, _violatorLastController,
+          _vehicleMakeController, _vehicleModelController,
+          _vehicleLPController, _vehicleVINController, _vehicleColorController,
+          _violationTypeController, _violationNumberController,
+          _parkingLocationController, _parkingFineController,
+          _parkingDetailsController,
+        ].every((c) => c.text.trim().isEmpty);
+      default:
+        return true;
+    }
+  }
+
+  void _showEmptyReportDialog() {
+    showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        backgroundColor: _cardColor,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Row(children: [
+          const Icon(Icons.warning_amber_rounded, color: Colors.orange, size: 26),
+          const SizedBox(width: 10),
+          Text('Report is Empty',
+              style: TextStyle(
+                  color: _textColor, fontSize: 16, fontWeight: FontWeight.bold)),
+        ]),
+        content: Text(
+          'Your report has nothing in it yet.\n\nPlease fill in at least one field before submitting. You cannot send a blank report.',
+          style: TextStyle(color: _secondaryTextColor, height: 1.6),
+        ),
+        actions: [
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: _primaryColor,
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10)),
+            ),
+            child: const Text('Got it',
+                style:
+                    TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
+          ),
+        ],
+      ),
+    );
+  }
+
   // ─── FETCH SITES ──────────────────────────────────────────────────────────
   Future<void> _fetchSites() async {
     final prefs      = await SharedPreferences.getInstance();
@@ -695,6 +771,7 @@ class _ReportPageState extends State<ReportPage> {
 
   // ─── SUBMIT ───────────────────────────────────────────────────────────────
   Future<void> _submitReport() async {
+    if (_isReportEmpty() && _mediaItems.isEmpty) { _showEmptyReportDialog(); return; }
     if (!_hasActiveAssignment) { _snackError("You don't have an active assignment right now. Please contact your supervisor."); return; }
     if (_selectedSiteId == null) { _snackError("Please select your assigned site before submitting."); return; }
 

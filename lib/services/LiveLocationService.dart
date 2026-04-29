@@ -342,7 +342,8 @@ class LiveLocationService {
       final token = prefs.getString('jwt');
       if (token == null) return;
 
-      await http.post(
+      print('🌐 [LiveLoc-POST] → api/locations/update (userId=$userId)');
+      final res = await http.post(
         Uri.parse('https://api.blackfabricsecurity.com/api/locations/update'),
         headers: {
           'Content-Type': 'application/json',
@@ -354,6 +355,12 @@ class LiveLocationService {
           'lng': lng,
         }),
       ).timeout(const Duration(seconds: 10));
-    } catch (_) {}
+      print('🌐 [LiveLoc-POST] ← ${res.statusCode} locations/update');
+      if (res.statusCode == 405) {
+        print('🚨 [LiveLoc-POST] 405 METHOD NOT ALLOWED — server rejected POST on locations/update!');
+      }
+    } catch (e) {
+      print('❌ [LiveLoc-POST] error: $e');
+    }
   }
 }

@@ -1,6 +1,7 @@
 ﻿import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
+import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -157,6 +158,64 @@ class _SupervisorLiveMapPageState extends State<SupervisorLiveMapPage>
     _stompClient!.activate();
   }
 
+  // ─── custom marker bitmaps ──────────────────────────────────────────────
+  BitmapDescriptor? _iconOnline;
+  BitmapDescriptor? _iconOffline;
+  BitmapDescriptor? _iconSite;
+
+  /// Draw a circle pin with an emoji label inside.
+  /// [bgColor] is the fill; [emoji] is rendered in the centre.
+  Future<BitmapDescriptor> _buildEmojiPin(
+      Color bgColor, Color borderColor, String emoji) async {
+    const double size = 96;
+    const double radius = 40;
+    final recorder = ui.PictureRecorder();
+    final canvas = Canvas(recorder);
+
+    // Shadow
+    final shadowPaint = Paint()
+      ..color = Colors.black.withOpacity(0.25)
+      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 4);
+    canvas.drawCircle(const Offset(size / 2, size / 2 + 2), radius, shadowPaint);
+
+    // Background circle
+    final bgPaint = Paint()..color = bgColor;
+    canvas.drawCircle(const Offset(size / 2, size / 2), radius, bgPaint);
+
+    // Border
+    final borderPaint = Paint()
+      ..color = borderColor
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 4;
+    canvas.drawCircle(const Offset(size / 2, size / 2), radius, borderPaint);
+
+    // Emoji text
+    final paragraphBuilder = ui.ParagraphBuilder(
+      ui.ParagraphStyle(
+        textAlign: TextAlign.center,
+        fontSize: 36,
+      ),
+    )
+      ..addText(emoji);
+    final paragraph = paragraphBuilder.build()
+      ..layout(const ui.ParagraphConstraints(width: size));
+    canvas.drawParagraph(paragraph, Offset(0, (size - paragraph.height) / 2 - 2));
+
+    final picture = recorder.endRecording();
+    final image = await picture.toImage(size.toInt(), size.toInt());
+    final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
+    return BitmapDescriptor.fromBytes(byteData!.buffer.asUint8List());
+  }
+
+  Future<void> _ensureIcons() async {
+    _iconOnline ??= await _buildEmojiPin(
+        const Color(0xFF064E3B), const Color(0xFF10B981), '🟢');
+    _iconOffline ??= await _buildEmojiPin(
+        const Color(0xFF1F2937), const Color(0xFF6B7280), '⚫');
+    _iconSite ??= await _buildEmojiPin(
+        const Color(0xFF1E1B4B), const Color(0xFF6366F1), '🏠');
+  }
+
   // ─── helpers ─────────────────────────────────────────────────────────────
   List<Map<String, dynamic>> get _filteredGuards =>
       _guardLocations.values.where((loc) {
@@ -214,7 +273,8 @@ class _SupervisorLiveMapPageState extends State<SupervisorLiveMapPage>
     );
   }
 
-  void _rebuildMarkers() {
+  void _rebuildMarkers() async {
+    await _ensureIcons();
     final markers = <Marker>{};
     for (final loc in _filteredGuards) {
       final lat = loc['latitude']; final lng = loc['longitude'];
@@ -228,9 +288,7 @@ class _SupervisorLiveMapPageState extends State<SupervisorLiveMapPage>
           title: loc['name']?.toString() ?? 'Guard',
           snippet: loc['site']?.toString(),
         ),
-        icon: stale
-            ? BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueAzure)
-            : BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueGreen),
+        icon: stale ? _iconOffline! : _iconOnline!,
         onTap: () => _showGuardSheet(context, loc),
       ));
     }
@@ -242,10 +300,10 @@ class _SupervisorLiveMapPageState extends State<SupervisorLiveMapPage>
         markerId: MarkerId('site_${s['id']}'),
         position: LatLng((lat as num).toDouble(), (lng as num).toDouble()),
         infoWindow: InfoWindow(title: s['name']?.toString() ?? 'Site'),
-        icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueViolet),
+        icon: _iconSite!,
       ));
     }
-    setState(() => _gMarkers
+    if (mounted) setState(() => _gMarkers
       ..clear()
       ..addAll(markers));
   }

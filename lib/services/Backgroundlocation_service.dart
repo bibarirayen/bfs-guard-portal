@@ -137,6 +137,7 @@ Future<void> _sendLocation(int userId, int assignmentId) async {
       return;
     }
 
+    print('🌐 [BGService-POST] → ${_baseUrl}locations/update');
     final response = await http.post(
       Uri.parse('${_baseUrl}locations/update'),
       headers: {
@@ -152,6 +153,9 @@ Future<void> _sendLocation(int userId, int assignmentId) async {
 
     print('📍 [BGService] ${position.latitude.toStringAsFixed(6)}, '
         '${position.longitude.toStringAsFixed(6)} → HTTP ${response.statusCode}');
+    if (response.statusCode == 405) {
+      print('🚨 [BGService] 405 METHOD NOT ALLOWED on locations/update — server rejected POST!');
+    }
   } catch (e) {
     print('❌ [BGService] Error (will retry in 30s): $e');
   }

@@ -106,6 +106,8 @@ class _ShiftsPageState extends State<ShiftsPage> {
               "supervisorName":  assignment["supervisorName"]  ?? "",
               "supervisorEmail": assignment["supervisorEmail"] ?? "",
               "supervisorPhone": assignment["supervisorPhone"] ?? "",
+              // Days-of-week filter (null/empty = every day)
+              "daysOfWeek": (assignment["daysOfWeek"] as List?)?.cast<String>() ?? [],
             };
           }).toList();
         });
@@ -291,6 +293,17 @@ class _ShiftsPageState extends State<ShiftsPage> {
                         // ── Shift info ──────────────────────────────────────
                         _infoRow("Date",
                             "${_formatDate(shift["fromDate"])} → ${_formatDate(shift["toDate"])}"),
+                        // Recurring days
+                        Builder(builder: (_) {
+                          final days = (shift['daysOfWeek'] as List?)?.cast<String>() ?? [];
+                          if (days.isEmpty || days.length == 7) return const SizedBox.shrink();
+                          const labels = {
+                            'MONDAY': 'Mon', 'TUESDAY': 'Tue', 'WEDNESDAY': 'Wed',
+                            'THURSDAY': 'Thu', 'FRIDAY': 'Fri', 'SATURDAY': 'Sat', 'SUNDAY': 'Sun'
+                          };
+                          final readable = days.map((d) => labels[d] ?? d).join(', ');
+                          return _infoRow("Recurring", readable);
+                        }),
                         const SizedBox(height: 2),
                         _infoRow("From", _toAmPm(shift["from"])),
                         _infoRow("To",   _toAmPm(shift["to"])),
@@ -593,6 +606,20 @@ class _ShiftsPageState extends State<ShiftsPage> {
                     "${_toAmPm(shift["from"])} - ${_toAmPm(shift["to"])}",
                     style: TextStyle(fontSize: 12, color: _secondaryTextColor),
                   ),
+                  // Recurring days label
+                  Builder(builder: (_) {
+                    final days = (shift['daysOfWeek'] as List?)?.cast<String>() ?? [];
+                    if (days.isEmpty || days.length == 7) return const SizedBox.shrink();
+                    const labels = {
+                      'MONDAY': 'Mon', 'TUESDAY': 'Tue', 'WEDNESDAY': 'Wed',
+                      'THURSDAY': 'Thu', 'FRIDAY': 'Fri', 'SATURDAY': 'Sat', 'SUNDAY': 'Sun'
+                    };
+                    final readable = days.map((d) => labels[d] ?? d).join(', ');
+                    return Text(
+                      '↺ $readable only',
+                      style: const TextStyle(fontSize: 11, color: Color(0xFF4F46E5), fontWeight: FontWeight.w600),
+                    );
+                  }),
                 ],
               ),
             ),

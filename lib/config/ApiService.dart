@@ -103,7 +103,9 @@ class ApiService {
 
   Future<http.Response> get(String endpoint) async {
     final headers = await getHeaders();
+    print('🌐 [GET] → $baseUrl$endpoint');
     final response = await http.get(Uri.parse("$baseUrl$endpoint"), headers: headers);
+    print('🌐 [GET] ← ${response.statusCode} $endpoint');
     if (response.statusCode == 401 || response.statusCode == 403) {
       await _handleSessionExpiry();
     }
@@ -112,11 +114,13 @@ class ApiService {
 
   Future<http.Response> post(String endpoint, Map<String, dynamic> body) async {
     final headers = await getHeaders();
+    print('🌐 [POST] → $baseUrl$endpoint');
     final response = await http.post(
       Uri.parse("$baseUrl$endpoint"),
       headers: headers,
       body: jsonEncode(body),
     );
+    print('🌐 [POST] ← ${response.statusCode} $endpoint');
     if (response.statusCode == 401 || response.statusCode == 403) {
       await _handleSessionExpiry();
     }
@@ -125,11 +129,13 @@ class ApiService {
 
   Future<http.Response> put(String endpoint, Map<String, dynamic> body) async {
     final headers = await getHeaders();
+    print('🌐 [PUT]  → $baseUrl$endpoint');
     final response = await http.put(
       Uri.parse("$baseUrl$endpoint"),
       headers: headers,
       body: jsonEncode(body),
     );
+    print('🌐 [PUT]  ← ${response.statusCode} $endpoint');
     if (response.statusCode == 401 || response.statusCode == 403) {
       await _handleSessionExpiry();
     }
@@ -138,7 +144,9 @@ class ApiService {
 
   Future<http.Response> delete(String endpoint) async {
     final headers = await getHeaders();
+    print('🌐 [DEL]  → $baseUrl$endpoint');
     final response = await http.delete(Uri.parse("$baseUrl$endpoint"), headers: headers);
+    print('🌐 [DEL]  ← ${response.statusCode} $endpoint');
     if (response.statusCode == 401 || response.statusCode == 403) {
       await _handleSessionExpiry();
     }
