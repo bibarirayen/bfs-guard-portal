@@ -85,6 +85,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   bool _canStopShift = false;
   bool _shiftStarted = false;
   bool _shiftEnded = false;
+  bool _isStartingShift = false; // blocks double-tap while API call is in flight
 
   late final List<Widget Function()> _screens;
   bool _isDarkMode = true;
@@ -648,11 +649,18 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   Future<void> _startShift() async {
+    if (_isStartingShift) return; // guard against double-tap
+    setState(() => _isStartingShift = true);
+
     final bool hasPermission = await _ensureLocationPermission();
-    if (!hasPermission) return;
+    if (!hasPermission) {
+      setState(() => _isStartingShift = false);
+      return;
+    }
 
     await _getCurrentPosition();
     if (_currentPosition == null) {
+      if (mounted) setState(() => _isStartingShift = false);
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text("GPS location not available")),
       );
@@ -665,6 +673,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       final guardId = prefs.getInt('userId');
 
       if (assignmentId == null || guardId == null) {
+        if (mounted) setState(() => _isStartingShift = false);
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text("Assignment or Guard ID not found")),
         );
@@ -686,6 +695,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           _shiftStarted = true;
           _canStartShift = false;
           _canStopShift = false;
+          _isStartingShift = false;
         });
 
         await ShiftService().startAssignment(assignmentId);
@@ -700,11 +710,13 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         );
       } else {
         final data = jsonDecode(response.body);
+        if (mounted) setState(() => _isStartingShift = false);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(data['error'] ?? "Failed to start shift")),
         );
       }
     } catch (e) {
+      if (mounted) setState(() => _isStartingShift = false);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text("Error starting shift: $e")),
       );
@@ -1224,79 +1236,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                 ],
               ),
 
-              const SizedBox(height: 20),
-
-              GestureDetector(
-                onTap: (_shiftStarted && !_shiftEnded)
-                    ? _toggleEmergency
-                    : null,
-                child: Opacity(
-                  opacity: (_shiftStarted && !_shiftEnded) ? 1.0 : 0.4,
-                  child: Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.all(16),
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(20),
-                      color: _hasShiftToday
-                          ? (_isEmergencyActive
-                          ? Colors.redAccent
-                          : Colors.red)
-                          : Colors.grey,
-                      boxShadow: _hasShiftToday
-                          ? [
-                        BoxShadow(
-                            color: Colors.red.withOpacity(0.3),
-                            blurRadius: 10,
-                            offset: const Offset(0, 4))
-                      ]
-                          : [],
-                    ),
-                    child: Row(
-                      children: [
-                        const Icon(Icons.warning,
-                            size: 28, color: Colors.white),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                !_hasShiftToday
-                                    ? "NO ACTIVE SHIFT"
-                                    : (_isEmergencyActive
-                                    ? "EMERGENCY ACTIVE"
-                                    : "EMERGENCY ALERT"),
-                                style: const TextStyle(
-                                    fontSize: 16,
-                                    fontWeight: FontWeight.w700,
-                                    color: Colors.white),
-                              ),
-                              const SizedBox(height: 4),
-                              Text(
-                                !_hasShiftToday
-                                    ? "Emergency disabled outside shift"
-                                    : (_isEmergencyActive
-                                    ? "Assistance is on the way"
-                                    : "Press for emergency"),
-                                style: TextStyle(
-                                    fontSize: 12,
-                                    color: Colors.white.withOpacity(0.9)),
-                              ),
-                            ],
-                          ),
-                        ),
-                        const Icon(Icons.arrow_forward, color: Colors.white),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-
               const SizedBox(height: 16),
 
               if (_hasShiftToday && !_shiftEnded)
                 GestureDetector(
-                  onTap: _canStartShift
+                  onTap: (_canStartShift && !_isStartingShift)
                       ? () async {
                     final confirmed = await showDialog<bool>(
                       context: context,
@@ -1396,7 +1340,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                       : null,
                   child: Opacity(
                     opacity:
-                    (_canStartShift || _canStopShift) ? 1.0 : 0.4,
+                    (_isStartingShift || _canStartShift || _canStopShift) ? 1.0 : 0.4,
                     child: Container(
                       width: double.infinity,
                       padding: const EdgeInsets.all(16),
@@ -1408,13 +1352,18 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                       ),
                       child: Row(
                         children: [
-                          Icon(
-                            _shiftStarted
-                                ? Icons.stop
-                                : Icons.play_arrow,
-                            color: Colors.white,
-                            size: 28,
-                          ),
+                          _isStartingShift
+                              ? const SizedBox(
+                                  width: 28, height: 28,
+                                  child: CircularProgressIndicator(
+                                    color: Colors.white,
+                                    strokeWidth: 2.5,
+                                  ))
+                              : Icon(
+                                  _shiftStarted ? Icons.stop : Icons.play_arrow,
+                                  color: Colors.white,
+                                  size: 28,
+                                ),
                           const SizedBox(width: 12),
                           Expanded(
                             child: Column(
@@ -1422,18 +1371,20 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                               CrossAxisAlignment.start,
                               children: [
                                 Text(
-                                  _shiftStarted
-                                      ? "STOP SHIFT"
-                                      : "START SHIFT",
+                                  _isStartingShift
+                                      ? "STARTING SHIFT..."
+                                      : (_shiftStarted ? "STOP SHIFT" : "START SHIFT"),
                                   style: const TextStyle(
                                       color: Colors.white,
                                       fontSize: 16,
                                       fontWeight: FontWeight.w700),
                                 ),
                                 Text(
-                                  _shiftStarted
-                                      ? "Available at shift end"
-                                      : "Available 20 minutes before start",
+                                  _isStartingShift
+                                      ? "Please wait..."
+                                      : (_shiftStarted
+                                          ? "Available at shift end"
+                                          : "Available 20 minutes before start"),
                                   style: TextStyle(
                                       color:
                                       Colors.white.withOpacity(0.9),

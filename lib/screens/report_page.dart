@@ -752,11 +752,23 @@ class _ReportPageState extends State<ReportPage> {
       final response = await api.get('assignments/shift/active-shift-sites/$guardId/$assignmentId');
       if (response.statusCode == 200) {
         final decoded = jsonDecode(response.body) as Map<String, dynamic>;
-        final site    = decoded['site'];
-        if (site != null) {
-          setState(() { _sites = [site]; _hasActiveAssignment = true; _selectedSiteId = site['id']; });
+        // Multi-site support: use 'sites' array if present, fall back to single 'site'
+        final sitesRaw = decoded['sites'];
+        if (sitesRaw != null && sitesRaw is List && sitesRaw.isNotEmpty) {
+          final siteList = List<Map<String, dynamic>>.from(sitesRaw);
+          setState(() {
+            _sites = siteList;
+            _hasActiveAssignment = true;
+            // Auto-select if only one site; otherwise require guard to choose
+            _selectedSiteId = siteList.length == 1 ? siteList[0]['id'] : null;
+          });
         } else {
-          setState(() { _sites = []; _hasActiveAssignment = false; });
+          final site = decoded['site'];
+          if (site != null) {
+            setState(() { _sites = [site]; _hasActiveAssignment = true; _selectedSiteId = site['id']; });
+          } else {
+            setState(() { _sites = []; _hasActiveAssignment = false; });
+          }
         }
       } else {
         setState(() { _sites = []; _hasActiveAssignment = false; });
