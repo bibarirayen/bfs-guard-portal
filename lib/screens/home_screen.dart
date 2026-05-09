@@ -1737,6 +1737,53 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                 ),
               ),
 
+              // ── Emergency Alert Button ──────────────────────────────
+              const SizedBox(height: 20),
+              GestureDetector(
+                onTap: _toggleEmergency,
+                child: Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(vertical: 18),
+                  decoration: BoxDecoration(
+                    color: _isEmergencyActive
+                        ? Colors.red.shade700
+                        : Colors.red,
+                    borderRadius: BorderRadius.circular(20),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.red.withOpacity(0.4),
+                        blurRadius: 12,
+                        offset: const Offset(0, 4),
+                      ),
+                    ],
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(
+                        _isEmergencyActive
+                            ? Icons.warning_amber_rounded
+                            : Icons.emergency,
+                        color: Colors.white,
+                        size: 28,
+                      ),
+                      const SizedBox(width: 12),
+                      Text(
+                        _isEmergencyActive
+                            ? "EMERGENCY SENT"
+                            : "EMERGENCY ALERT",
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 18,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: 1.2,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+
               const SizedBox(height: 90),
             ],
           ),
