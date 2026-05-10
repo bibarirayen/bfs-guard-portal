@@ -75,8 +75,54 @@ void main() async {
   });
 }
 
-class BlackFabricApp extends StatelessWidget {
+class BlackFabricApp extends StatefulWidget {
   const BlackFabricApp({super.key});
+
+  @override
+  State<BlackFabricApp> createState() => _BlackFabricAppState();
+}
+
+class _BlackFabricAppState extends State<BlackFabricApp>
+    with WidgetsBindingObserver {
+  // Re-check the minimum required app version every 15 minutes while the app
+  // is in the foreground. Combined with the on-resume check below, this means
+  // a guard who leaves the app open during their shift will be kicked to the
+  // update screen as soon as we publish a new minVersion on the backend \u2014 no
+  // need to close + reopen the app to pick up the gate.
+  static const Duration _versionPollInterval = Duration(minutes: 15);
+  Timer? _versionTimer;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _startVersionPolling();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _versionTimer?.cancel();
+    super.dispose();
+  }
+
+  void _startVersionPolling() {
+    _versionTimer?.cancel();
+    _versionTimer = Timer.periodic(
+      _versionPollInterval,
+      (_) => enforceUpdateIfOutdated(),
+    );
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+    // Whenever the app comes back to the foreground (e.g. user switched away
+    // and returned), re-check the version immediately.
+    if (state == AppLifecycleState.resumed) {
+      enforceUpdateIfOutdated();
+    }
+  }
 
   @override
   Widget build(BuildContext context) {

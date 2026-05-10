@@ -4,6 +4,10 @@
 // If the installed version is below the minimum, the user sees a
 // full-screen "Please Update" page they cannot dismiss.
 // If the check passes (or the server is unreachable), the app proceeds normally.
+//
+// Also exposes top-level helpers (`isAppOutdated`, `enforceUpdateIfOutdated`)
+// so a runtime guard (see main.dart) can re-check mid-session and kick the
+// user to this screen even if they were already deep inside the app.
 
 import 'dart:convert';
 import 'dart:io';
@@ -11,10 +15,91 @@ import 'package:flutter/material.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:http/http.dart' as http;
+import '../config/app_globals.dart';
 import 'login_screen.dart';
 
+// ─── Version comparison ─────────────────────────────────────────────────────
+// Compare two "major.minor.patch" strings. Returns true when [current] < [minimum].
+bool _isOutdatedVersion(String current, String minimum) {
+  try {
+    final c = current.split('.').map(int.parse).toList();
+    final m = minimum.split('.').map(int.parse).toList();
+    while (c.length < 3) c.add(0);
+    while (m.length < 3) m.add(0);
+    for (int i = 0; i < 3; i++) {
+      if (c[i] < m[i]) return true;
+      if (c[i] > m[i]) return false;
+    }
+    return false;
+  } catch (_) {
+    return false; // parse error → let the user through
+  }
+}
+
+/// Hits the backend `/api/version` endpoint and returns
+/// `(outdated, minVersion, currentVersion)`.
+/// On any error returns `(false, '', current)` — fail open.
+Future<({bool outdated, String minVersion, String currentVersion})> checkAppVersion() async {
+  String current = '';
+  try {
+    final info = await PackageInfo.fromPlatform();
+    current = info.version;
+
+    final res = await http
+        .get(Uri.parse('https://api.blackfabricsecurity.com/api/version'))
+        .timeout(const Duration(seconds: 6));
+
+    if (res.statusCode == 200) {
+      final body = jsonDecode(res.body) as Map<String, dynamic>;
+      final min = body['minVersion']?.toString() ?? current;
+      return (
+        outdated: _isOutdatedVersion(current, min),
+        minVersion: min,
+        currentVersion: current,
+      );
+    }
+  } catch (_) {
+    // network/parse error → fail open
+  }
+  return (outdated: false, minVersion: '', currentVersion: current);
+}
+
+/// True if a force-update screen is currently showing — used to avoid stacking
+/// multiple update screens on top of each other when the periodic guard fires.
+bool _forceUpdateActive = false;
+
+/// Called from the runtime guard. If the version check says we're outdated,
+/// replaces the entire navigation stack with a non-dismissible update screen.
+Future<void> enforceUpdateIfOutdated() async {
+  if (_forceUpdateActive) return;
+  final result = await checkAppVersion();
+  if (!result.outdated) return;
+
+  final nav = navigatorKey.currentState;
+  if (nav == null) return;
+  _forceUpdateActive = true;
+  await nav.pushAndRemoveUntil(
+    MaterialPageRoute(
+      builder: (_) => ForceUpdateScreen(
+        preloadedMinVersion: result.minVersion,
+        preloadedCurrentVersion: result.currentVersion,
+      ),
+    ),
+    (route) => false,
+  );
+}
+
 class ForceUpdateScreen extends StatefulWidget {
-  const ForceUpdateScreen({super.key});
+  /// When provided, the screen renders the update UI immediately without
+  /// re-hitting the API. Used by `enforceUpdateIfOutdated()` mid-session.
+  final String? preloadedMinVersion;
+  final String? preloadedCurrentVersion;
+
+  const ForceUpdateScreen({
+    super.key,
+    this.preloadedMinVersion,
+    this.preloadedCurrentVersion,
+  });
 
   @override
   State<ForceUpdateScreen> createState() => _ForceUpdateScreenState();
@@ -40,27 +125,31 @@ class _ForceUpdateScreenState extends State<ForceUpdateScreen> {
   @override
   void initState() {
     super.initState();
-    _checkVersion();
+    // If we were pushed mid-session by enforceUpdateIfOutdated(), skip the
+    // network round-trip and render the update UI directly.
+    if (widget.preloadedMinVersion != null) {
+      _needsUpdate    = true;
+      _checking       = false;
+      _minVersion     = widget.preloadedMinVersion!;
+      _currentVersion = widget.preloadedCurrentVersion ?? '';
+      _forceUpdateActive = true;
+    } else {
+      _checkVersion();
+    }
+  }
+
+  @override
+  void dispose() {
+    // Clear the singleton flag when this screen is disposed (e.g. user finally
+    // updated and the new build no longer renders this page).
+    _forceUpdateActive = false;
+    super.dispose();
   }
 
   // ── Compare two "major.minor.patch" strings.
   // Returns true when [current] is strictly less than [minimum].
-  bool _isOutdated(String current, String minimum) {
-    try {
-      final c = current.split('.').map(int.parse).toList();
-      final m = minimum.split('.').map(int.parse).toList();
-      // Pad to same length
-      while (c.length < 3) c.add(0);
-      while (m.length < 3) m.add(0);
-      for (int i = 0; i < 3; i++) {
-        if (c[i] < m[i]) return true;
-        if (c[i] > m[i]) return false;
-      }
-      return false; // equal → not outdated
-    } catch (_) {
-      return false; // parse error → let the user through
-    }
-  }
+  bool _isOutdated(String current, String minimum) =>
+      _isOutdatedVersion(current, minimum);
 
   Future<void> _checkVersion() async {
     try {

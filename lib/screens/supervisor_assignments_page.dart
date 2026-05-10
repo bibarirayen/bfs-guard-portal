@@ -40,6 +40,8 @@ class _SupervisorAssignmentsPageState
   DateTime? _fromDate;
   DateTime? _toDate;
   bool _submitting = false;
+  // Extra sites to attach to the new assignment (mirrors website behaviour).
+  final Set<int> _selectedAdditionalSiteIds = <int>{};
 
   // Days-of-week filter: all 7 selected by default = every day (same as old behavior)
   static const List<String> _allDayValues = [
@@ -137,6 +139,25 @@ class _SupervisorAssignmentsPageState
         .toList();
   }
 
+  /// Sites the current supervisor manages that share the given primary site's
+  /// client and are NOT the primary site — those are eligible to be added as
+  /// additional sites on an assignment (matches the website's picker logic).
+  List<Map<String, dynamic>> _additionalSitesAvailableFor(
+      Map<String, dynamic>? primarySite) {
+    if (primarySite == null) return const [];
+    final primaryId = primarySite['id'];
+    final clientId = primarySite['client']?['id'] ??
+        primarySite['clientId'];
+    if (clientId == null) {
+      // Fallback: just exclude the primary site.
+      return _mySites.where((s) => s['id'] != primaryId).toList();
+    }
+    return _mySites.where((s) {
+      final sClient = s['client']?['id'] ?? s['clientId'];
+      return s['id'] != primaryId && sClient == clientId;
+    }).toList();
+  }
+
   Future<void> _pickDate(bool isFrom) async {
     final now = DateTime.now();
     final picked = await showDatePicker(
@@ -187,6 +208,10 @@ class _SupervisorAssignmentsPageState
       if (_selectedDays.length < 7) {
         bodyMap['daysOfWeek'] = _selectedDays;
       }
+      // Extra sites the guard will also patrol on this assignment.
+      if (_selectedAdditionalSiteIds.isNotEmpty) {
+        bodyMap['additionalSiteIds'] = _selectedAdditionalSiteIds.toList();
+      }
       final res = await api.post('assignments', bodyMap);
       if (res.statusCode == 200 || res.statusCode == 201) {
         setState(() {
@@ -197,6 +222,7 @@ class _SupervisorAssignmentsPageState
           _fromDate = null;
           _toDate = null;
           _selectedDays = List.from(_allDayValues);
+          _selectedAdditionalSiteIds.clear();
           _submitting = false;
         });
         await _fetchData();
@@ -316,6 +342,7 @@ class _SupervisorAssignmentsPageState
                 _fromDate = null;
                 _toDate = null;
                 _selectedDays = List.from(_allDayValues);
+                _selectedAdditionalSiteIds.clear();
               }
             }),
           ),
@@ -397,6 +424,8 @@ class _SupervisorAssignmentsPageState
             onChanged: (v) => setState(() {
               _selectedSite = v;
               _selectedShift = null;
+              // Reset extra sites whenever the primary site changes.
+              _selectedAdditionalSiteIds.clear();
             }),
           ),
           const SizedBox(height: 12),
@@ -508,6 +537,55 @@ class _SupervisorAssignmentsPageState
             }),
           ),
           const SizedBox(height: 16),
+
+          // Additional sites — only show when there are eligible same-client sites.
+          Builder(builder: (_) {
+            final extras = _additionalSitesAvailableFor(_selectedSite);
+            if (extras.isEmpty) return const SizedBox.shrink();
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _label('Additional Sites (same client)'),
+                const SizedBox(height: 6),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: extras.map((s) {
+                    final id = (s['id'] as num).toInt();
+                    final selected = _selectedAdditionalSiteIds.contains(id);
+                    return GestureDetector(
+                      onTap: () => setState(() {
+                        if (selected) {
+                          _selectedAdditionalSiteIds.remove(id);
+                        } else {
+                          _selectedAdditionalSiteIds.add(id);
+                        }
+                      }),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 12, vertical: 7),
+                        decoration: BoxDecoration(
+                          color: selected ? _primary : _bg,
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(
+                              color: selected ? _primary : _border),
+                        ),
+                        child: Text(
+                          s['name']?.toString() ?? '',
+                          style: TextStyle(
+                            color: selected ? Colors.white : _sub,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    );
+                  }).toList(),
+                ),
+                const SizedBox(height: 16),
+              ],
+            );
+          }),
 
           SizedBox(
             width: double.infinity,
@@ -698,6 +776,20 @@ class _SupervisorAssignmentsPageState
           '${client?['name'] ?? ''} • ${site?['name'] ?? ''}',
           style: TextStyle(color: _sub, fontSize: 13),
         ),
+      // Extra patrolling sites attached to this assignment.
+      Builder(builder: (_) {
+        final attached = (a['sites'] as List?)?.cast<Map<String, dynamic>>() ?? const [];
+        final primaryId = (site?['id'] as num?)?.toInt();
+        final extras = attached.where((s) => (s['id'] as num?)?.toInt() != primaryId).toList();
+        if (extras.isEmpty) return const SizedBox.shrink();
+        return Padding(
+          padding: const EdgeInsets.only(top: 4),
+          child: Text(
+            '+ ${extras.map((s) => s['name'] ?? '').join(' • ')}',
+            style: TextStyle(color: _primary, fontSize: 12, fontWeight: FontWeight.w600),
+          ),
+        );
+      }),
       if (shift != null)
         Text(
           '${_formatTime(shift['startTime'])} – ${_formatTime(shift['endTime'])}',
@@ -1023,6 +1115,19 @@ class _SupervisorAssignmentsPageState
         rawDays.isEmpty ? List.from(_allDayValues) : List.from(rawDays);
     bool editSubmitting = false;
 
+    // Pre-load any additional sites already attached to this assignment.
+    // Backend returns the full `sites` list (primary + extras) on each
+    // assignment. Strip the primary (shift.site) to get just the extras.
+    final primarySite = a['shift']?['site'] as Map<String, dynamic>?;
+    final primarySiteId = (primarySite?['id'] as num?)?.toInt();
+    final attachedSites =
+        (a['sites'] as List?)?.cast<Map<String, dynamic>>() ?? const [];
+    final Set<int> editAdditionalSiteIds = attachedSites
+        .where((s) => (s['id'] as num?)?.toInt() != primarySiteId)
+        .map((s) => (s['id'] as num).toInt())
+        .toSet();
+    final extraSitesAvailable = _additionalSitesAvailableFor(primarySite);
+
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -1189,6 +1294,48 @@ class _SupervisorAssignmentsPageState
                     ),
                     const SizedBox(height: 24),
 
+                    // Additional sites — only show when there are eligible options.
+                    if (extraSitesAvailable.isNotEmpty) ...[
+                      _label('Additional Sites (same client)'),
+                      const SizedBox(height: 6),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: extraSitesAvailable.map((s) {
+                          final id = (s['id'] as num).toInt();
+                          final selected = editAdditionalSiteIds.contains(id);
+                          return GestureDetector(
+                            onTap: () => setEdit(() {
+                              if (selected) {
+                                editAdditionalSiteIds.remove(id);
+                              } else {
+                                editAdditionalSiteIds.add(id);
+                              }
+                            }),
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 12, vertical: 7),
+                              decoration: BoxDecoration(
+                                color: selected ? _primary : _bg,
+                                borderRadius: BorderRadius.circular(20),
+                                border: Border.all(
+                                    color: selected ? _primary : _border),
+                              ),
+                              child: Text(
+                                s['name']?.toString() ?? '',
+                                style: TextStyle(
+                                  color: selected ? Colors.white : _sub,
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ),
+                          );
+                        }).toList(),
+                      ),
+                      const SizedBox(height: 24),
+                    ],
+
                     // Save button
                     SizedBox(
                       width: double.infinity,
@@ -1224,6 +1371,14 @@ class _SupervisorAssignmentsPageState
                                   }
                                   if (editDays.length < 7) {
                                     body['daysOfWeek'] = editDays;
+                                  }
+                                  if (editAdditionalSiteIds.isNotEmpty) {
+                                    body['additionalSiteIds'] =
+                                        editAdditionalSiteIds.toList();
+                                  } else {
+                                    // Explicit null clears any previously
+                                    // attached extras on the backend.
+                                    body['additionalSiteIds'] = null;
                                   }
                                   final res = await ApiService()
                                       .put('assignments/${a['id']}', body);
@@ -1392,6 +1547,20 @@ class _SupervisorAssignmentsPageState
                   if (site != null)
                     Text(site['name'] ?? '',
                         style: TextStyle(color: _sub, fontSize: 12)),
+                  // Extra sites listed inline beneath the primary site.
+                  Builder(builder: (_) {
+                    final attached = (a['sites'] as List?)?.cast<Map<String, dynamic>>() ?? const [];
+                    final primaryId = (site?['id'] as num?)?.toInt();
+                    final extras = attached.where((s) => (s['id'] as num?)?.toInt() != primaryId).toList();
+                    if (extras.isEmpty) return const SizedBox.shrink();
+                    return Padding(
+                      padding: const EdgeInsets.only(top: 2),
+                      child: Text(
+                        '+ ${extras.map((s) => s['name'] ?? '').join(', ')}',
+                        style: TextStyle(color: _primary, fontSize: 11, fontWeight: FontWeight.w600),
+                      ),
+                    );
+                  }),
                   if (client != null)
                     Text(client['name'] ?? '',
                         style: TextStyle(color: _sub, fontSize: 12)),

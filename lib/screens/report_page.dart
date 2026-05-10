@@ -116,7 +116,17 @@ class _ReportPageState extends State<ReportPage> {
   bool _vehicleTowed = false;
 
   // ─── STATE ────────────────────────────────────────────────────────────────
-  final List<_MediaItem> _mediaItems = [];
+  // Per-report-type media buckets. Switching report types swaps which bucket
+  // is shown/edited. Submitting a report only clears its own bucket — the
+  // other types' attached media stay intact.
+  final Map<String, List<_MediaItem>> _mediaByType = {
+    "Incident Report": [],
+    "Daily Activity Report": [],
+    "Maintenance Report": [],
+    "Parking Violation Report": [],
+  };
+  List<_MediaItem> get _mediaItems => _mediaByType[_selectedReportType]!;
+
   bool _isSubmitting    = false;
   double _uploadProgress = 0.0;
   bool _cancelRequested  = false;
@@ -128,6 +138,25 @@ class _ReportPageState extends State<ReportPage> {
     "Incident Report", "Daily Activity Report",
     "Maintenance Report", "Parking Violation Report",
   ];
+
+  // ─── Per-site draft scoping ───────────────────────────────────────────────────
+  // Drafts are persisted under "<base>_s<siteId>" so a guard with multiple
+  // sites can keep an in-progress DAR for site A and an Incident for site B
+  // simultaneously. Submitting a report only clears its own (siteId, type)
+  // bucket. When _selectedSiteId is null (no active site picked yet) the
+  // legacy unsuffixed keys are used so existing drafts continue to load.
+  String get _siteSuffix => _selectedSiteId == null ? '' : '_s$_selectedSiteId';
+  String _k(String base) => '$base$_siteSuffix';
+  // True until fetchSites sets the first site — any draft text loaded from
+  // legacy unsuffixed keys is then carried over to the per-site bucket.
+  bool _pendingLegacyMigration = true;
+
+  // SharedPreferences key for the media list of a given report type.
+  // Site-scoped so each (siteId, reportType) pair gets its own media bucket.
+  String _mediaPrefsKey(String type) {
+    final slug = type.toLowerCase().replaceAll(' ', '_');
+    return 'draft_mediaPaths_$slug$_siteSuffix';
+  }
 
   final api = ApiService();
   List<Map<String, dynamic>> _sites = [];
@@ -252,7 +281,9 @@ class _ReportPageState extends State<ReportPage> {
     final submittedType = _selectedReportType;
     _clearDraft();
     setState(() {
-      _mediaItems.clear();
+      // Only clear media for the type that was just submitted — other types
+      // keep their attached photos/videos.
+      _mediaByType[submittedType]?.clear();
       _uploadProgress  = 0.0;
       _isSubmitting    = false;
       _cancelRequested = false;
@@ -339,152 +370,265 @@ class _ReportPageState extends State<ReportPage> {
 
   Future<void> _doSaveDraft() async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('draft_selectedReportType', _selectedReportType);
+    await prefs.setString(_k('draft_selectedReportType'), _selectedReportType);
     // Incident Report fields
-    await prefs.setString('draft_incidentInternalId',   _incidentInternalIdController.text);
-    await prefs.setString('draft_incidentDateTime',     _incidentDateTimeController.text);
-    await prefs.setString('draft_incidentType',         _incidentTypeController.text);
-    await prefs.setString('draft_victimName',           _victimNameController.text);
-    await prefs.setString('draft_victimContact',        _victimContactController.text);
-    await prefs.setString('draft_suspectName',          _suspectNameController.text);
-    await prefs.setString('draft_suspectContact',       _suspectContactController.text);
-    await prefs.setString('draft_witnessNames',         _witnessNamesController.text);
-    await prefs.setString('draft_incidentLocation',     _incidentLocationController.text);
-    await prefs.setString('draft_incidentSummary',      _incidentSummaryController.text);
-    await prefs.setString('draft_responderPoliceNames', _responderPoliceNamesController.text);
-    await prefs.setString('draft_responderFireTruck',   _responderFireTruckController.text);
-    await prefs.setString('draft_responderAmbulance',   _responderAmbulanceController.text);
-    await prefs.setString('draft_incidentDetails',      _incidentDetailsController.text);
-    await prefs.setString('draft_incidentActions',      _incidentActionsController.text);
-    await prefs.setBool('draft_policeCalled',           _policeCalled);
+    await prefs.setString(_k('draft_incidentInternalId'),   _incidentInternalIdController.text);
+    await prefs.setString(_k('draft_incidentDateTime'),     _incidentDateTimeController.text);
+    await prefs.setString(_k('draft_incidentType'),         _incidentTypeController.text);
+    await prefs.setString(_k('draft_victimName'),           _victimNameController.text);
+    await prefs.setString(_k('draft_victimContact'),        _victimContactController.text);
+    await prefs.setString(_k('draft_suspectName'),          _suspectNameController.text);
+    await prefs.setString(_k('draft_suspectContact'),       _suspectContactController.text);
+    await prefs.setString(_k('draft_witnessNames'),         _witnessNamesController.text);
+    await prefs.setString(_k('draft_incidentLocation'),     _incidentLocationController.text);
+    await prefs.setString(_k('draft_incidentSummary'),      _incidentSummaryController.text);
+    await prefs.setString(_k('draft_responderPoliceNames'), _responderPoliceNamesController.text);
+    await prefs.setString(_k('draft_responderFireTruck'),   _responderFireTruckController.text);
+    await prefs.setString(_k('draft_responderAmbulance'),   _responderAmbulanceController.text);
+    await prefs.setString(_k('draft_incidentDetails'),      _incidentDetailsController.text);
+    await prefs.setString(_k('draft_incidentActions'),      _incidentActionsController.text);
+    await prefs.setBool(_k('draft_policeCalled'),           _policeCalled);
     // Daily Activity Report fields
-    await prefs.setString('draft_dailyShiftStartNotes',     _dailyShiftStartNotesController.text);
-    await prefs.setString('draft_dailyPostShift',           _dailyPostShiftController.text);
-    await prefs.setString('draft_dailySpecialInstructions', _dailySpecialInstructionsController.text);
-    await prefs.setString('draft_dailyPostItemsReceived',   _dailyPostItemsReceivedController.text);
-    await prefs.setString('draft_dailyRelievingFirst',      _dailyRelievingFirstController.text);
-    await prefs.setString('draft_dailyRelievingLast',       _dailyRelievingLastController.text);
-    await prefs.setString('draft_dailyAdditionalNotes',     _dailyAdditionalNotesController.text);
-    await prefs.setString('draft_darObservations',
+    await prefs.setString(_k('draft_dailyShiftStartNotes'),     _dailyShiftStartNotesController.text);
+    await prefs.setString(_k('draft_dailyPostShift'),           _dailyPostShiftController.text);
+    await prefs.setString(_k('draft_dailySpecialInstructions'), _dailySpecialInstructionsController.text);
+    await prefs.setString(_k('draft_dailyPostItemsReceived'),   _dailyPostItemsReceivedController.text);
+    await prefs.setString(_k('draft_dailyRelievingFirst'),      _dailyRelievingFirstController.text);
+    await prefs.setString(_k('draft_dailyRelievingLast'),       _dailyRelievingLastController.text);
+    await prefs.setString(_k('draft_dailyAdditionalNotes'),     _dailyAdditionalNotesController.text);
+    await prefs.setString(_k('draft_darObservations'),
         jsonEncode(_darObservations.map((o) => o.toJson()).toList()));
     // Maintenance Report fields
-    await prefs.setString('draft_maintenanceType',        _maintenanceTypeController.text);
-    await prefs.setString('draft_maintenanceDetails',     _maintenanceDetailsController.text);
-    await prefs.setString('draft_maintenanceWhoNotified', _maintenanceWhoNotifiedController.text);
-    await prefs.setBool('draft_maintenanceEmailClient',   _maintenanceEmailClient);
+    await prefs.setString(_k('draft_maintenanceType'),        _maintenanceTypeController.text);
+    await prefs.setString(_k('draft_maintenanceDetails'),     _maintenanceDetailsController.text);
+    await prefs.setString(_k('draft_maintenanceWhoNotified'), _maintenanceWhoNotifiedController.text);
+    await prefs.setBool(_k('draft_maintenanceEmailClient'),   _maintenanceEmailClient);
     // Parking Violation Report fields
-    await prefs.setString('draft_violatorFirst',    _violatorFirstController.text);
-    await prefs.setString('draft_violatorLast',     _violatorLastController.text);
-    await prefs.setString('draft_vehicleMake',      _vehicleMakeController.text);
-    await prefs.setString('draft_vehicleModel',     _vehicleModelController.text);
-    await prefs.setString('draft_vehicleLP',        _vehicleLPController.text);
-    await prefs.setString('draft_vehicleVIN',       _vehicleVINController.text);
-    await prefs.setString('draft_vehicleColor',     _vehicleColorController.text);
-    await prefs.setString('draft_violationType',    _violationTypeController.text);
-    await prefs.setString('draft_violationNumber',  _violationNumberController.text);
-    await prefs.setString('draft_parkingLocation',  _parkingLocationController.text);
-    await prefs.setString('draft_parkingFine',      _parkingFineController.text);
-    await prefs.setString('draft_parkingDetails',   _parkingDetailsController.text);
-    await prefs.setBool('draft_vehicleTowed',       _vehicleTowed);
-    // Save attached media file paths
-    await prefs.setStringList(
-      'draft_mediaPaths',
-      _mediaItems.map((m) => '${m.isVideo ? 'v' : 'i'}:${m.file.path}').toList(),
-    );
+    await prefs.setString(_k('draft_violatorFirst'),    _violatorFirstController.text);
+    await prefs.setString(_k('draft_violatorLast'),     _violatorLastController.text);
+    await prefs.setString(_k('draft_vehicleMake'),      _vehicleMakeController.text);
+    await prefs.setString(_k('draft_vehicleModel'),     _vehicleModelController.text);
+    await prefs.setString(_k('draft_vehicleLP'),        _vehicleLPController.text);
+    await prefs.setString(_k('draft_vehicleVIN'),       _vehicleVINController.text);
+    await prefs.setString(_k('draft_vehicleColor'),     _vehicleColorController.text);
+    await prefs.setString(_k('draft_violationType'),    _violationTypeController.text);
+    await prefs.setString(_k('draft_violationNumber'),  _violationNumberController.text);
+    await prefs.setString(_k('draft_parkingLocation'),  _parkingLocationController.text);
+    await prefs.setString(_k('draft_parkingFine'),      _parkingFineController.text);
+    await prefs.setString(_k('draft_parkingDetails'),   _parkingDetailsController.text);
+    await prefs.setBool(_k('draft_vehicleTowed'),       _vehicleTowed);
+    // Save attached media file paths PER (siteId, report type) so each bucket
+    // keeps its own attachments.
+    for (final entry in _mediaByType.entries) {
+      await prefs.setStringList(
+        _mediaPrefsKey(entry.key),
+        entry.value.map((m) => '${m.isVideo ? 'v' : 'i'}:${m.file.path}').toList(),
+      );
+    }
   }
 
   Future<void> _loadDraft() async {
     _draftLoading = true;
     try {
       final prefs = await SharedPreferences.getInstance();
-      final type = prefs.getString('draft_selectedReportType');
+      final type = prefs.getString(_k('draft_selectedReportType'));
       if (type != null && _reportTypes.contains(type)) {
         if (mounted) setState(() => _selectedReportType = type);
       }
       // Text fields (setting .text does NOT trigger rebuild, setState not needed)
-      _incidentInternalIdController.text   = prefs.getString('draft_incidentInternalId')   ?? '';
-      _incidentDateTimeController.text     = prefs.getString('draft_incidentDateTime')     ?? '';
-      _incidentTypeController.text         = prefs.getString('draft_incidentType')         ?? '';
-      _victimNameController.text           = prefs.getString('draft_victimName')           ?? '';
-      _victimContactController.text        = prefs.getString('draft_victimContact')        ?? '';
-      _suspectNameController.text          = prefs.getString('draft_suspectName')          ?? '';
-      _suspectContactController.text       = prefs.getString('draft_suspectContact')       ?? '';
-      _witnessNamesController.text         = prefs.getString('draft_witnessNames')         ?? '';
-      _incidentLocationController.text     = prefs.getString('draft_incidentLocation')     ?? '';
-      _incidentSummaryController.text      = prefs.getString('draft_incidentSummary')      ?? '';
-      _responderPoliceNamesController.text = prefs.getString('draft_responderPoliceNames') ?? '';
-      _responderFireTruckController.text   = prefs.getString('draft_responderFireTruck')   ?? '';
-      _responderAmbulanceController.text   = prefs.getString('draft_responderAmbulance')   ?? '';
-      _incidentDetailsController.text      = prefs.getString('draft_incidentDetails')      ?? '';
-      _incidentActionsController.text      = prefs.getString('draft_incidentActions')      ?? '';
-      _dailyShiftStartNotesController.text     = prefs.getString('draft_dailyShiftStartNotes')     ?? '';
-      _dailyPostShiftController.text           = prefs.getString('draft_dailyPostShift')           ?? '';
-      _dailySpecialInstructionsController.text = prefs.getString('draft_dailySpecialInstructions') ?? '';
-      _dailyPostItemsReceivedController.text   = prefs.getString('draft_dailyPostItemsReceived')   ?? '';
-      _dailyRelievingFirstController.text      = prefs.getString('draft_dailyRelievingFirst')      ?? '';
-      _dailyRelievingLastController.text       = prefs.getString('draft_dailyRelievingLast')       ?? '';
-      _dailyAdditionalNotesController.text     = prefs.getString('draft_dailyAdditionalNotes')     ?? '';
+      _incidentInternalIdController.text   = prefs.getString(_k('draft_incidentInternalId'))   ?? '';
+      _incidentDateTimeController.text     = prefs.getString(_k('draft_incidentDateTime'))     ?? '';
+      _incidentTypeController.text         = prefs.getString(_k('draft_incidentType'))         ?? '';
+      _victimNameController.text           = prefs.getString(_k('draft_victimName'))           ?? '';
+      _victimContactController.text        = prefs.getString(_k('draft_victimContact'))        ?? '';
+      _suspectNameController.text          = prefs.getString(_k('draft_suspectName'))          ?? '';
+      _suspectContactController.text       = prefs.getString(_k('draft_suspectContact'))       ?? '';
+      _witnessNamesController.text         = prefs.getString(_k('draft_witnessNames'))         ?? '';
+      _incidentLocationController.text     = prefs.getString(_k('draft_incidentLocation'))     ?? '';
+      _incidentSummaryController.text      = prefs.getString(_k('draft_incidentSummary'))      ?? '';
+      _responderPoliceNamesController.text = prefs.getString(_k('draft_responderPoliceNames')) ?? '';
+      _responderFireTruckController.text   = prefs.getString(_k('draft_responderFireTruck'))   ?? '';
+      _responderAmbulanceController.text   = prefs.getString(_k('draft_responderAmbulance'))   ?? '';
+      _incidentDetailsController.text      = prefs.getString(_k('draft_incidentDetails'))      ?? '';
+      _incidentActionsController.text      = prefs.getString(_k('draft_incidentActions'))      ?? '';
+      _dailyShiftStartNotesController.text     = prefs.getString(_k('draft_dailyShiftStartNotes'))     ?? '';
+      _dailyPostShiftController.text           = prefs.getString(_k('draft_dailyPostShift'))           ?? '';
+      _dailySpecialInstructionsController.text = prefs.getString(_k('draft_dailySpecialInstructions')) ?? '';
+      _dailyPostItemsReceivedController.text   = prefs.getString(_k('draft_dailyPostItemsReceived'))   ?? '';
+      _dailyRelievingFirstController.text      = prefs.getString(_k('draft_dailyRelievingFirst'))      ?? '';
+      _dailyRelievingLastController.text       = prefs.getString(_k('draft_dailyRelievingLast'))       ?? '';
+      _dailyAdditionalNotesController.text     = prefs.getString(_k('draft_dailyAdditionalNotes'))     ?? '';
       // Restore structured DAR observations
-      final obsJson = prefs.getString('draft_darObservations');
-      if (obsJson != null) {
-        try {
-          final decoded = jsonDecode(obsJson) as List;
-          final loaded = decoded.map((e) => _DarObservation.fromJson(e as Map<String, dynamic>)).toList();
-          if (mounted) setState(() { _darObservations
-            ..clear()
-            ..addAll(loaded); });
-        } catch (_) {}
+      final obsJson = prefs.getString(_k('draft_darObservations'));
+      if (mounted) {
+        setState(() {
+          _darObservations.clear();
+          if (obsJson != null) {
+            try {
+              final decoded = jsonDecode(obsJson) as List;
+              _darObservations.addAll(decoded.map(
+                  (e) => _DarObservation.fromJson(e as Map<String, dynamic>)));
+            } catch (_) {}
+          }
+        });
       }
-      _maintenanceTypeController.text        = prefs.getString('draft_maintenanceType')        ?? '';
-      _maintenanceDetailsController.text     = prefs.getString('draft_maintenanceDetails')     ?? '';
-      _maintenanceWhoNotifiedController.text = prefs.getString('draft_maintenanceWhoNotified') ?? '';
-      _violatorFirstController.text    = prefs.getString('draft_violatorFirst')   ?? '';
-      _violatorLastController.text     = prefs.getString('draft_violatorLast')    ?? '';
-      _vehicleMakeController.text      = prefs.getString('draft_vehicleMake')     ?? '';
-      _vehicleModelController.text     = prefs.getString('draft_vehicleModel')    ?? '';
-      _vehicleLPController.text        = prefs.getString('draft_vehicleLP')       ?? '';
-      _vehicleVINController.text       = prefs.getString('draft_vehicleVIN')      ?? '';
-      _vehicleColorController.text     = prefs.getString('draft_vehicleColor')    ?? '';
-      _violationTypeController.text    = prefs.getString('draft_violationType')   ?? '';
-      _violationNumberController.text  = prefs.getString('draft_violationNumber') ?? '';
-      _parkingLocationController.text  = prefs.getString('draft_parkingLocation') ?? '';
-      _parkingFineController.text      = prefs.getString('draft_parkingFine')     ?? '';
-      _parkingDetailsController.text   = prefs.getString('draft_parkingDetails')  ?? '';
+      _maintenanceTypeController.text        = prefs.getString(_k('draft_maintenanceType'))        ?? '';
+      _maintenanceDetailsController.text     = prefs.getString(_k('draft_maintenanceDetails'))     ?? '';
+      _maintenanceWhoNotifiedController.text = prefs.getString(_k('draft_maintenanceWhoNotified')) ?? '';
+      _violatorFirstController.text    = prefs.getString(_k('draft_violatorFirst'))   ?? '';
+      _violatorLastController.text     = prefs.getString(_k('draft_violatorLast'))    ?? '';
+      _vehicleMakeController.text      = prefs.getString(_k('draft_vehicleMake'))     ?? '';
+      _vehicleModelController.text     = prefs.getString(_k('draft_vehicleModel'))    ?? '';
+      _vehicleLPController.text        = prefs.getString(_k('draft_vehicleLP'))       ?? '';
+      _vehicleVINController.text       = prefs.getString(_k('draft_vehicleVIN'))      ?? '';
+      _vehicleColorController.text     = prefs.getString(_k('draft_vehicleColor'))    ?? '';
+      _violationTypeController.text    = prefs.getString(_k('draft_violationType'))   ?? '';
+      _violationNumberController.text  = prefs.getString(_k('draft_violationNumber')) ?? '';
+      _parkingLocationController.text  = prefs.getString(_k('draft_parkingLocation')) ?? '';
+      _parkingFineController.text      = prefs.getString(_k('draft_parkingFine'))     ?? '';
+      _parkingDetailsController.text   = prefs.getString(_k('draft_parkingDetails'))  ?? '';
       // Boolean toggles
       if (mounted) {
         setState(() {
-          _policeCalled           = prefs.getBool('draft_policeCalled')           ?? false;
-          _maintenanceEmailClient = prefs.getBool('draft_maintenanceEmailClient') ?? false;
-          _vehicleTowed           = prefs.getBool('draft_vehicleTowed')           ?? false;
+          _policeCalled           = prefs.getBool(_k('draft_policeCalled'))           ?? false;
+          _maintenanceEmailClient = prefs.getBool(_k('draft_maintenanceEmailClient')) ?? false;
+          _vehicleTowed           = prefs.getBool(_k('draft_vehicleTowed'))           ?? false;
         });
       }
-      // Restore attached media files (only if files still exist on device)
-      final paths    = prefs.getStringList('draft_mediaPaths') ?? [];
-      final restored = <_MediaItem>[];
-      for (final p in paths) {
-        if (p.length < 3) continue;
-        final isVideo = p.startsWith('v:');
-        final path    = p.substring(2);
-        final file    = File(path);
-        if (await file.exists()) {
-          final item = _MediaItem(file: file, isVideo: isVideo, thumbLoading: isVideo);
-          restored.add(item);
-          if (isVideo) _generateThumb(item);
+      // Restore attached media files PER (siteId, report type) bucket.
+      // Also handles a one-time legacy migration of the old non-suffixed
+      // 'draft_mediaPaths' bucket onto the saved selected type so users with
+      // older drafts don't lose previously attached media on first run.
+      if (_selectedSiteId == null) {
+        final legacy = prefs.getStringList('draft_mediaPaths');
+        if (legacy != null) {
+          await prefs.setStringList(_mediaPrefsKey(_selectedReportType), legacy);
+          await prefs.remove('draft_mediaPaths');
         }
       }
-      if (restored.isNotEmpty && mounted) {
-        setState(() => _mediaItems.addAll(restored));
+      for (final type in _mediaByType.keys) {
+        final paths    = prefs.getStringList(_mediaPrefsKey(type)) ?? [];
+        final restored = <_MediaItem>[];
+        for (final p in paths) {
+          if (p.length < 3) continue;
+          final isVideo = p.startsWith('v:');
+          final path    = p.substring(2);
+          final file    = File(path);
+          if (await file.exists()) {
+            final item = _MediaItem(file: file, isVideo: isVideo, thumbLoading: isVideo);
+            restored.add(item);
+            if (isVideo) _generateThumb(item);
+          }
+        }
+        if (restored.isNotEmpty) {
+          _mediaByType[type]!.addAll(restored);
+        }
       }
+      if (mounted) setState(() {});
     } finally {
       _draftLoading = false;
+    }
+  }
+
+  /// Switches the active draft scope to a different site. Called both from
+  /// the site dropdown's onChanged AND from `_fetchSites` once the active
+  /// assignment resolves to a site. Persists current state under the OLD
+  /// site suffix, clears all in-memory state, swaps the suffix, and reloads.
+  ///
+  /// On the very first transition (null → newId), if no per-site draft
+  /// already exists for newId, the current legacy-loaded controller text is
+  /// migrated into the per-site bucket so existing drafts aren't lost.
+  Future<void> _swapSite(int? newId) async {
+    if (_selectedSiteId == newId) return;
+
+    final prefs = await SharedPreferences.getInstance();
+    final wasLegacy = _selectedSiteId == null && _pendingLegacyMigration;
+
+    if (wasLegacy && newId != null) {
+      // Does the destination site already have a saved draft?
+      final hasPerSite =
+          prefs.containsKey('draft_selectedReportType_s$newId');
+      if (hasPerSite) {
+        // Per-site draft exists → discard legacy text in controllers and
+        // load the per-site draft as-is.
+        _draftLoading = true;
+        setState(() {
+          for (final c in _allControllers) c.clear();
+          _darObservations.clear();
+          _policeCalled = false;
+          _maintenanceEmailClient = false;
+          _vehicleTowed = false;
+          for (final list in _mediaByType.values) list.clear();
+          _selectedSiteId = newId;
+        });
+        _pendingLegacyMigration = false;
+        await _loadDraft();
+        return;
+      }
+      // No per-site draft yet → keep current controller text, just save it
+      // under the new site's suffix.
+      setState(() => _selectedSiteId = newId);
+      _pendingLegacyMigration = false;
+      await _doSaveDraft();
+      // Cleanup: drop the now-orphaned legacy unsuffixed keys to prevent
+      // re-migration on subsequent launches.
+      await _clearLegacyUnsuffixedDraft(prefs);
+      return;
+    }
+
+    // Normal swap: persist current state under OLD suffix, clear, load NEW.
+    if (!_draftLoading) await _doSaveDraft();
+    _draftLoading = true;
+    setState(() {
+      for (final c in _allControllers) c.clear();
+      _darObservations.clear();
+      _policeCalled = false;
+      _maintenanceEmailClient = false;
+      _vehicleTowed = false;
+      for (final list in _mediaByType.values) list.clear();
+      _selectedSiteId = newId;
+    });
+    await _loadDraft();
+  }
+
+  /// Removes the pre-multi-site (unsuffixed) draft keys after a successful
+  /// migration so subsequent app launches don't re-load stale legacy text.
+  Future<void> _clearLegacyUnsuffixedDraft(SharedPreferences prefs) async {
+    const legacyKeys = [
+      'draft_selectedReportType',
+      'draft_incidentInternalId', 'draft_incidentDateTime', 'draft_incidentType',
+      'draft_victimName', 'draft_victimContact', 'draft_suspectName',
+      'draft_suspectContact', 'draft_witnessNames', 'draft_incidentLocation',
+      'draft_incidentSummary', 'draft_responderPoliceNames',
+      'draft_responderFireTruck', 'draft_responderAmbulance',
+      'draft_incidentDetails', 'draft_incidentActions', 'draft_policeCalled',
+      'draft_dailyShiftStartNotes', 'draft_dailyPostShift',
+      'draft_dailySpecialInstructions', 'draft_dailyPostItemsReceived',
+      'draft_dailyRelievingFirst', 'draft_dailyRelievingLast',
+      'draft_dailyAdditionalNotes', 'draft_darObservations',
+      'draft_maintenanceType', 'draft_maintenanceDetails',
+      'draft_maintenanceWhoNotified', 'draft_maintenanceEmailClient',
+      'draft_violatorFirst', 'draft_violatorLast', 'draft_vehicleMake',
+      'draft_vehicleModel', 'draft_vehicleLP', 'draft_vehicleVIN',
+      'draft_vehicleColor', 'draft_violationType', 'draft_violationNumber',
+      'draft_parkingLocation', 'draft_parkingFine', 'draft_parkingDetails',
+      'draft_vehicleTowed',
+      'draft_mediaPaths',
+      'draft_mediaPaths_incident_report',
+      'draft_mediaPaths_daily_activity_report',
+      'draft_mediaPaths_maintenance_report',
+      'draft_mediaPaths_parking_violation_report',
+    ];
+    for (final k in legacyKeys) {
+      await prefs.remove(k);
     }
   }
 
   Future<void> _clearDraft() async {
     final prefs = await SharedPreferences.getInstance();
 
-    // Keys shared across all report types
-    const sharedKeys = ['draft_selectedReportType', 'draft_mediaPaths'];
+    // Keys shared across all report types (media is per-type, not shared)
+    const sharedKeys = ['draft_selectedReportType'];
 
     // Keys specific to each report type
     const keysByType = <String, List<String>>{
@@ -512,10 +656,13 @@ class _ReportPageState extends State<ReportPage> {
       ],
     };
 
-    // Only clear the keys for the report type that was just submitted, plus shared keys
+    // Only clear the keys for the (current site, report type just submitted),
+    // plus shared keys, plus that type's own per-site media bucket. Other
+    // types' media (and other sites' drafts entirely) stay intact.
     final keysToRemove = [
-      ...sharedKeys,
-      ...(keysByType[_selectedReportType] ?? []),
+      ...sharedKeys.map(_k),
+      ...((keysByType[_selectedReportType] ?? const <String>[]).map(_k)),
+      _mediaPrefsKey(_selectedReportType),
     ];
     for (final k in keysToRemove) {
       await prefs.remove(k);
@@ -581,12 +728,41 @@ class _ReportPageState extends State<ReportPage> {
 
     setState(() => _isPickingMedia = true);
     try {
-      XFile? picked;
-      try { picked = await _picker.pickImage(source: source, imageQuality: 85); } catch (_) { return; }
-      if (picked == null || !mounted) return;
-      final File stableFile = await _copyToTemp(picked.path, ext: 'jpg');
-      setState(() => _mediaItems.add(_MediaItem(file: stableFile, isVideo: false)));
-      _doSaveDraft();
+      // Gallery → multi-select (system picker lets the user tap many photos).
+      // Camera → single shot (no multi-shot at the OS level).
+      if (source == ImageSource.gallery) {
+        List<XFile> pickedList;
+        try {
+          pickedList = await _picker.pickMultiImage(imageQuality: 85);
+        } catch (_) {
+          return;
+        }
+        if (pickedList.isEmpty || !mounted) return;
+        // Respect the server-side cap of 20 files per upload.
+        const maxFiles = 20;
+        final remaining = maxFiles - _mediaItems.length;
+        if (remaining <= 0) {
+          _snackError('Maximum of $maxFiles attachments reached.');
+          return;
+        }
+        final toAdd = pickedList.take(remaining).toList();
+        if (toAdd.length < pickedList.length) {
+          _snackError('Only the first ${toAdd.length} photos were added (max $maxFiles).');
+        }
+        for (final picked in toAdd) {
+          final File stableFile = await _copyToTemp(picked.path, ext: 'jpg');
+          if (!mounted) return;
+          setState(() => _mediaItems.add(_MediaItem(file: stableFile, isVideo: false)));
+        }
+        _doSaveDraft();
+      } else {
+        XFile? picked;
+        try { picked = await _picker.pickImage(source: source, imageQuality: 85); } catch (_) { return; }
+        if (picked == null || !mounted) return;
+        final File stableFile = await _copyToTemp(picked.path, ext: 'jpg');
+        setState(() => _mediaItems.add(_MediaItem(file: stableFile, isVideo: false)));
+        _doSaveDraft();
+      }
     } finally {
       if (mounted) setState(() => _isPickingMedia = false);
     }
@@ -759,13 +935,16 @@ class _ReportPageState extends State<ReportPage> {
           setState(() {
             _sites = siteList;
             _hasActiveAssignment = true;
-            // Auto-select if only one site; otherwise require guard to choose
-            _selectedSiteId = siteList.length == 1 ? siteList[0]['id'] : null;
           });
+          // Auto-pick when there's only one site so the draft scope locks in.
+          if (siteList.length == 1) {
+            await _swapSite((siteList[0]['id'] as num).toInt());
+          }
         } else {
           final site = decoded['site'];
           if (site != null) {
-            setState(() { _sites = [site]; _hasActiveAssignment = true; _selectedSiteId = site['id']; });
+            setState(() { _sites = [site]; _hasActiveAssignment = true; });
+            await _swapSite((site['id'] as num).toInt());
           } else {
             setState(() { _sites = []; _hasActiveAssignment = false; });
           }
@@ -1447,7 +1626,9 @@ class _ReportPageState extends State<ReportPage> {
       decoration: _modernInput("Select Site"),
       items: _sites.map((s) => DropdownMenuItem<Map<String, dynamic>>(value: s,
           child: Text(s['name']))).toList(),
-      onChanged: _hasActiveAssignment ? (v) => setState(() => _selectedSiteId = v?['id']) : null,
+      onChanged: _hasActiveAssignment
+          ? (v) => _swapSite((v?['id'] as num?)?.toInt())
+          : null,
       disabledHint: const Text("No active shift", style: TextStyle(color: Colors.redAccent)),
     ),
   );
