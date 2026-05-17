@@ -1026,6 +1026,21 @@ class _ReportPageState extends State<ReportPage> {
     if (!_hasActiveAssignment) { _snackError("You don't have an active assignment right now. Please contact your supervisor."); return; }
     if (_selectedSiteId == null) { _snackError("Please select your assigned site before submitting."); return; }
 
+    // Temperature Report validation — location and temperature are required per entry
+    if (_selectedReportType == 'Temperature Report') {
+      for (int i = 0; i < _tempEntries.length; i++) {
+        final e = _tempEntries[i];
+        if (e.location.trim().isEmpty) {
+          _snackError("Reading ${i + 1}: Please select a location (Water Tank or Water Heater).");
+          return;
+        }
+        if (e.degrees.trim().isEmpty) {
+          _snackError("Reading ${i + 1}: Please enter a temperature.");
+          return;
+        }
+      }
+    }
+
     final prefs     = await SharedPreferences.getInstance();
     final officerId = prefs.getInt('userId');
 
