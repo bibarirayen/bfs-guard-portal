@@ -216,7 +216,7 @@ class _ReportListPageState extends State<ReportListPage> {
                 Text("Details", style: TextStyle(fontWeight: FontWeight.bold, color: _textColor)),
                 // ✅ every raw field value auto-formatted
                 ...report.raw.entries
-                    .where((e) => !['id', 'type', 'client', 'site', 'officer', 'images', 'dateEntered', 'dailySpecialInstructions', 'maintenanceEmailClient', 'dailyObservations']
+                    .where((e) => !['id', 'type', 'client', 'site', 'officer', 'images', 'dateEntered', 'dailySpecialInstructions', 'maintenanceEmailClient', 'dailyObservations', 'tempEntries']
                     .contains(e.key))
                     .map((e) {
                   final key = e.key.toLowerCase();
@@ -233,10 +233,15 @@ class _ReportListPageState extends State<ReportListPage> {
 
                   return _infoRow(e.key.replaceAll('_', ' '), formatted);
                 }),
-                // ── Observations (DAR structured list) ───────────────────
+                // ── Observations (DAR structured list) ───────────────────────
                 if (report.raw['dailyObservations'] != null &&
                     report.raw['dailyObservations'].toString().trim().isNotEmpty &&
                     report.raw['dailyObservations'].toString().trim() != '[]') ..._buildObservationsSection(report.raw['dailyObservations'].toString()),
+
+                // ── Temperature entries ─────────────────────────────────
+                if (report.raw['tempEntries'] != null &&
+                    report.raw['tempEntries'].toString().trim().isNotEmpty &&
+                    report.raw['tempEntries'].toString().trim() != '[]') ..._buildTempEntriesSection(report.raw['tempEntries'].toString()),
 
                 if (report.images.isNotEmpty) ...[
                   const SizedBox(height: 16),
@@ -340,6 +345,86 @@ class _ReportListPageState extends State<ReportListPage> {
               if (desc.isNotEmpty) ...[
                 const SizedBox(height: 8),
                 Text(desc, style: TextStyle(color: _textColor, fontSize: 13, height: 1.4)),
+              ],
+            ],
+          ),
+        );
+      }),
+    ];
+  }
+
+  // Parses tempEntries JSON and returns styled widgets for Temperature Report
+  List<Widget> _buildTempEntriesSection(String json) {
+    List<Map<String, dynamic>> entries = [];
+    try {
+      final decoded = jsonDecode(json) as List;
+      entries = decoded.cast<Map<String, dynamic>>();
+    } catch (_) { return []; }
+    if (entries.isEmpty) return [];
+
+    return [
+      const SizedBox(height: 12),
+      Text("Temperature Readings",
+          style: TextStyle(fontWeight: FontWeight.bold, color: _textColor, fontSize: 14)),
+      const SizedBox(height: 8),
+      ...entries.asMap().entries.map((entry) {
+        final i = entry.key;
+        final e = entry.value;
+        final location = e['location']?.toString() ?? '';
+        final degrees  = e['degrees']?.toString() ?? '';
+        final notes    = e['notes']?.toString() ?? '';
+        final time     = e['time']?.toString() ?? '';
+        return Container(
+          margin: const EdgeInsets.only(bottom: 10),
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: _isDarkMode ? const Color(0xFF1E293B) : const Color(0xFFF8FAFC),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: _borderColor),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(children: [
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: Colors.teal.withOpacity(0.15),
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: Text("Reading ${i + 1}",
+                      style: const TextStyle(color: Colors.tealAccent, fontSize: 11, fontWeight: FontWeight.w700)),
+                ),
+                const SizedBox(width: 8),
+                if (location.isNotEmpty)
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: Colors.blueAccent.withOpacity(0.15),
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Text(location,
+                        style: const TextStyle(color: Colors.blueAccent, fontSize: 11, fontWeight: FontWeight.w600)),
+                  ),
+                const SizedBox(width: 8),
+                if (degrees.isNotEmpty)
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: Colors.orangeAccent.withOpacity(0.15),
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Text("$degrees °F",
+                        style: const TextStyle(color: Colors.orangeAccent, fontSize: 11, fontWeight: FontWeight.w700)),
+                  ),
+              ]),
+              if (time.isNotEmpty) ...[
+                const SizedBox(height: 4),
+                Text(time, style: TextStyle(color: _secondaryTextColor, fontSize: 11, fontStyle: FontStyle.italic)),
+              ],
+              if (notes.isNotEmpty) ...[
+                const SizedBox(height: 8),
+                Text(notes, style: TextStyle(color: _textColor, fontSize: 13, height: 1.4)),
               ],
             ],
           ),

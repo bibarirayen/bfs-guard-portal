@@ -45,6 +45,25 @@ class _DarObservation {
       _DarObservation(type: j['type'] ?? '', description: j['description'] ?? '', time: j['time'] ?? '');
 }
 
+// ─── Temperature entry ───────────────────────────────────────────────────────
+class _TempEntry {
+  String location; // 'Water Tank' or 'Water Heater'
+  String degrees;  // temperature in °F
+  String notes;    // optional notes
+  String time;     // HST timestamp when added
+
+  _TempEntry({this.location = '', this.degrees = '', this.notes = '', this.time = ''});
+
+  Map<String, dynamic> toJson() =>
+      {'location': location, 'degrees': degrees, 'notes': notes, 'time': time};
+
+  factory _TempEntry.fromJson(Map<String, dynamic> j) => _TempEntry(
+      location: j['location'] ?? '',
+      degrees:  j['degrees']  ?? '',
+      notes:    j['notes']    ?? '',
+      time:     j['time']     ?? '');
+}
+
 class ReportPage extends StatefulWidget {
   const ReportPage({super.key});
   @override
@@ -96,6 +115,9 @@ class _ReportPageState extends State<ReportPage> {
   // Structured DAR observations list
   final List<_DarObservation> _darObservations = [];
 
+  // Structured Temperature Report entries
+  final List<_TempEntry> _tempEntries = [];
+
   final TextEditingController _maintenanceTypeController        = TextEditingController();
   final TextEditingController _maintenanceDetailsController     = TextEditingController();
   final TextEditingController _maintenanceWhoNotifiedController = TextEditingController();
@@ -124,6 +146,7 @@ class _ReportPageState extends State<ReportPage> {
     "Daily Activity Report": [],
     "Maintenance Report": [],
     "Parking Violation Report": [],
+    "Temperature Report": [],
   };
   List<_MediaItem> get _mediaItems => _mediaByType[_selectedReportType]!;
 
@@ -137,6 +160,7 @@ class _ReportPageState extends State<ReportPage> {
   final List<String> _reportTypes = [
     "Incident Report", "Daily Activity Report",
     "Maintenance Report", "Parking Violation Report",
+    "Temperature Report",
   ];
 
   // ─── Per-site draft scoping ───────────────────────────────────────────────────
@@ -326,6 +350,8 @@ class _ReportPageState extends State<ReportPage> {
         _parkingLocationController, _parkingFineController, _parkingDetailsController,
       ]) { c.clear(); }
       setState(() { _vehicleTowed = false; });
+    } else if (submittedType == 'Temperature Report') {
+      setState(() { _tempEntries.clear(); });
     }
   }
 
@@ -398,6 +424,9 @@ class _ReportPageState extends State<ReportPage> {
     await prefs.setString(_k('draft_dailyAdditionalNotes'),     _dailyAdditionalNotesController.text);
     await prefs.setString(_k('draft_darObservations'),
         jsonEncode(_darObservations.map((o) => o.toJson()).toList()));
+    // Temperature Report fields
+    await prefs.setString(_k('draft_tempEntries'),
+        jsonEncode(_tempEntries.map((e) => e.toJson()).toList()));
     // Maintenance Report fields
     await prefs.setString(_k('draft_maintenanceType'),        _maintenanceTypeController.text);
     await prefs.setString(_k('draft_maintenanceDetails'),     _maintenanceDetailsController.text);
@@ -468,6 +497,20 @@ class _ReportPageState extends State<ReportPage> {
               final decoded = jsonDecode(obsJson) as List;
               _darObservations.addAll(decoded.map(
                   (e) => _DarObservation.fromJson(e as Map<String, dynamic>)));
+            } catch (_) {}
+          }
+        });
+      }
+      // Restore structured temperature entries
+      final tempJson = prefs.getString(_k('draft_tempEntries'));
+      if (mounted) {
+        setState(() {
+          _tempEntries.clear();
+          if (tempJson != null) {
+            try {
+              final decoded = jsonDecode(tempJson) as List;
+              _tempEntries.addAll(decoded.map(
+                  (e) => _TempEntry.fromJson(e as Map<String, dynamic>)));
             } catch (_) {}
           }
         });
@@ -555,6 +598,7 @@ class _ReportPageState extends State<ReportPage> {
         setState(() {
           for (final c in _allControllers) c.clear();
           _darObservations.clear();
+          _tempEntries.clear();
           _policeCalled = false;
           _maintenanceEmailClient = false;
           _vehicleTowed = false;
@@ -582,6 +626,7 @@ class _ReportPageState extends State<ReportPage> {
     setState(() {
       for (final c in _allControllers) c.clear();
       _darObservations.clear();
+      _tempEntries.clear();
       _policeCalled = false;
       _maintenanceEmailClient = false;
       _vehicleTowed = false;
@@ -618,6 +663,8 @@ class _ReportPageState extends State<ReportPage> {
       'draft_mediaPaths_daily_activity_report',
       'draft_mediaPaths_maintenance_report',
       'draft_mediaPaths_parking_violation_report',
+      'draft_tempEntries',
+      'draft_mediaPaths_temperature_report',
     ];
     for (final k in legacyKeys) {
       await prefs.remove(k);
@@ -653,6 +700,9 @@ class _ReportPageState extends State<ReportPage> {
         'draft_vehicleLP', 'draft_vehicleVIN', 'draft_vehicleColor', 'draft_violationType',
         'draft_violationNumber', 'draft_parkingLocation', 'draft_parkingFine',
         'draft_parkingDetails', 'draft_vehicleTowed',
+      ],
+      'Temperature Report': [
+        'draft_tempEntries',
       ],
     };
 
@@ -759,6 +809,10 @@ class _ReportPageState extends State<ReportPage> {
         XFile? picked;
         try { picked = await _picker.pickImage(source: source, imageQuality: 85); } catch (_) { return; }
         if (picked == null || !mounted) return;
+        if (_mediaItems.length >= 20) {
+          _snackError('Maximum of 20 attachments reached.');
+          return;
+        }
         final File stableFile = await _copyToTemp(picked.path, ext: 'jpg');
         setState(() => _mediaItems.add(_MediaItem(file: stableFile, isVideo: false)));
         _doSaveDraft();
@@ -789,6 +843,10 @@ class _ReportPageState extends State<ReportPage> {
     try {
       final picked = await _picker.pickVideo(source: source);
       if (picked == null || !mounted) return;
+      if (_mediaItems.length >= 20) {
+        _snackError('Maximum of 20 attachments reached.');
+        return;
+      }
       final item = _MediaItem(file: File(picked.path), isVideo: true, thumbLoading: true);
       setState(() => _mediaItems.add(item));
       _generateThumb(item);
@@ -873,6 +931,8 @@ class _ReportPageState extends State<ReportPage> {
           _parkingLocationController, _parkingFineController,
           _parkingDetailsController,
         ].every((c) => c.text.trim().isEmpty);
+      case "Temperature Report":
+        return _tempEntries.isEmpty;
       default:
         return true;
     }
@@ -1088,6 +1148,9 @@ class _ReportPageState extends State<ReportPage> {
         "parkingFine":     _parkingFineController.text,
         "parkingDetails":  _parkingDetailsController.text,
         "vehicleTowed":    _vehicleTowed,
+      };
+      case "Temperature Report": return {
+        "tempEntries": jsonEncode(_tempEntries.map((e) => e.toJson()).toList()),
       };
       default: return {};
     }
@@ -1602,6 +1665,7 @@ class _ReportPageState extends State<ReportPage> {
       case "Daily Activity Report":     return _dailyFields();
       case "Maintenance Report":        return _maintenanceFields();
       case "Parking Violation Report":  return _parkingFields();
+      case "Temperature Report":        return _tempFields();
       default: return [];
     }
   }
@@ -1612,6 +1676,7 @@ class _ReportPageState extends State<ReportPage> {
       case "Daily Activity Report":     return Icons.calendar_today;
       case "Maintenance Report":        return Icons.build;
       case "Parking Violation Report":  return Icons.local_parking;
+      case "Temperature Report":        return Icons.thermostat;
       default: return Icons.description;
     }
   }
@@ -1680,6 +1745,162 @@ class _ReportPageState extends State<ReportPage> {
     _multi(_maintenanceDetailsController, "Problem Details"),
     _single(_maintenanceWhoNotifiedController, "Who has been notified"),
   ];
+
+  // ─── TEMPERATURE REPORT ───────────────────────────────────────────────────
+  static const List<String> _tempLocations = ['Water Tank', 'Water Heater'];
+
+  List<Widget> _tempFields() => [_buildTempSection()];
+
+  Widget _buildTempSection() {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                "Temperature Readings",
+                style: TextStyle(color: _textColor, fontWeight: FontWeight.w600, fontSize: 14),
+              ),
+              TextButton.icon(
+                onPressed: () {
+                  setState(() {
+                    _tempEntries.add(_TempEntry(time: _hawaiiTimeNow()));
+                  });
+                  _doSaveDraft();
+                },
+                icon: const Icon(Icons.add_circle_outline, size: 18),
+                label: const Text("Add"),
+                style: TextButton.styleFrom(foregroundColor: _primaryColor),
+              ),
+            ],
+          ),
+          if (_tempEntries.isEmpty)
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 16),
+              decoration: BoxDecoration(
+                color: _isDarkMode ? const Color(0xFF2D3748) : Colors.grey[50],
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: _borderColor),
+              ),
+              child: Text(
+                'No readings added yet. Tap "Add" to record one.',
+                style: TextStyle(color: _secondaryTextColor, fontSize: 13),
+              ),
+            )
+          else
+            ListView.builder(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              itemCount: _tempEntries.length,
+              itemBuilder: (context, index) {
+                final entry = _tempEntries[index];
+                return Container(
+                  margin: const EdgeInsets.only(bottom: 12),
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: _isDarkMode ? const Color(0xFF1E293B) : Colors.white,
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(color: _borderColor),
+                    boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 4, offset: const Offset(0, 2))],
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // Header: badge + time + delete
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: Colors.teal.withOpacity(0.15),
+                              borderRadius: BorderRadius.circular(20),
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text("Reading ${index + 1}",
+                                    style: const TextStyle(color: Colors.tealAccent, fontSize: 12, fontWeight: FontWeight.w600)),
+                                if (entry.time.isNotEmpty)
+                                  Text(entry.time,
+                                      style: TextStyle(color: _secondaryTextColor, fontSize: 10)),
+                              ],
+                            ),
+                          ),
+                          GestureDetector(
+                            onTap: () {
+                              setState(() => _tempEntries.removeAt(index));
+                              _doSaveDraft();
+                            },
+                            child: Container(
+                              padding: const EdgeInsets.all(4),
+                              decoration: BoxDecoration(
+                                color: Colors.red.withOpacity(0.1),
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: const Icon(Icons.close, color: Colors.redAccent, size: 16),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      // Location dropdown
+                      DropdownButtonFormField<String>(
+                        value: entry.location.isNotEmpty ? entry.location : null,
+                        hint: Text("Select location", style: TextStyle(color: _secondaryTextColor, fontSize: 14)),
+                        dropdownColor: _cardColor,
+                        style: TextStyle(color: _textColor, fontSize: 14),
+                        decoration: _modernInput("Location").copyWith(
+                            contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10)),
+                        items: _tempLocations
+                            .map((t) => DropdownMenuItem(value: t, child: Text(t, style: TextStyle(color: _textColor))))
+                            .toList(),
+                        onChanged: (val) {
+                          if (val != null) {
+                            setState(() => _tempEntries[index].location = val);
+                            _doSaveDraft();
+                          }
+                        },
+                      ),
+                      const SizedBox(height: 12),
+                      // Temperature input
+                      TextFormField(
+                        initialValue: entry.degrees,
+                        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                        style: TextStyle(color: _textColor, fontSize: 14),
+                        decoration: _modernInput("Temperature (°F)"),
+                        onChanged: (val) {
+                          _tempEntries[index].degrees = val;
+                          _doSaveDraft();
+                        },
+                      ),
+                      const SizedBox(height: 12),
+                      // Notes (optional)
+                      TextFormField(
+                        initialValue: entry.notes,
+                        maxLines: 3,
+                        keyboardType: TextInputType.multiline,
+                        textInputAction: TextInputAction.newline,
+                        style: TextStyle(color: _textColor, fontSize: 14),
+                        decoration: _modernInput("Notes (optional)"),
+                        onChanged: (val) {
+                          _tempEntries[index].notes = val;
+                          _doSaveDraft();
+                        },
+                      ),
+                    ],
+                  ),
+                );
+              },
+            ),
+        ],
+      ),
+    );
+  }
 
   List<Widget> _parkingFields() => [
     _rowTwo(_violatorFirstController, "Violator First Name", _violatorLastController, "Violator Last Name"),

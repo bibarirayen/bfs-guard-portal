@@ -41,21 +41,37 @@ class _SopPdfViewerPageState extends State<SopPdfViewerPage> {
   }
 
   Future<void> _downloadAndLoad() async {
+    File? tempFile;
     try {
       final dir = await getTemporaryDirectory();
-      // Use a deterministic filename so we can reuse cached copies
-      final safeFileName = widget.fileName.replaceAll(RegExp(r'[^\w.]'), '_');
-      final file = File('${dir.path}/$safeFileName');
+      // Cache key is the URL hash — if the file is re-uploaded the URL changes,
+      // which busts the cache and forces a fresh download.
+      final urlHash = widget.url.hashCode.abs().toString();
+      final ext = widget.fileName.contains('.')
+          ? widget.fileName.substring(widget.fileName.lastIndexOf('.'))
+          : '.pdf';
+      final cachedFile = File('${dir.path}/sop_$urlHash$ext');
+      tempFile = File('${dir.path}/sop_${urlHash}_tmp$ext');
 
-      if (!await file.exists()) {
-        await Dio().download(widget.url, file.path);
+      if (!await cachedFile.exists()) {
+        // Download to a temp file first, then rename atomically on success.
+        // This prevents a failed/interrupted download from leaving a corrupt
+        // cached file that would cause "not in PDF format" on the next open.
+        if (await tempFile.exists()) await tempFile.delete();
+        await Dio().download(widget.url, tempFile.path);
+        await tempFile.rename(cachedFile.path);
+        tempFile = null; // rename succeeded — nothing to clean up
       }
 
       setState(() {
-        _localPath = file.path;
+        _localPath = cachedFile.path;
         _loading = false;
       });
     } catch (e) {
+      // Remove any partial download so the next retry fetches a fresh copy.
+      if (tempFile != null && await tempFile.exists()) {
+        await tempFile.delete();
+      }
       setState(() {
         _errorMessage = 'Failed to load PDF.\nCheck your connection and try again.';
         _loading = false;
