@@ -163,7 +163,7 @@ class _VacationRequestPageState extends State<VacationRequestPage> {
                         borderRadius: BorderRadius.circular(14),
                       ),
                     ),
-                    child: const Text("Submit"),
+                    child: const Text("Submit", style: TextStyle(color: Colors.white)),
                   ),
                 ],
               ),
@@ -234,7 +234,7 @@ class _VacationRequestPageState extends State<VacationRequestPage> {
       floatingActionButton: FloatingActionButton(
         backgroundColor: _primaryColor,
         onPressed: _openAddModal,
-        child: const Icon(Icons.add),
+        child: const Icon(Icons.add, color: Colors.white),
       ),
       body: SafeArea(
         child: Padding(

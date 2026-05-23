@@ -44,7 +44,7 @@ class ChatMessage {
     sentAt:     j['sentAt'] != null
         ? (DateTime.tryParse(j['sentAt'])?.toUtc().subtract(const Duration(hours: 10)) ?? DateTime.now().toUtc().subtract(const Duration(hours: 10)))
         : DateTime.now().toUtc().subtract(const Duration(hours: 10)),
-    isRead:     j['isRead'] ?? false,
+    isRead:     j['read'] ?? j['isRead'] ?? false,
   );
 
   Map<String, dynamic> toJson() => {
