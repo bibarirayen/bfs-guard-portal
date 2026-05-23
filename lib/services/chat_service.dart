@@ -1,6 +1,7 @@
 // lib/services/chat_service.dart
 import 'dart:async';
 import 'dart:convert';
+import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:stomp_dart_client/stomp.dart';
 import 'package:stomp_dart_client/stomp_config.dart';
@@ -215,32 +216,45 @@ class ChatService {
   }
 
   // ─── REST send (fallback when WS is disconnected) ─────────────────────────
+  // Uses raw http (not _api) so a 401/403 from an undeployed endpoint
+  // does NOT trigger the global session-expiry handler.
   Future<ChatMessage?> sendMessageRest(int toUserId, String content) async {
     if (_myUserId == null) return null;
     try {
-      final res = await _api.post('chat/send', {
-        'senderId':   _myUserId,
-        'receiverId': toUserId,
-        'content':    content.trim(),
-      });
+      final headers = await _api.getHeaders();
+      final res = await http.post(
+        Uri.parse('${_api.baseUrl}chat/send'),
+        headers: headers,
+        body: jsonEncode({
+          'senderId':   _myUserId,
+          'receiverId': toUserId,
+          'content':    content.trim(),
+        }),
+      );
       if (res.statusCode == 200 || res.statusCode == 201) {
         return ChatMessage.fromJson(
             jsonDecode(res.body) as Map<String, dynamic>);
       }
-    } catch (e) { print('REST send error: \$e'); }
+    } catch (e) { print('REST send error: $e'); }
     return null;
   }
 
   // ─── Total unread count (for navbar badge) ────────────────────────────────
+  // Uses raw http (not _api) so a 401/403 from an undeployed endpoint
+  // does NOT trigger the global session-expiry handler.
   Future<int> getUnreadCount() async {
     if (_myUserId == null) return 0;
     try {
-      final res = await _api.get('chat/unread-total/\$_myUserId');
+      final headers = await _api.getHeaders();
+      final res = await http.get(
+        Uri.parse('${_api.baseUrl}chat/unread-total/$_myUserId'),
+        headers: headers,
+      );
       if (res.statusCode == 200) {
         final data = jsonDecode(res.body) as Map<String, dynamic>;
         return (data['unreadCount'] as num?)?.toInt() ?? 0;
       }
-    } catch (e) { print('Unread count error: \$e'); }
+    } catch (e) { print('Unread count error: $e'); }
     return 0;
   }
 
