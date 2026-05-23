@@ -84,6 +84,12 @@ class _ChatScreenState extends State<ChatScreen> {
         }
       });
       _scrollToBottom();
+
+      // If the incoming message is from the other person, mark it as read
+      // on the server so the read status persists across app restarts.
+      if (msg.senderId == widget.otherUserId) {
+        _chat.markRead(widget.otherUserId);
+      }
     });
 
     final history = await _chat.getHistory(widget.otherUserId);
@@ -131,7 +137,7 @@ class _ChatScreenState extends State<ChatScreen> {
     });
   }
 
-  void _sendMessage() {
+  void _sendMessage() async {
     final content = _inputCtrl.text.trim();
     if (content.isEmpty) return;
 
@@ -149,7 +155,22 @@ class _ChatScreenState extends State<ChatScreen> {
     setState(() => _messages.add(optimistic));
     _scrollToBottom();
 
-    _chat.sendMessage(widget.otherUserId, content);
+    if (_chat.isConnected) {
+      // WS path — backend will echo back the saved message which replaces
+      // the optimistic bubble via the stream listener above.
+      _chat.sendMessage(widget.otherUserId, content);
+    } else {
+      // REST fallback — WS not connected (mobile background / reconnecting)
+      final saved = await _chat.sendMessageRest(widget.otherUserId, content);
+      if (saved != null && mounted) {
+        setState(() {
+          final idx = _messages.indexWhere(
+            (m) => m.id == -1 && m.content == content && m.senderId == _myUserId,
+          );
+          if (idx != -1) _messages[idx] = saved;
+        });
+      }
+    }
   }
 
   @override

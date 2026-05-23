@@ -87,6 +87,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   bool _shiftEnded = false;
   bool _isStartingShift = false; // blocks double-tap while API call is in flight
 
+  // ── Unread chat badge ──────────────────────────────────────────
+  int _unreadChatCount = 0;
+  StreamSubscription<ChatMessage>? _chatBadgeSub;
+
   late final List<Widget Function()> _screens;
   bool _isDarkMode = true;
 
@@ -174,7 +178,20 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       final prefs = await SharedPreferences.getInstance();
       final userId = prefs.getInt('userId');
-      if (userId != null) ChatService().connect(userId);
+      if (userId != null) {
+        ChatService().connect(userId);
+        // Initial unread count fetch
+        _refreshUnreadChatCount();
+        // Listen for incoming messages and refresh the badge in real time
+        _chatBadgeSub = ChatService().messageStream.listen((msg) async {
+          final p = await SharedPreferences.getInstance();
+          final myId = p.getInt('userId');
+          // Only bump badge when message is for me and chat tab is not open
+          if (myId != null && msg.receiverId == myId && _selectedIndex != 2) {
+            _refreshUnreadChatCount();
+          }
+        });
+      }
     });
 
     _screens = [
@@ -238,6 +255,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     _dashboardRefreshTimer?.cancel();
     _shiftButtonUpdateTimer?.cancel();
     _liveLocationService.onShiftEndedRemotely = null;
+    _chatBadgeSub?.cancel();
     super.dispose();
   }
 
@@ -882,7 +900,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   void _onItemTapped(int index) {
     setState(() {
       _selectedIndex = index;
+      // Clear the unread badge when the user opens the chat tab
+      if (index == 2) _unreadChatCount = 0;
     });
+  }
+
+  Future<void> _refreshUnreadChatCount() async {
+    final count = await ChatService().getUnreadCount();
+    if (mounted) setState(() => _unreadChatCount = count);
   }
 
   @override
@@ -911,6 +936,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       bottomNavigationBar: CustomNavbar(
         onItemTapped: _onItemTapped,
         selectedIndex: _selectedIndex,
+        unreadChatCount: _unreadChatCount,
       ),
     );
   }

@@ -214,6 +214,36 @@ class ChatService {
     } catch (e) { print('Mark read error: $e'); }
   }
 
+  // ─── REST send (fallback when WS is disconnected) ─────────────────────────
+  Future<ChatMessage?> sendMessageRest(int toUserId, String content) async {
+    if (_myUserId == null) return null;
+    try {
+      final res = await _api.post('chat/send', {
+        'senderId':   _myUserId,
+        'receiverId': toUserId,
+        'content':    content.trim(),
+      });
+      if (res.statusCode == 200 || res.statusCode == 201) {
+        return ChatMessage.fromJson(
+            jsonDecode(res.body) as Map<String, dynamic>);
+      }
+    } catch (e) { print('REST send error: \$e'); }
+    return null;
+  }
+
+  // ─── Total unread count (for navbar badge) ────────────────────────────────
+  Future<int> getUnreadCount() async {
+    if (_myUserId == null) return 0;
+    try {
+      final res = await _api.get('chat/unread-total/\$_myUserId');
+      if (res.statusCode == 200) {
+        final data = jsonDecode(res.body) as Map<String, dynamic>;
+        return (data['unreadCount'] as num?)?.toInt() ?? 0;
+      }
+    } catch (e) { print('Unread count error: \$e'); }
+    return 0;
+  }
+
   // ─── Disconnect ───────────────────────────────────────────────────────────
   void disconnect() {
     _stompClient?.deactivate();

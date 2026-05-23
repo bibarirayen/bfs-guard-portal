@@ -6,7 +6,10 @@ import '../services/chat_service.dart';
 import 'chat_screen.dart';
 
 class ConversationsScreen extends StatefulWidget {
-  const ConversationsScreen({super.key});
+  /// Set to true when pushed outside of HomeScreen (e.g. from a notification tap)
+  /// so the screen gets its own AppBar with a back button.
+  final bool standalone;
+  const ConversationsScreen({super.key, this.standalone = false});
 
   @override
   State<ConversationsScreen> createState() => _ConversationsScreenState();
@@ -127,6 +130,20 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
     // ── AppBar removed — title is already shown by HomeScreen's CustomAppBar ──
     return Scaffold(
       backgroundColor: _bg,
+      appBar: widget.standalone
+          ? AppBar(
+              backgroundColor: _card,
+              foregroundColor: _text,
+              elevation: 0,
+              title: Text('Messages',
+                  style: TextStyle(
+                      color: _text, fontWeight: FontWeight.bold)),
+              bottom: PreferredSize(
+                preferredSize: const Size.fromHeight(1),
+                child: Container(height: 1, color: _border),
+              ),
+            )
+          : null,
       body: _loadingConvs
           ? Center(child: CircularProgressIndicator(color: _primary))
           : _conversations.isEmpty

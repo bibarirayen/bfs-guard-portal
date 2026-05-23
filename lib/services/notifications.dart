@@ -1,5 +1,7 @@
 import 'dart:io';
+import 'package:crossplatformblackfabric/screens/conversation_screen.dart';
 import 'package:crossplatformblackfabric/screens/late_arrivals_page.dart';
+import 'package:crossplatformblackfabric/screens/vacation_request_page.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
@@ -52,6 +54,15 @@ Future<void> setupFlutterNotifications() async {
       if (payload.contains('LATE_GUARD') || payload.contains('late')) {
         navigatorKey.currentState?.push(
           MaterialPageRoute(builder: (_) => const LateArrivalsPage()),
+        );
+      } else if (payload == 'CHAT') {
+        navigatorKey.currentState?.push(
+          MaterialPageRoute(
+              builder: (_) => const ConversationsScreen(standalone: true)),
+        );
+      } else if (payload == 'VACATION_ACCEPTED' || payload == 'VACATION_REFUSED') {
+        navigatorKey.currentState?.push(
+          MaterialPageRoute(builder: (_) => const VacationRequestPage()),
         );
       }
     },
@@ -122,6 +133,15 @@ Future<void> setupFlutterNotifications() async {
       navigatorKey.currentState?.push(
         MaterialPageRoute(builder: (_) => const LateArrivalsPage()),
       );
+    } else if (type == 'CHAT') {
+      navigatorKey.currentState?.push(
+        MaterialPageRoute(
+            builder: (_) => const ConversationsScreen(standalone: true)),
+      );
+    } else if (type == 'VACATION_ACCEPTED' || type == 'VACATION_REFUSED') {
+      navigatorKey.currentState?.push(
+        MaterialPageRoute(builder: (_) => const VacationRequestPage()),
+      );
     }
   });
 
@@ -135,6 +155,19 @@ Future<void> setupFlutterNotifications() async {
       Future.delayed(const Duration(seconds: 1), () {
         navigatorKey.currentState?.push(
           MaterialPageRoute(builder: (_) => const LateArrivalsPage()),
+        );
+      });
+    } else if (type == 'CHAT') {
+      Future.delayed(const Duration(seconds: 1), () {
+        navigatorKey.currentState?.push(
+          MaterialPageRoute(
+              builder: (_) => const ConversationsScreen(standalone: true)),
+        );
+      });
+    } else if (type == 'VACATION_ACCEPTED' || type == 'VACATION_REFUSED') {
+      Future.delayed(const Duration(seconds: 1), () {
+        navigatorKey.currentState?.push(
+          MaterialPageRoute(builder: (_) => const VacationRequestPage()),
         );
       });
     }

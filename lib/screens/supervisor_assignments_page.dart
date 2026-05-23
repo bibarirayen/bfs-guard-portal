@@ -40,6 +40,7 @@ class _SupervisorAssignmentsPageState
   DateTime? _fromDate;
   DateTime? _toDate;
   bool _submitting = false;
+  bool _showHistory = false;
   // Extra sites to attach to the new assignment (mirrors website behaviour).
   final Set<int> _selectedAdditionalSiteIds = <int>{};
 
@@ -110,17 +111,38 @@ class _SupervisorAssignmentsPageState
         return siteId != null && mySiteIds.contains(siteId);
       }).map((a) => a as Map<String, dynamic>).toList();
 
+      // Sort assignments alphabetically by guard name
+      myAssignments.sort((a, b) {
+        final aGuard = a['guard'] as Map<String, dynamic>?;
+        final bGuard = b['guard'] as Map<String, dynamic>?;
+        final aName = aGuard != null
+            ? '${aGuard['firstName'] ?? ''} ${aGuard['lastName'] ?? ''}'.trim().toLowerCase()
+            : 'open shift';
+        final bName = bGuard != null
+            ? '${bGuard['firstName'] ?? ''} ${bGuard['lastName'] ?? ''}'.trim().toLowerCase()
+            : 'open shift';
+        return aName.compareTo(bName);
+      });
+
       // Only shifts at my sites
       final myShifts = allShifts.where((sh) {
         final siteId = sh['site']?['id'];
         return siteId != null && mySiteIds.contains(siteId);
       }).map((sh) => sh as Map<String, dynamic>).toList();
 
+      // Sort guards alphabetically by name
+      final sortedGuards = allGuards.map((g) => g as Map<String, dynamic>).toList()
+        ..sort((a, b) {
+          final aName = '${a['firstName'] ?? ''} ${a['lastName'] ?? ''}'.trim().toLowerCase();
+          final bName = '${b['firstName'] ?? ''} ${b['lastName'] ?? ''}'.trim().toLowerCase();
+          return aName.compareTo(bName);
+        });
+
       setState(() {
         _mySites = mySitesList;
         _assignments = myAssignments;
         _allShifts = myShifts;
-        _guards = allGuards.map((g) => g as Map<String, dynamic>).toList();
+        _guards = sortedGuards;
         _loading = false;
       });
     } catch (e) {
@@ -375,26 +397,112 @@ class _SupervisorAssignmentsPageState
                     children: [
                       if (_showAddForm) _buildAddForm(),
                       if (_showAddForm) const SizedBox(height: 16),
-                      if (_assignments.isEmpty && !_showAddForm)
-                        Center(
-                          child: Padding(
-                            padding: const EdgeInsets.only(top: 60),
-                            child: Column(
-                              children: [
-                                Icon(Icons.assignment_outlined,
-                                    color: _sub, size: 56),
-                                const SizedBox(height: 12),
-                                Text('No assignments found.',
-                                    style: TextStyle(color: _sub, fontSize: 15)),
-                              ],
-                            ),
-                          ),
-                        )
-                      else
-                        ..._assignments.map((a) => _buildAssignmentCard(a)),
+                      ..._buildAssignmentsListWidgets(),
                     ],
                   ),
                 ),
+    );
+  }
+
+  List<Widget> _buildAssignmentsListWidgets() {
+    final today = DateTime.now();
+    final todayDate = DateTime(today.year, today.month, today.day);
+
+    final currentList = _assignments.where((a) {
+      final isActive = a['active'] == true;
+      final toDate = a['toDate'] != null
+          ? DateTime.tryParse(a['toDate'].toString())
+          : null;
+      return isActive || (toDate != null && !toDate.isBefore(todayDate));
+    }).toList();
+
+    final historyList = _assignments.where((a) {
+      if (a['active'] == true) return false;
+      final toDate = a['toDate'] != null
+          ? DateTime.tryParse(a['toDate'].toString())
+          : null;
+      return toDate == null || toDate.isBefore(todayDate);
+    }).toList();
+
+    if (currentList.isEmpty && historyList.isEmpty && !_showAddForm) {
+      return [
+        Center(
+          child: Padding(
+            padding: const EdgeInsets.only(top: 60),
+            child: Column(
+              children: [
+                Icon(Icons.assignment_outlined, color: _sub, size: 56),
+                const SizedBox(height: 12),
+                Text('No assignments found.',
+                    style: TextStyle(color: _sub, fontSize: 15)),
+              ],
+            ),
+          ),
+        ),
+      ];
+    }
+
+    final widgets = <Widget>[];
+    widgets.addAll(currentList.map((a) => _buildAssignmentCard(a)));
+
+    if (historyList.isNotEmpty) {
+      widgets.add(const SizedBox(height: 8));
+      widgets.add(_buildHistoryToggle(historyList.length));
+      if (_showHistory) {
+        widgets.addAll(historyList.map((a) => _buildAssignmentCard(a)));
+      }
+    }
+
+    return widgets;
+  }
+
+  Widget _buildHistoryToggle(int count) {
+    return GestureDetector(
+      onTap: () => setState(() => _showHistory = !_showHistory),
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 8),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        decoration: BoxDecoration(
+          color: _card,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: _border),
+        ),
+        child: Row(
+          children: [
+            Icon(Icons.history, color: _sub, size: 18),
+            const SizedBox(width: 10),
+            Text(
+              'History',
+              style: TextStyle(
+                  color: _sub, fontWeight: FontWeight.w600, fontSize: 14),
+            ),
+            const SizedBox(width: 8),
+            Container(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+              decoration: BoxDecoration(
+                color: _border,
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Text(
+                '$count',
+                style: TextStyle(
+                    color: _sub,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600),
+              ),
+            ),
+            const Spacer(),
+            Icon(
+              _showHistory
+                  ? Icons.keyboard_arrow_up
+                  : Icons.keyboard_arrow_down,
+              color: _sub,
+              size: 18,
+            ),
+          ],
+        ),
+      ),
     );
   }
 
