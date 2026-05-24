@@ -150,7 +150,6 @@ class _AdminSopPageState extends State<AdminSopPage> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Drag handle
             Center(
               child: Container(
                 width: 40,
@@ -158,80 +157,90 @@ class _AdminSopPageState extends State<AdminSopPage> {
                 decoration: BoxDecoration(
                   color: Colors.white24,
                   borderRadius: BorderRadius.circular(2),
-              Text('${files.length} SOP file(s)',
+                ),
               ),
             ),
-
-              ConstrainedBox(
-                constraints: const BoxConstraints(maxHeight: 360),
-                child: ListView.separated(
-                  shrinkWrap: true,
-                  itemCount: files.length,
-                  separatorBuilder: (_, __) => const SizedBox(height: 12),
-                  itemBuilder: (_, index) {
-                    final file = files[index];
-                    final fileName = file['fileName']?.toString() ?? 'SOP Document';
-                    final fileUrl = file['fileUrl']?.toString() ?? '';
-                    return Container(
-                      padding: const EdgeInsets.all(14),
-                      decoration: BoxDecoration(
-                        color: Colors.white.withOpacity(0.04),
-                        borderRadius: BorderRadius.circular(14),
-                        border: Border.all(color: Colors.white10),
-                      ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            children: [
-                              const Icon(Icons.insert_drive_file_outlined,
-                                  color: accent, size: 30),
-                              const SizedBox(width: 12),
-                              Expanded(
-                                child: Text(fileName,
-                                    style: const TextStyle(
-                                        color: Colors.white70, fontSize: 14)),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 12),
-                          SizedBox(
-                            width: double.infinity,
-                            child: ElevatedButton.icon(
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: accent,
-                                foregroundColor: Colors.white,
-                                padding: const EdgeInsets.symmetric(vertical: 14),
-                                shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(12)),
-                              ),
-                              onPressed: () {
-                                Navigator.pop(context);
-                                _openFile(fileUrl, fileName: fileName, siteName: siteName);
-                              },
-                              icon: const Icon(Icons.open_in_new),
-                              label: const Text('View SOP',
-                                  style: TextStyle(
-                                      fontWeight: FontWeight.bold, fontSize: 15)),
-                            ),
-                          ),
-                        ],
-                      ),
-                    );
-                  },
-                      borderRadius: BorderRadius.circular(12)),
-                ),
-                onPressed: () {
-                  Navigator.pop(context);
-                  _openFile(url, fileName: name, siteName: siteName);
-                },
-                icon: const Icon(Icons.open_in_new),
-                label: const Text('View SOP',
-                    style: TextStyle(
-                        fontWeight: FontWeight.bold, fontSize: 15)),
+            const SizedBox(height: 16),
+            Text(
+              '${files.length} SOP file(s)',
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
               ),
             ),
             const SizedBox(height: 10),
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxHeight: 360),
+              child: ListView.separated(
+                shrinkWrap: true,
+                itemCount: files.length,
+                separatorBuilder: (_, __) => const SizedBox(height: 12),
+                itemBuilder: (_, index) {
+                  final file = files[index];
+                  final fileName = file['fileName']?.toString() ?? 'SOP Document';
+                  final fileUrl = file['fileUrl']?.toString() ?? '';
+                  return Container(
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withOpacity(0.04),
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(color: Colors.white10),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            const Icon(
+                              Icons.insert_drive_file_outlined,
+                              color: accent,
+                              size: 30,
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Text(
+                                fileName,
+                                style: const TextStyle(
+                                  color: Colors.white70,
+                                  fontSize: 14,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 12),
+                        SizedBox(
+                          width: double.infinity,
+                          child: ElevatedButton.icon(
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: accent,
+                              foregroundColor: Colors.white,
+                              padding: const EdgeInsets.symmetric(vertical: 14),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                            ),
+                            onPressed: () {
+                              Navigator.pop(context);
+                              _openFile(fileUrl, fileName: fileName, siteName: siteName);
+                            },
+                            icon: const Icon(Icons.open_in_new),
+                            label: const Text(
+                              'View SOP',
+                              style: TextStyle(
+                                fontWeight: FontWeight.bold,
+                                fontSize: 15,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  );
+                },
+              ),
+            ),
             const SizedBox(height: 12),
           ],
         ),
