@@ -24,8 +24,7 @@ class _GuardSopPageState extends State<GuardSopPage> {
   final SopService _sopService = SopService();
   bool _loading = true;
   String? _errorMessage;
-  String? _sopFileName;
-  String? _sopFileUrl;
+  List<Map<String, dynamic>> _sopFiles = [];
 
   @override
   void initState() {
@@ -37,8 +36,10 @@ class _GuardSopPageState extends State<GuardSopPage> {
     try {
       final sop = await _sopService.getSop(widget.siteId);
       setState(() {
-        _sopFileName = sop?['sopFileName'];
-        _sopFileUrl = sop?['sopFileUrl'];
+        final files = sop?['sopFiles'] as List<dynamic>?;
+        _sopFiles = files != null
+            ? files.map((file) => Map<String, dynamic>.from(file as Map)).toList()
+            : [];
         _loading = false;
       });
     } catch (e) {
@@ -49,10 +50,12 @@ class _GuardSopPageState extends State<GuardSopPage> {
     }
   }
 
-  Future<void> _openFile({bool download = false}) async {
-    if (_sopFileUrl == null) return;
+  Future<void> _openFile(Map<String, dynamic> sopFile, {bool download = false}) async {
+    final sopFileUrl = sopFile['fileUrl']?.toString();
+    final sopFileName = sopFile['fileName']?.toString();
+    if (sopFileUrl == null || sopFileUrl.isEmpty) return;
 
-    final lower = (_sopFileName ?? _sopFileUrl!).toLowerCase();
+    final lower = (sopFileName ?? sopFileUrl).toLowerCase();
     final isPdf = lower.endsWith('.pdf');
     final isOffice = lower.endsWith('.pptx') || lower.endsWith('.ppt') ||
         lower.endsWith('.docx') || lower.endsWith('.doc');
@@ -61,8 +64,8 @@ class _GuardSopPageState extends State<GuardSopPage> {
       if (isPdf) {
         Navigator.push(context, MaterialPageRoute(
           builder: (_) => SopPdfViewerPage(
-            url: _sopFileUrl!,
-            fileName: _sopFileName ?? 'sop.pdf',
+            url: sopFileUrl,
+            fileName: sopFileName ?? 'sop.pdf',
             siteName: widget.siteName,
           ),
         ));
@@ -71,8 +74,8 @@ class _GuardSopPageState extends State<GuardSopPage> {
       if (isOffice) {
         Navigator.push(context, MaterialPageRoute(
           builder: (_) => SopWebViewerPage(
-            fileUrl: _sopFileUrl!,
-            fileName: _sopFileName ?? 'sop',
+            fileUrl: sopFileUrl,
+            fileName: sopFileName ?? 'sop',
             siteName: widget.siteName,
           ),
         ));
@@ -81,7 +84,7 @@ class _GuardSopPageState extends State<GuardSopPage> {
     }
 
     // Download or unsupported type: open in external app
-    final url = Uri.parse(_sopFileUrl!);
+    final url = Uri.parse(sopFileUrl);
     if (await canLaunchUrl(url)) {
       await launchUrl(url, mode: LaunchMode.externalApplication);
     } else {
@@ -163,7 +166,7 @@ class _GuardSopPageState extends State<GuardSopPage> {
                       ),
                       const SizedBox(height: 28),
 
-                      if (_sopFileUrl == null) ...[
+                      if (_sopFiles.isEmpty) ...[
                         // No SOP configured
                         Expanded(
                           child: Center(
@@ -190,68 +193,75 @@ class _GuardSopPageState extends State<GuardSopPage> {
                           ),
                         ),
                       ] else ...[
-                        // File card
-                        Container(
-                          width: double.infinity,
-                          padding: const EdgeInsets.all(20),
-                          decoration: BoxDecoration(
-                            color: card,
-                            borderRadius: BorderRadius.circular(16),
-                            border: Border.all(
-                                color: Colors.white.withOpacity(0.1)),
-                          ),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Row(
-                                children: [
-                                  Container(
-                                    padding: const EdgeInsets.all(10),
-                                    decoration: BoxDecoration(
-                                      color: accent.withOpacity(0.15),
-                                      borderRadius: BorderRadius.circular(10),
-                                    ),
-                                    child: const Icon(
-                                        Icons.insert_drive_file_outlined,
-                                        color: accent,
-                                        size: 28),
-                                  ),
-                                  const SizedBox(width: 14),
-                                  Expanded(
-                                    child: Text(
-                                      _sopFileName ?? 'SOP Document',
-                                      style: const TextStyle(
-                                          color: Colors.white,
-                                          fontWeight: FontWeight.w600,
-                                          fontSize: 14),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                              const SizedBox(height: 20),
-
-                              // View button
-                              SizedBox(
+                        Expanded(
+                          child: ListView.separated(
+                            itemCount: _sopFiles.length,
+                            separatorBuilder: (_, __) => const SizedBox(height: 12),
+                            itemBuilder: (_, index) {
+                              final sopFile = _sopFiles[index];
+                              final fileName = sopFile['fileName']?.toString() ?? 'SOP Document';
+                              return Container(
                                 width: double.infinity,
-                                child: ElevatedButton.icon(
-                                  style: ElevatedButton.styleFrom(
-                                    backgroundColor: accent,
-                                    foregroundColor: Colors.white,
-                                    padding: const EdgeInsets.symmetric(
-                                        vertical: 14),
-                                    shape: RoundedRectangleBorder(
-                                        borderRadius:
-                                            BorderRadius.circular(12)),
-                                  ),
-                                  onPressed: () => _openFile(),
-                                  icon: const Icon(Icons.open_in_new),
-                                  label: const Text('View SOP',
-                                      style: TextStyle(
-                                          fontWeight: FontWeight.bold,
-                                          fontSize: 15)),
+                                padding: const EdgeInsets.all(20),
+                                decoration: BoxDecoration(
+                                  color: card,
+                                  borderRadius: BorderRadius.circular(16),
+                                  border: Border.all(
+                                      color: Colors.white.withOpacity(0.1)),
                                 ),
-                              ),
-                            ],
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Row(
+                                      children: [
+                                        Container(
+                                          padding: const EdgeInsets.all(10),
+                                          decoration: BoxDecoration(
+                                            color: accent.withOpacity(0.15),
+                                            borderRadius: BorderRadius.circular(10),
+                                          ),
+                                          child: const Icon(
+                                              Icons.insert_drive_file_outlined,
+                                              color: accent,
+                                              size: 28),
+                                        ),
+                                        const SizedBox(width: 14),
+                                        Expanded(
+                                          child: Text(
+                                            fileName,
+                                            style: const TextStyle(
+                                                color: Colors.white,
+                                                fontWeight: FontWeight.w600,
+                                                fontSize: 14),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                    const SizedBox(height: 20),
+                                    SizedBox(
+                                      width: double.infinity,
+                                      child: ElevatedButton.icon(
+                                        style: ElevatedButton.styleFrom(
+                                          backgroundColor: accent,
+                                          foregroundColor: Colors.white,
+                                          padding: const EdgeInsets.symmetric(
+                                              vertical: 14),
+                                          shape: RoundedRectangleBorder(
+                                              borderRadius:
+                                                  BorderRadius.circular(12)),
+                                        ),
+                                        onPressed: () => _openFile(sopFile),
+                                        icon: const Icon(Icons.open_in_new),
+                                        label: const Text('View SOP',
+                                            style: TextStyle(
+                                                fontWeight: FontWeight.bold,
+                                                fontSize: 15)),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              );
+                            },
                           ),
                         ),
                       ],

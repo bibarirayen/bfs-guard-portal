@@ -435,6 +435,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       if (!hasShiftToday) {
         await prefs.remove('active_assignment_id');
         await prefs.remove('assignmentId');
+        await prefs.remove('sessionId');
       }
 
       if (hasShiftToday && data["shift"] != null) {
@@ -518,6 +519,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         await prefs.setInt('assignmentId', data["assignmentId"]);
         _hasAssignment = prefs.getInt('assignmentId') != null;
         await prefs.setInt('active_assignment_id', data["assignmentId"]);
+        if (data["sessionId"] is int) {
+          await prefs.setInt('sessionId', data["sessionId"]);
+        }
         await prefs.setInt('active_guard_id', prefs.getInt('userId')!);
         await prefs.setBool('shift_active', data["Active"] == true);
 
@@ -768,6 +772,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         await prefs.remove('active_assignment_id');
         await prefs.remove('active_guard_id');
         await prefs.remove('assignmentId');
+        await prefs.remove('sessionId');
 
         setState(() {
           _assignmentActive = false;

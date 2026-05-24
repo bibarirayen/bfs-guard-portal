@@ -271,6 +271,56 @@ class ApiService {
     }
   }
 
+  Future<void> uploadDarDraftMediaDio(
+    int sessionId,
+    int siteId,
+    int officerId,
+    List<File> files,
+    Function(int sent, int total) onProgress, {
+    CancelToken? cancelToken,
+  }) async {
+    final prefs = await SharedPreferences.getInstance();
+    final String? token = prefs.getString('jwt');
+
+    final dio = Dio();
+    dio.options.connectTimeout = const Duration(seconds: 60);
+    dio.options.sendTimeout = const Duration(minutes: 60);
+    dio.options.receiveTimeout = const Duration(minutes: 10);
+
+    final formData = FormData();
+    for (final file in files) {
+      final filename = file.path.split('/').last;
+      final mediaType = _mediaTypeForFile(file.path);
+      formData.files.add(MapEntry(
+        'files',
+        await MultipartFile.fromFile(file.path, filename: filename, contentType: mediaType),
+      ));
+    }
+
+    try {
+      final response = await dio.post(
+        '${baseUrl}dar-drafts/session/$sessionId/site/$siteId/officer/$officerId/media',
+        data: formData,
+        cancelToken: cancelToken,
+        options: Options(
+          headers: {if (token != null) 'Authorization': 'Bearer $token'},
+          contentType: 'multipart/form-data',
+        ),
+        onSendProgress: onProgress,
+      );
+
+      if (response.statusCode != 200 && response.statusCode != 201) {
+        throw Exception('DAR draft media upload failed: ${response.statusCode}');
+      }
+    } on DioException catch (e) {
+      if (e.response?.statusCode == 401 || e.response?.statusCode == 403) {
+        await _handleSessionExpiry();
+        return;
+      }
+      rethrow;
+    }
+  }
+
   // ─── GENERIC MULTIPART ────────────────────────────────────────────────────
   Future<http.StreamedResponse> uploadMultipart(
       String endpoint,

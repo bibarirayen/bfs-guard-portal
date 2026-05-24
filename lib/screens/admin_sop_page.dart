@@ -60,6 +60,24 @@ class _AdminSopPageState extends State<AdminSopPage> {
     });
   }
 
+  List<Map<String, dynamic>> _sopFilesFor(Map<String, dynamic> site) {
+    final files = site['sopFiles'];
+    if (files is List) {
+      return files.map((file) => Map<String, dynamic>.from(file as Map)).toList();
+    }
+
+    final String? url = site['sopFileUrl']?.toString();
+    if (url != null && url.isNotEmpty) {
+      return [
+        {
+          'fileName': site['sopFileName'] ?? 'SOP Document',
+          'fileUrl': url,
+        }
+      ];
+    }
+    return const [];
+  }
+
   Future<void> _openFile(String url, {bool download = false, String? fileName, String? siteName}) async {
     final lower = (fileName ?? url).toLowerCase();
     final isPdf = lower.endsWith('.pdf');
@@ -104,11 +122,10 @@ class _AdminSopPageState extends State<AdminSopPage> {
   }
 
   void _showSopSheet(Map<String, dynamic> site) {
-    final String? url = site['sopFileUrl'];
-    final String? name = site['sopFileName'];
+    final files = _sopFilesFor(site);
     final String siteName = site['name'] ?? 'Site';
 
-    if (url == null || url.isEmpty) {
+    if (files.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('No SOP configured for $siteName'),
@@ -141,43 +158,67 @@ class _AdminSopPageState extends State<AdminSopPage> {
                 decoration: BoxDecoration(
                   color: Colors.white24,
                   borderRadius: BorderRadius.circular(2),
-                ),
+              Text('${files.length} SOP file(s)',
               ),
             ),
-            const SizedBox(height: 18),
 
-            Text(siteName,
-                style: const TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.bold,
-                    fontSize: 17)),
-            const SizedBox(height: 4),
-            Text(name ?? 'SOP Document',
-                style: const TextStyle(color: Colors.white54, fontSize: 13)),
-            const SizedBox(height: 24),
-
-            Row(
-              children: [
-                const Icon(Icons.insert_drive_file_outlined,
-                    color: accent, size: 36),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Text(name ?? 'SOP Document',
-                      style: const TextStyle(
-                          color: Colors.white70, fontSize: 14)),
-                ),
-              ],
-            ),
-            const SizedBox(height: 20),
-
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton.icon(
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: accent,
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(vertical: 14),
-                  shape: RoundedRectangleBorder(
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxHeight: 360),
+                child: ListView.separated(
+                  shrinkWrap: true,
+                  itemCount: files.length,
+                  separatorBuilder: (_, __) => const SizedBox(height: 12),
+                  itemBuilder: (_, index) {
+                    final file = files[index];
+                    final fileName = file['fileName']?.toString() ?? 'SOP Document';
+                    final fileUrl = file['fileUrl']?.toString() ?? '';
+                    return Container(
+                      padding: const EdgeInsets.all(14),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withOpacity(0.04),
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(color: Colors.white10),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              const Icon(Icons.insert_drive_file_outlined,
+                                  color: accent, size: 30),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Text(fileName,
+                                    style: const TextStyle(
+                                        color: Colors.white70, fontSize: 14)),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 12),
+                          SizedBox(
+                            width: double.infinity,
+                            child: ElevatedButton.icon(
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: accent,
+                                foregroundColor: Colors.white,
+                                padding: const EdgeInsets.symmetric(vertical: 14),
+                                shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(12)),
+                              ),
+                              onPressed: () {
+                                Navigator.pop(context);
+                                _openFile(fileUrl, fileName: fileName, siteName: siteName);
+                              },
+                              icon: const Icon(Icons.open_in_new),
+                              label: const Text('View SOP',
+                                  style: TextStyle(
+                                      fontWeight: FontWeight.bold, fontSize: 15)),
+                            ),
+                          ),
+                        ],
+                      ),
+                    );
+                  },
                       borderRadius: BorderRadius.circular(12)),
                 ),
                 onPressed: () {
@@ -292,9 +333,8 @@ class _AdminSopPageState extends State<AdminSopPage> {
                               itemCount: _filtered.length,
                               itemBuilder: (_, i) {
                                 final site = _filtered[i];
-                                final hasSop = (site['sopFileUrl'] != null &&
-                                    (site['sopFileUrl'] as String)
-                                        .isNotEmpty);
+                                final sopFiles = _sopFilesFor(site);
+                                final hasSop = sopFiles.isNotEmpty;
                                 return GestureDetector(
                                   onTap: () => _showSopSheet(site),
                                   child: Container(
@@ -370,7 +410,7 @@ class _AdminSopPageState extends State<AdminSopPage> {
                                                 BorderRadius.circular(8),
                                           ),
                                           child: Text(
-                                            hasSop ? 'Has SOP' : 'No SOP',
+                                            hasSop ? '${sopFiles.length} SOP' : 'No SOP',
                                             style: TextStyle(
                                               color: hasSop
                                                   ? const Color(0xFF10B981)

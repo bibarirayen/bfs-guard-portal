@@ -7,25 +7,26 @@ class SopService {
 
   /// Fetch SOP info for a specific site.
   /// Returns null if no SOP is configured (204 response).
-  Future<Map<String, String>?> getSop(int siteId) async {
+  Future<Map<String, dynamic>?> getSop(int siteId) async {
     final res = await _api.get('sites/$siteId/sop');
     if (res.statusCode == 204 || res.body.isEmpty) return null;
     if (res.statusCode == 200) {
-      final data = jsonDecode(res.body);
+      final data = jsonDecode(res.body) as Map<String, dynamic>;
       return {
         'sopFileName': data['sopFileName'] ?? '',
         'sopFileUrl': data['sopFileUrl'] ?? '',
+        'sopFiles': List<Map<String, dynamic>>.from(data['sopFiles'] ?? const []),
       };
     }
     throw Exception('Failed to load SOP');
   }
 
-  /// Fetch all sites (with sopFileName and sopFileUrl included).
+  /// Fetch all sites (with sopFiles included when configured).
   Future<List<Map<String, dynamic>>> getAllSitesWithSop() async {
     final res = await _api.get('sites');
     if (res.statusCode == 200) {
       final List data = jsonDecode(res.body);
-      return data.cast<Map<String, dynamic>>();
+      return data.map((site) => Map<String, dynamic>.from(site as Map)).toList();
     }
     throw Exception('Failed to load sites');
   }

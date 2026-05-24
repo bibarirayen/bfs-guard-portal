@@ -1,4 +1,5 @@
 // file: lib/screens/report_page.dart
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
@@ -155,8 +156,13 @@ class _ReportPageState extends State<ReportPage> {
   bool _cancelRequested  = false;
   CancelToken? _cancelToken;
   bool _draftLoading     = false;  // suppresses saves while loading draft
+  int? _activeSessionId;
+  Timer? _darDraftSyncTimer;
+  Timer? _darMediaSyncTimer;
+  String _lastDarMediaSignature = '';
 
   String _selectedReportType = "Incident Report";
+  static const String _darReportType = "Daily Activity Report";
   final List<String> _reportTypes = [
     "Incident Report", "Daily Activity Report",
     "Maintenance Report", "Parking Violation Report",
@@ -185,8 +191,12 @@ class _ReportPageState extends State<ReportPage> {
   final api = ApiService();
   List<Map<String, dynamic>> _sites = [];
   bool _hasActiveAssignment = false;
+  bool _canSubmitWithoutAssignment = false;
   int? _selectedSiteId;
   final ImagePicker _picker = ImagePicker();
+
+  List<_MediaItem> get _darMediaItems => _mediaByType[_darReportType]!;
+  bool get _canSyncDarDraft => _activeSessionId != null && _selectedSiteId != null;
 
   // Video compression queue
 
@@ -281,6 +291,8 @@ class _ReportPageState extends State<ReportPage> {
 
   @override
   void dispose() {
+    _darDraftSyncTimer?.cancel();
+    _darMediaSyncTimer?.cancel();
     _removeDraftListeners();
     for (final c in [
       _clientController, _siteController, _officerController, _dateEnteredController,
@@ -454,6 +466,11 @@ class _ReportPageState extends State<ReportPage> {
         entry.value.map((m) => '${m.isVideo ? 'v' : 'i'}:${m.file.path}').toList(),
       );
     }
+
+    if (_selectedReportType == _darReportType) {
+      _scheduleDarDraftSync();
+      _scheduleDarMediaSync();
+    }
   }
 
   Future<void> _loadDraft() async {
@@ -566,6 +583,13 @@ class _ReportPageState extends State<ReportPage> {
         if (restored.isNotEmpty) {
           _mediaByType[type]!.addAll(restored);
         }
+      }
+      await _hydrateDarDraftFromServerIfNeeded();
+      if (_canSyncDarDraft && !_isDarDraftEmptyLocally()) {
+        _scheduleDarDraftSync();
+        _scheduleDarMediaSync(force: true);
+      } else {
+        _lastDarMediaSignature = _currentDarMediaSignature();
       }
       if (mounted) setState(() {});
     } finally {
@@ -976,12 +1000,53 @@ class _ReportPageState extends State<ReportPage> {
   Future<void> _fetchSites() async {
     final prefs      = await SharedPreferences.getInstance();
     final guardId    = prefs.getInt('userId');
-    final assignmentId = prefs.getInt('assignmentId');
+    int? assignmentId = prefs.getInt('assignmentId');
     if (guardId == null) return;
+
+    try {
+      final dashboardResponse = await api.get('assignments/dashboard-mobile/$guardId');
+      if (dashboardResponse.statusCode == 200) {
+        final dashboardData = jsonDecode(dashboardResponse.body) as Map<String, dynamic>;
+        final rawSessionId = dashboardData['sessionId'];
+        final rawAssignmentId = dashboardData['assignmentId'];
+        _activeSessionId = rawSessionId is num ? rawSessionId.toInt() : int.tryParse('${rawSessionId ?? ''}');
+        if (_activeSessionId != null) {
+          await prefs.setInt('sessionId', _activeSessionId!);
+        } else {
+          await prefs.remove('sessionId');
+        }
+        if (assignmentId == null && rawAssignmentId is num) {
+          assignmentId = rawAssignmentId.toInt();
+          await prefs.setInt('assignmentId', assignmentId!);
+        }
+      }
+    } catch (_) {}
+
+    final userResponse = await api.get('users/$guardId');
+    final userData = userResponse.statusCode == 200
+        ? jsonDecode(userResponse.body) as Map<String, dynamic>
+        : <String, dynamic>{};
+    final roles = List<String>.from(userData['roles'] ?? const []);
+    final isSupervisor = roles.any((role) => role.toLowerCase() == 'supervisor');
+    final isAdmin = roles.any((role) {
+      final normalized = role.toLowerCase();
+      return normalized == 'admin' || normalized == 'full admin';
+    });
+
     if (assignmentId == null) {
-      setState(() { _hasActiveAssignment = false; _sites = []; });
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(backgroundColor: Colors.redAccent, content: Text("You don't have an active assignment right now. Please contact your supervisor.")));
+      _activeSessionId = null;
+      await prefs.remove('sessionId');
+      if (isSupervisor || isAdmin) {
+        await _loadSitesForRoleWithoutAssignment(guardId, isSupervisor: isSupervisor, isAdmin: isAdmin);
+      } else {
+        setState(() {
+          _hasActiveAssignment = false;
+          _canSubmitWithoutAssignment = false;
+          _sites = [];
+        });
+        if (mounted) ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(backgroundColor: Colors.redAccent, content: Text("You don't have an active assignment right now. Please contact your supervisor.")));
+      }
       return;
     }
     try {
@@ -995,6 +1060,7 @@ class _ReportPageState extends State<ReportPage> {
           setState(() {
             _sites = siteList;
             _hasActiveAssignment = true;
+            _canSubmitWithoutAssignment = isSupervisor || isAdmin;
           });
           // Auto-pick when there's only one site so the draft scope locks in.
           if (siteList.length == 1) {
@@ -1003,28 +1069,83 @@ class _ReportPageState extends State<ReportPage> {
         } else {
           final site = decoded['site'];
           if (site != null) {
-            setState(() { _sites = [site]; _hasActiveAssignment = true; });
+            setState(() {
+              _sites = [Map<String, dynamic>.from(site as Map)];
+              _hasActiveAssignment = true;
+              _canSubmitWithoutAssignment = isSupervisor || isAdmin;
+            });
             await _swapSite((site['id'] as num).toInt());
           } else {
-            setState(() { _sites = []; _hasActiveAssignment = false; });
+            if (isSupervisor || isAdmin) {
+              await _loadSitesForRoleWithoutAssignment(guardId, isSupervisor: isSupervisor, isAdmin: isAdmin);
+            } else {
+              setState(() {
+                _sites = [];
+                _hasActiveAssignment = false;
+                _canSubmitWithoutAssignment = false;
+              });
+            }
           }
         }
       } else {
-        setState(() { _sites = []; _hasActiveAssignment = false; });
-        if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-            backgroundColor: Colors.redAccent,
-            content: Text("You don't have an active shift right now. Please start your shift before submitting a report.", style: TextStyle(color: Colors.white))));
+        if (isSupervisor || isAdmin) {
+          await _loadSitesForRoleWithoutAssignment(guardId, isSupervisor: isSupervisor, isAdmin: isAdmin);
+        } else {
+          setState(() {
+            _sites = [];
+            _hasActiveAssignment = false;
+            _canSubmitWithoutAssignment = false;
+          });
+          if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+              backgroundColor: Colors.redAccent,
+              content: Text("You don't have an active shift right now. Please start your shift before submitting a report.", style: TextStyle(color: Colors.white))));
+        }
       }
     } catch (e) {
       if (mounted) _snackError(ApiService.friendlyError(e));
     }
   }
 
+  Future<void> _loadSitesForRoleWithoutAssignment(int userId, {required bool isSupervisor, required bool isAdmin}) async {
+    _activeSessionId = null;
+    final response = await api.get('sites');
+    if (response.statusCode != 200) {
+      setState(() {
+        _hasActiveAssignment = false;
+        _canSubmitWithoutAssignment = false;
+        _sites = [];
+      });
+      return;
+    }
+
+    final List decoded = jsonDecode(response.body) as List;
+    final roleSites = decoded
+        .map((site) => Map<String, dynamic>.from(site as Map))
+        .where((site) {
+          if (isAdmin) return true;
+          final supervisorIds = List<dynamic>.from(site['supervisorIds'] ?? const []);
+          return supervisorIds.any((id) => (id as num).toInt() == userId);
+        })
+        .toList();
+
+    setState(() {
+      _sites = roleSites;
+      _hasActiveAssignment = false;
+      _canSubmitWithoutAssignment = isSupervisor || isAdmin;
+    });
+
+    if (roleSites.length == 1) {
+      await _swapSite((roleSites.first['id'] as num).toInt());
+    } else if (_selectedSiteId != null && !roleSites.any((site) => site['id'] == _selectedSiteId)) {
+      await _swapSite(null);
+    }
+  }
+
   // ─── SUBMIT ───────────────────────────────────────────────────────────────
   Future<void> _submitReport() async {
     if (_isReportEmpty() && _mediaItems.isEmpty) { _showEmptyReportDialog(); return; }
-    if (!_hasActiveAssignment) { _snackError("You don't have an active assignment right now. Please contact your supervisor."); return; }
-    if (_selectedSiteId == null) { _snackError("Please select your assigned site before submitting."); return; }
+    if (!_hasActiveAssignment && !_canSubmitWithoutAssignment) { _snackError("You don't have an active assignment right now. Please contact your supervisor."); return; }
+    if (_selectedSiteId == null) { _snackError("Please select a site before submitting."); return; }
 
     // Temperature Report validation — location and temperature are required per entry
     if (_selectedReportType == 'Temperature Report') {
@@ -1059,6 +1180,7 @@ class _ReportPageState extends State<ReportPage> {
           ..._buildReportData(),
           "officerId": officerId,
           "siteId": _selectedSiteId,
+          if (_selectedReportType == _darReportType && _activeSessionId != null) "sessionId": _activeSessionId,
         },
       };
 
@@ -1169,6 +1291,162 @@ class _ReportPageState extends State<ReportPage> {
       };
       default: return {};
     }
+  }
+
+  Map<String, dynamic> _buildDarDraftData() {
+    return {
+      "dailyShiftStartNotes": _dailyShiftStartNotesController.text,
+      "dailyPostShift": _dailyPostShiftController.text,
+      "dailySpecialInstructions": _dailySpecialInstructionsController.text,
+      "dailyPostItemsReceived": _dailyPostItemsReceivedController.text,
+      "dailyObservations": jsonEncode(_darObservations.map((o) => o.toJson()).toList()),
+      "dailyRelievingFirst": _dailyRelievingFirstController.text,
+      "dailyRelievingLast": _dailyRelievingLastController.text,
+      "dailyAdditionalNotes": _dailyAdditionalNotesController.text,
+    };
+  }
+
+  Future<void> _hydrateDarDraftFromServerIfNeeded() async {
+    if (!_canSyncDarDraft || !_isDarDraftEmptyLocally()) {
+      return;
+    }
+
+    final prefs = await SharedPreferences.getInstance();
+    final officerId = prefs.getInt('userId');
+    if (officerId == null) {
+      return;
+    }
+
+    try {
+      final response = await api.get(
+        'dar-drafts/session/$_activeSessionId/site/$_selectedSiteId/officer/$officerId',
+      );
+      if (response.statusCode != 200) {
+        return;
+      }
+
+      final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+      final rawData = decoded['data'];
+      final data = rawData is Map<String, dynamic>
+          ? rawData
+          : Map<String, dynamic>.from(rawData as Map? ?? const {});
+      final observationsJson = data['dailyObservations']?.toString() ?? '[]';
+
+      _draftLoading = true;
+      _dailyShiftStartNotesController.text = data['dailyShiftStartNotes']?.toString() ?? '';
+      _dailyPostShiftController.text = data['dailyPostShift']?.toString() ?? '';
+      _dailySpecialInstructionsController.text = data['dailySpecialInstructions']?.toString() ?? '';
+      _dailyPostItemsReceivedController.text = data['dailyPostItemsReceived']?.toString() ?? '';
+      _dailyRelievingFirstController.text = data['dailyRelievingFirst']?.toString() ?? '';
+      _dailyRelievingLastController.text = data['dailyRelievingLast']?.toString() ?? '';
+      _dailyAdditionalNotesController.text = data['dailyAdditionalNotes']?.toString() ?? '';
+      if (mounted) {
+        setState(() {
+          _darObservations.clear();
+          try {
+            final decodedObservations = jsonDecode(observationsJson) as List<dynamic>;
+            _darObservations.addAll(decodedObservations.map(
+              (entry) => _DarObservation.fromJson(Map<String, dynamic>.from(entry as Map)),
+            ));
+          } catch (_) {}
+        });
+      }
+      _draftLoading = false;
+      await _doSaveDraft();
+    } catch (_) {
+      _draftLoading = false;
+    }
+  }
+
+  bool _isDarDraftEmptyLocally() {
+    return _darMediaItems.isEmpty &&
+        _darObservations.isEmpty &&
+        [
+          _dailyShiftStartNotesController,
+          _dailyPostShiftController,
+          _dailySpecialInstructionsController,
+          _dailyPostItemsReceivedController,
+          _dailyRelievingFirstController,
+          _dailyRelievingLastController,
+          _dailyAdditionalNotesController,
+        ].every((controller) => controller.text.trim().isEmpty);
+  }
+
+  String _currentDarMediaSignature() {
+    return _darMediaItems.map((item) => item.uploadFile.path).join('|');
+  }
+
+  void _scheduleDarDraftSync() {
+    if (!_canSyncDarDraft) {
+      return;
+    }
+    _darDraftSyncTimer?.cancel();
+    _darDraftSyncTimer = Timer(const Duration(seconds: 1), () {
+      _syncDarDraftToServer();
+    });
+  }
+
+  void _scheduleDarMediaSync({bool force = false}) {
+    if (!_canSyncDarDraft) {
+      return;
+    }
+    final signature = _currentDarMediaSignature();
+    if (!force && signature == _lastDarMediaSignature) {
+      return;
+    }
+    _darMediaSyncTimer?.cancel();
+    _darMediaSyncTimer = Timer(const Duration(milliseconds: 600), () {
+      _syncDarMediaToServer(expectedSignature: signature);
+    });
+  }
+
+  Future<void> _syncDarDraftToServer() async {
+    if (!_canSyncDarDraft) {
+      return;
+    }
+    final prefs = await SharedPreferences.getInstance();
+    final officerId = prefs.getInt('userId');
+    if (officerId == null) {
+      return;
+    }
+
+    try {
+      await api.put(
+        'dar-drafts/session/$_activeSessionId/site/$_selectedSiteId/officer/$officerId',
+        _buildDarDraftData(),
+      );
+    } catch (_) {}
+  }
+
+  Future<void> _syncDarMediaToServer({String? expectedSignature}) async {
+    if (!_canSyncDarDraft) {
+      return;
+    }
+    final prefs = await SharedPreferences.getInstance();
+    final officerId = prefs.getInt('userId');
+    if (officerId == null) {
+      return;
+    }
+
+    final signature = _currentDarMediaSignature();
+    if (expectedSignature != null && expectedSignature != signature) {
+      return;
+    }
+
+    try {
+      if (_darMediaItems.isEmpty) {
+        await api.delete('dar-drafts/session/$_activeSessionId/site/$_selectedSiteId/officer/$officerId/media');
+      } else {
+        await api.uploadDarDraftMediaDio(
+          _activeSessionId!,
+          _selectedSiteId!,
+          officerId,
+          _darMediaItems.map((item) => item.uploadFile).toList(),
+          (_, __) {},
+        );
+      }
+      _lastDarMediaSignature = signature;
+    } catch (_) {}
   }
 
   // ─── INPUT DECORATION ─────────────────────────────────────────────────────
@@ -1706,10 +1984,10 @@ class _ReportPageState extends State<ReportPage> {
       decoration: _modernInput("Select Site"),
       items: _sites.map((s) => DropdownMenuItem<Map<String, dynamic>>(value: s,
           child: Text(s['name']))).toList(),
-      onChanged: _hasActiveAssignment
+      onChanged: _sites.isNotEmpty
           ? (v) => _swapSite((v?['id'] as num?)?.toInt())
           : null,
-      disabledHint: const Text("No active shift", style: TextStyle(color: Colors.redAccent)),
+      disabledHint: const Text("No sites available", style: TextStyle(color: Colors.redAccent)),
     ),
   );
 
