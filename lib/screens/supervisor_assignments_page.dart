@@ -101,7 +101,9 @@ class _SupervisorAssignmentsPageState
       final mySitesList = allSites.where((s) {
         final ids = (s['supervisorIds'] as List?)?.cast<dynamic>() ?? [];
         return ids.any((id) => (id as num?)?.toInt() == _userId);
-      }).map((s) => s as Map<String, dynamic>).toList();
+      }).map((s) => s as Map<String, dynamic>).toList()
+        ..sort((a, b) => (a['name'] ?? '').toString().toLowerCase()
+            .compareTo((b['name'] ?? '').toString().toLowerCase()));
 
       final mySiteIds = mySitesList.map((s) => s['id']).toSet();
 

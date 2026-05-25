@@ -1003,8 +1003,22 @@ class _ReportPageState extends State<ReportPage> {
     int? assignmentId = prefs.getInt('assignmentId');
     if (guardId == null) return;
 
+    // Show cached sites immediately so the page isn't blank while loading
+    final cachedSitesJson = prefs.getString('cachedSites');
+    if (cachedSitesJson != null) {
+      try {
+        final cached = (jsonDecode(cachedSitesJson) as List)
+            .map((s) => Map<String, dynamic>.from(s as Map)).toList();
+        if (cached.isNotEmpty && mounted) setState(() { _sites = cached; });
+      } catch (_) {}
+    }
+
+    // Start both requests concurrently — they are independent of each other
+    final dashboardFuture = api.get('assignments/dashboard-mobile/$guardId');
+    final userFuture = api.get('users/$guardId');
+
     try {
-      final dashboardResponse = await api.get('assignments/dashboard-mobile/$guardId');
+      final dashboardResponse = await dashboardFuture;
       if (dashboardResponse.statusCode == 200) {
         final dashboardData = jsonDecode(dashboardResponse.body) as Map<String, dynamic>;
         final rawSessionId = dashboardData['sessionId'];
@@ -1022,7 +1036,7 @@ class _ReportPageState extends State<ReportPage> {
       }
     } catch (_) {}
 
-    final userResponse = await api.get('users/$guardId');
+    final userResponse = await userFuture;
     final userData = userResponse.statusCode == 200
         ? jsonDecode(userResponse.body) as Map<String, dynamic>
         : <String, dynamic>{};
@@ -1056,7 +1070,9 @@ class _ReportPageState extends State<ReportPage> {
         // Multi-site support: use 'sites' array if present, fall back to single 'site'
         final sitesRaw = decoded['sites'];
         if (sitesRaw != null && sitesRaw is List && sitesRaw.isNotEmpty) {
-          final siteList = List<Map<String, dynamic>>.from(sitesRaw);
+          final siteList = (List<Map<String, dynamic>>.from(sitesRaw))
+            ..sort((a, b) => (a['name'] ?? '').toString().toLowerCase()
+                .compareTo((b['name'] ?? '').toString().toLowerCase()));
           setState(() {
             _sites = siteList;
             _hasActiveAssignment = true;
@@ -1126,7 +1142,13 @@ class _ReportPageState extends State<ReportPage> {
           final supervisorIds = List<dynamic>.from(site['supervisorIds'] ?? const []);
           return supervisorIds.any((id) => (id as num).toInt() == userId);
         })
-        .toList();
+        .toList()
+        ..sort((a, b) => (a['name'] ?? '').toString().toLowerCase()
+            .compareTo((b['name'] ?? '').toString().toLowerCase()));
+
+    // Cache for instant display on next open
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('cachedSites', jsonEncode(roleSites));
 
     setState(() {
       _sites = roleSites;
