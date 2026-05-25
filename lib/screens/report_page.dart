@@ -1991,8 +1991,74 @@ class _ReportPageState extends State<ReportPage> {
     ),
   );
 
+  Future<void> _pickIncidentDateTime() async {
+    final now = DateTime.now();
+    final pickedDate = await showDatePicker(
+      context: context,
+      initialDate: now,
+      firstDate: DateTime(now.year - 5),
+      lastDate: DateTime(now.year + 1),
+      builder: (ctx, child) => Theme(
+        data: ThemeData.dark().copyWith(
+          colorScheme: ColorScheme.dark(primary: _primaryColor),
+        ),
+        child: child!,
+      ),
+    );
+    if (pickedDate == null) return;
+    if (!mounted) return;
+    final pickedTime = await showTimePicker(
+      context: context,
+      initialTime: TimeOfDay.fromDateTime(now),
+      builder: (ctx, child) => Theme(
+        data: ThemeData.dark().copyWith(
+          colorScheme: ColorScheme.dark(primary: _primaryColor),
+        ),
+        child: child!,
+      ),
+    );
+    if (pickedTime == null) return;
+    final hour   = pickedTime.hourOfPeriod == 0 ? 12 : pickedTime.hourOfPeriod;
+    final minute = pickedTime.minute.toString().padLeft(2, '0');
+    final ampm   = pickedTime.period == DayPeriod.am ? 'AM' : 'PM';
+    final formatted =
+        '${pickedDate.month.toString().padLeft(2, '0')}/'
+        '${pickedDate.day.toString().padLeft(2, '0')}/'
+        '${pickedDate.year} '
+        '$hour:$minute $ampm';
+    setState(() => _incidentDateTimeController.text = formatted);
+    _doSaveDraft();
+  }
+
   List<Widget> _incidentFields() => [
-    _rowTwo(_incidentInternalIdController, "Internal Display ID", _incidentDateTimeController, "Date & Time"),
+    Padding(
+      padding: const EdgeInsets.only(bottom: 16),
+      child: Row(children: [
+        Expanded(
+          child: TextFormField(
+            controller: _incidentInternalIdController,
+            decoration: _modernInput("Internal Display ID"),
+            style: TextStyle(color: _textColor),
+          ),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: GestureDetector(
+            onTap: _pickIncidentDateTime,
+            child: AbsorbPointer(
+              child: TextFormField(
+                controller: _incidentDateTimeController,
+                readOnly: true,
+                decoration: _modernInput("Date & Time").copyWith(
+                  suffixIcon: Icon(Icons.calendar_today, color: _primaryColor, size: 18),
+                ),
+                style: TextStyle(color: _textColor),
+              ),
+            ),
+          ),
+        ),
+      ]),
+    ),
     _single(_incidentTypeController, "Incident Type (or 'Other')"),
     _rowTwo(_victimNameController, "Victim Name(s)", _victimContactController, "Victim Contact Info"),
     _rowTwo(_suspectNameController, "Suspect Name(s)", _suspectContactController, "Suspect Contact Info"),
