@@ -19,12 +19,14 @@ class _GuardSchedulePageState extends State<GuardSchedulePage> {
   String _guardName = '';
   String? _error;
   List<Map<String, dynamic>> _assignments = [];
+  DateTime? _selectedDate;
 
   Color get _bg => const Color(0xFF0F172A);
   Color get _card => const Color(0xFF1E293B);
   Color get _text => Colors.white;
   Color get _muted => const Color(0xFF94A3B8);
   Color get _line => const Color(0xFF334155);
+  Color get _accent => const Color(0xFF38BDF8);
 
   @override
   void initState() {
@@ -53,9 +55,11 @@ class _GuardSchedulePageState extends State<GuardSchedulePage> {
 
       final Map<String, dynamic> body = jsonDecode(res.body);
       final List<dynamic> rows = body['assignments'] ?? [];
+      final assignments = rows.map((e) => Map<String, dynamic>.from(e as Map)).toList();
       setState(() {
         _guardName = (body['guardName'] ?? '').toString();
-        _assignments = rows.map((e) => Map<String, dynamic>.from(e as Map)).toList();
+        _assignments = assignments;
+        _selectedDate = _pickInitialDate(assignments);
       });
     } catch (e) {
       setState(() {
@@ -104,6 +108,81 @@ class _GuardSchedulePageState extends State<GuardSchedulePage> {
       'SUNDAY': 'Sun',
     };
     return days.map((d) => map[d.toString()] ?? d.toString()).join(' • ');
+  }
+
+  DateTime? _parseDate(String? value) {
+    if (value == null || value.isEmpty) return null;
+    try {
+      return DateTime.parse(value);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  bool _sameDate(DateTime a, DateTime b) {
+    return a.year == b.year && a.month == b.month && a.day == b.day;
+  }
+
+  DateTime? _pickInitialDate(List<Map<String, dynamic>> assignments) {
+    final dates = assignments
+        .map((item) => _parseDate(item['fromDate']?.toString()))
+        .whereType<DateTime>()
+        .toList()
+      ..sort();
+
+    if (dates.isEmpty) return null;
+
+    final today = DateTime.now();
+    for (final date in dates) {
+      if (!date.isBefore(DateTime(today.year, today.month, today.day))) {
+        return date;
+      }
+    }
+    return dates.first;
+  }
+
+  List<DateTime> get _scheduleDates {
+    final seen = <String>{};
+    final dates = <DateTime>[];
+    for (final item in _assignments) {
+      final date = _parseDate(item['fromDate']?.toString());
+      if (date == null) continue;
+      final key = '${date.year}-${date.month}-${date.day}';
+      if (seen.add(key)) dates.add(date);
+    }
+    dates.sort();
+    return dates;
+  }
+
+  List<Map<String, dynamic>> get _visibleAssignments {
+    if (_selectedDate == null) return _assignments;
+    return _assignments.where((item) {
+      final date = _parseDate(item['fromDate']?.toString());
+      return date != null && _sameDate(date, _selectedDate!);
+    }).toList();
+  }
+
+  String _weekdayShort(DateTime date) {
+    const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+    return days[date.weekday - 1];
+  }
+
+  String _monthTitle(DateTime? date) {
+    if (date == null) return 'Schedule';
+    const months = [
+      'January', 'February', 'March', 'April', 'May', 'June',
+      'July', 'August', 'September', 'October', 'November', 'December'
+    ];
+    return '${months[date.month - 1]} ${date.year}';
+  }
+
+  String _selectedDateLabel() {
+    if (_selectedDate == null) return 'All assignments';
+    final today = DateTime.now();
+    if (_sameDate(_selectedDate!, DateTime(today.year, today.month, today.day))) {
+      return 'Today';
+    }
+    return '${_weekdayShort(_selectedDate!)} ${_fmtDate(_selectedDate!.toIso8601String())}';
   }
 
   Future<void> _openMap(double? lat, double? lng) async {
@@ -157,7 +236,7 @@ class _GuardSchedulePageState extends State<GuardSchedulePage> {
                   width: 52,
                   height: 5,
                   decoration: BoxDecoration(
-                    color: _muted.withOpacity(0.4),
+                    color: _muted.withValues(alpha: 0.4),
                     borderRadius: BorderRadius.circular(10),
                   ),
                 ),
@@ -236,8 +315,8 @@ class _GuardSchedulePageState extends State<GuardSchedulePage> {
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(10),
-          color: enabled ? const Color(0xFF1D4ED8).withOpacity(0.15) : const Color(0xFF334155).withOpacity(0.4),
-          border: Border.all(color: enabled ? const Color(0xFF2563EB).withOpacity(0.35) : _line),
+          color: enabled ? const Color(0xFF1D4ED8).withValues(alpha: 0.15) : const Color(0xFF334155).withValues(alpha: 0.4),
+          border: Border.all(color: enabled ? const Color(0xFF2563EB).withValues(alpha: 0.35) : _line),
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
@@ -247,6 +326,223 @@ class _GuardSchedulePageState extends State<GuardSchedulePage> {
             Text(label, style: TextStyle(color: enabled ? _text : _muted, fontWeight: FontWeight.w600, fontSize: 12)),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildDateChip(DateTime date) {
+    final selected = _selectedDate != null && _sameDate(_selectedDate!, date);
+    return GestureDetector(
+      onTap: () => setState(() => _selectedDate = date),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 180),
+        width: 68,
+        margin: const EdgeInsets.only(right: 10),
+        padding: const EdgeInsets.symmetric(vertical: 12),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(color: selected ? _accent : _line),
+          gradient: selected
+              ? const LinearGradient(
+                  colors: [Color(0xFF0EA5E9), Color(0xFF2563EB)],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                )
+              : null,
+          color: selected ? null : _card,
+          boxShadow: selected
+              ? [
+                  BoxShadow(
+                    color: const Color(0xFF0EA5E9).withValues(alpha: 0.25),
+                    blurRadius: 16,
+                    offset: const Offset(0, 8),
+                  )
+                ]
+              : null,
+        ),
+        child: Column(
+          children: [
+            Text(
+              _weekdayShort(date),
+              style: TextStyle(
+                color: selected ? Colors.white : _muted,
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              '${date.day}',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 20,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildAgendaCard(Map<String, dynamic> item) {
+    final shift = Map<String, dynamic>.from(item['shift'] ?? {});
+    final site = Map<String, dynamic>.from(item['site'] ?? {});
+    final active = item['active'] == true;
+    final days = List<dynamic>.from(item['daysOfWeek'] ?? []);
+    final supervisor = (site['supervisorName'] ?? '').toString();
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 14),
+      child: InkWell(
+        onTap: () => _showDetails(item),
+        borderRadius: BorderRadius.circular(22),
+        child: Container(
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(22),
+            border: Border.all(color: active ? const Color(0xFF10B981) : _line),
+            gradient: const LinearGradient(
+              colors: [Color(0xFF172033), Color(0xFF111827)],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Column(
+                  children: [
+                    Container(
+                      width: 14,
+                      height: 14,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: active ? const Color(0xFF10B981) : _accent,
+                        boxShadow: [
+                          BoxShadow(
+                            color: (active ? const Color(0xFF10B981) : _accent).withValues(alpha: 0.4),
+                            blurRadius: 10,
+                          ),
+                        ],
+                      ),
+                    ),
+                    Container(
+                      width: 2,
+                      height: 84,
+                      margin: const EdgeInsets.symmetric(vertical: 6),
+                      color: _line,
+                    ),
+                  ],
+                ),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  '${_toAmPm(shift['startTime']?.toString())} - ${_toAmPm(shift['endTime']?.toString())}',
+                                  style: const TextStyle(
+                                    color: Color(0xFF7DD3FC),
+                                    fontWeight: FontWeight.w700,
+                                    fontSize: 13,
+                                  ),
+                                ),
+                                const SizedBox(height: 6),
+                                Text(
+                                  (site['name'] ?? 'Unknown Site').toString(),
+                                  style: TextStyle(
+                                    color: _text,
+                                    fontWeight: FontWeight.w800,
+                                    fontSize: 17,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                            decoration: BoxDecoration(
+                              color: active ? const Color(0xFF10B981).withValues(alpha: 0.18) : const Color(0xFF0EA5E9).withValues(alpha: 0.12),
+                              borderRadius: BorderRadius.circular(999),
+                            ),
+                            child: Text(
+                              active ? 'ON DUTY' : 'UPCOMING',
+                              style: TextStyle(
+                                color: active ? const Color(0xFF86EFAC) : const Color(0xFF7DD3FC),
+                                fontWeight: FontWeight.w800,
+                                fontSize: 10,
+                                letterSpacing: 0.6,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 10),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: [
+                          _metaPill(Icons.event_outlined, '${_fmtDate(item['fromDate']?.toString())} → ${_fmtDate(item['toDate']?.toString())}'),
+                          _metaPill(Icons.repeat, _compactDays(days)),
+                          if (supervisor.isNotEmpty) _metaPill(Icons.support_agent, supervisor),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      Row(
+                        children: [
+                          TextButton.icon(
+                            onPressed: () => _openMap((site['latitude'] as num?)?.toDouble(), (site['longitude'] as num?)?.toDouble()),
+                            icon: const Icon(Icons.location_on_outlined, size: 18),
+                            label: const Text('Location'),
+                            style: TextButton.styleFrom(foregroundColor: _accent),
+                          ),
+                          const SizedBox(width: 6),
+                          TextButton.icon(
+                            onPressed: () => _showDetails(item),
+                            icon: const Icon(Icons.read_more_outlined, size: 18),
+                            label: const Text('Details'),
+                            style: TextButton.styleFrom(foregroundColor: Colors.white),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _metaPill(IconData icon, String text) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+      decoration: BoxDecoration(
+        color: const Color(0xFF0F172A),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: _line),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 14, color: _muted),
+          const SizedBox(width: 6),
+          Text(
+            text,
+            style: TextStyle(color: _muted, fontSize: 11, fontWeight: FontWeight.w600),
+          ),
+        ],
       ),
     );
   }
@@ -286,35 +582,63 @@ class _GuardSchedulePageState extends State<GuardSchedulePage> {
                     padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
                     children: [
                       Container(
-                        padding: const EdgeInsets.all(16),
+                        padding: const EdgeInsets.all(18),
                         decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(18),
+                          borderRadius: BorderRadius.circular(24),
                           border: Border.all(color: _line),
                           gradient: const LinearGradient(
-                            colors: [Color(0xFF1E293B), Color(0xFF111827)],
+                            colors: [Color(0xFF132238), Color(0xFF0F172A), Color(0xFF111827)],
                             begin: Alignment.topLeft,
                             end: Alignment.bottomRight,
                           ),
                         ),
-                        child: Row(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Container(
-                              width: 46,
-                              height: 46,
-                              decoration: BoxDecoration(
-                                color: const Color(0xFF3B82F6).withOpacity(0.18),
-                                borderRadius: BorderRadius.circular(14),
-                              ),
-                              child: const Icon(Icons.calendar_month, color: Color(0xFF93C5FD)),
+                            Text(
+                              _monthTitle(_selectedDate),
+                              style: TextStyle(color: _muted, fontSize: 12, fontWeight: FontWeight.w600, letterSpacing: 1.1),
                             ),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
+                            const SizedBox(height: 8),
+                            Text(
+                              _guardName.isEmpty ? 'Guard Schedule' : _guardName,
+                              style: TextStyle(color: _text, fontWeight: FontWeight.w800, fontSize: 22),
+                            ),
+                            const SizedBox(height: 6),
+                            Text(
+                              '${_assignments.length} assignment(s) planned • ${_selectedDateLabel()}',
+                              style: TextStyle(color: _muted, fontSize: 13),
+                            ),
+                            const SizedBox(height: 16),
+                            Container(
+                              padding: const EdgeInsets.all(14),
+                              decoration: BoxDecoration(
+                                color: Colors.white.withValues(alpha: 0.04),
+                                borderRadius: BorderRadius.circular(18),
+                                border: Border.all(color: _line),
+                              ),
+                              child: Row(
                                 children: [
-                                  Text(_guardName.isEmpty ? 'Guard Schedule' : _guardName, style: TextStyle(color: _text, fontWeight: FontWeight.w700, fontSize: 16)),
-                                  const SizedBox(height: 3),
-                                  Text('${_assignments.length} assignment(s)', style: TextStyle(color: _muted, fontSize: 13)),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        Text('Selected Day', style: TextStyle(color: _muted, fontSize: 11)),
+                                        const SizedBox(height: 4),
+                                        Text(_selectedDateLabel(), style: TextStyle(color: _text, fontWeight: FontWeight.w700)),
+                                      ],
+                                    ),
+                                  ),
+                                  Container(width: 1, height: 34, color: _line),
+                                  const SizedBox(width: 14),
+                                  Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text('Agenda', style: TextStyle(color: _muted, fontSize: 11)),
+                                      const SizedBox(height: 4),
+                                      Text('${_visibleAssignments.length} item(s)', style: TextStyle(color: _accent, fontWeight: FontWeight.w800)),
+                                    ],
+                                  ),
                                 ],
                               ),
                             ),
@@ -322,6 +646,26 @@ class _GuardSchedulePageState extends State<GuardSchedulePage> {
                         ),
                       ),
                       const SizedBox(height: 14),
+                      if (_scheduleDates.isNotEmpty) ...[
+                        Text('Calendar', style: TextStyle(color: _text, fontWeight: FontWeight.w700, fontSize: 16)),
+                        const SizedBox(height: 12),
+                        SizedBox(
+                          height: 96,
+                          child: ListView(
+                            scrollDirection: Axis.horizontal,
+                            children: _scheduleDates.map(_buildDateChip).toList(),
+                          ),
+                        ),
+                        const SizedBox(height: 18),
+                      ],
+                      Row(
+                        children: [
+                          Text('Agenda', style: TextStyle(color: _text, fontWeight: FontWeight.w800, fontSize: 18)),
+                          const Spacer(),
+                          Text(_selectedDateLabel(), style: TextStyle(color: _muted, fontSize: 12, fontWeight: FontWeight.w600)),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
                       if (_assignments.isEmpty)
                         Container(
                           padding: const EdgeInsets.all(18),
@@ -332,63 +676,17 @@ class _GuardSchedulePageState extends State<GuardSchedulePage> {
                           ),
                           child: Text('No assignments found.', style: TextStyle(color: _muted)),
                         ),
-                      ..._assignments.map((item) {
-                        final shift = Map<String, dynamic>.from(item['shift'] ?? {});
-                        final site = Map<String, dynamic>.from(item['site'] ?? {});
-                        final active = (item['active'] == true);
-                        final days = List<dynamic>.from(item['daysOfWeek'] ?? []);
-
-                        return Padding(
-                          padding: const EdgeInsets.only(bottom: 12),
-                          child: InkWell(
-                            onTap: () => _showDetails(item),
-                            borderRadius: BorderRadius.circular(16),
-                            child: Container(
-                              padding: const EdgeInsets.all(14),
-                              decoration: BoxDecoration(
-                                color: _card,
-                                borderRadius: BorderRadius.circular(16),
-                                border: Border.all(color: active ? const Color(0xFF10B981) : _line, width: active ? 1.2 : 1),
-                              ),
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Row(
-                                    children: [
-                                      Expanded(
-                                        child: Text(
-                                          (site['name'] ?? 'Unknown Site').toString(),
-                                          style: TextStyle(color: _text, fontWeight: FontWeight.w700, fontSize: 15),
-                                        ),
-                                      ),
-                                      Container(
-                                        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
-                                        decoration: BoxDecoration(
-                                          color: active ? const Color(0xFF10B981).withOpacity(0.2) : const Color(0xFF334155),
-                                          borderRadius: BorderRadius.circular(999),
-                                        ),
-                                        child: Text(active ? 'ACTIVE' : 'SCHEDULED', style: TextStyle(color: active ? const Color(0xFF86EFAC) : _muted, fontWeight: FontWeight.w700, fontSize: 11)),
-                                      ),
-                                    ],
-                                  ),
-                                  const SizedBox(height: 8),
-                                  Text(
-                                    '${_fmtDate(item['fromDate']?.toString())}  →  ${_fmtDate(item['toDate']?.toString())}',
-                                    style: TextStyle(color: _muted, fontSize: 13),
-                                  ),
-                                  const SizedBox(height: 4),
-                                  Text(
-                                    '${_toAmPm(shift['startTime']?.toString())} - ${_toAmPm(shift['endTime']?.toString())}',
-                                    style: const TextStyle(color: Color(0xFF93C5FD), fontWeight: FontWeight.w600, fontSize: 13),
-                                  ),
-                                  const SizedBox(height: 8),
-                                  Text(_compactDays(days), style: TextStyle(color: _muted, fontSize: 12)),
-                                ],
-                              ),
-                            ),
+                      if (_assignments.isNotEmpty && _visibleAssignments.isEmpty)
+                        Container(
+                          padding: const EdgeInsets.all(18),
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(18),
+                            color: _card,
+                            border: Border.all(color: _line),
                           ),
-                        );
-                      }),
+                          child: Text('No assignments on this day.', style: TextStyle(color: _muted)),
+                        ),
+                      ..._visibleAssignments.map(_buildAgendaCard),
                     ],
                   ),
                 ),
