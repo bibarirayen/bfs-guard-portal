@@ -28,6 +28,8 @@ import '../widgets/custom_appbar.dart';
 import 'package:crossplatformblackfabric/screens/dispatch_contacts_page.dart';
 import 'package:crossplatformblackfabric/screens/counseling_upload_page.dart';
 import 'package:crossplatformblackfabric/screens/counseling_list_page.dart';
+import 'package:crossplatformblackfabric/screens/no_call_no_show_create_page.dart';
+import 'package:crossplatformblackfabric/screens/no_call_no_show_list_page.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:crossplatformblackfabric/screens/Late_Arrivals_page.dart';
 import 'package:crossplatformblackfabric/screens/supervisor_assignments_page.dart';
@@ -106,6 +108,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     "New Counseling Report",
     "Reports",
     "New Report",
+    "No Call No Show List",
+    "New No Call No Show",
   ];
 
   Position? _currentPosition;
@@ -117,6 +121,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   bool _isLocationDialogVisible = false;
   final _locationDialogKey = GlobalKey();
   BuildContext? _locationDialogContext;
+
+  bool get _canManageNoCallNoShow {
+    final role = _guardRole.toLowerCase();
+    return role == "supervisor" ||
+        role == "regular admin" ||
+        role == "full admin" ||
+        role == "admin";
+  }
 
   // ── DEBUG LOG OVERLAY ────────────────────────────────────────────────────────
   // ─────────────────────────────────────────────────────────────────────────────
@@ -206,6 +218,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           () => const CounselingUploadPage(),
           () => const ReportListPage(),
           () => const ReportPage(),
+              () => const NoCallNoShowListPage(),
+              () => const NoCallNoShowCreatePage(),
     ];
 
     _dashboardRefreshTimer =
@@ -1642,6 +1656,29 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                 ],
               ),
 
+              if (_canManageNoCallNoShow) ...[
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    Expanded(
+                      child: _buildSimpleActionButton(
+                        Icons.event_note_outlined,
+                        "No Call No\nShow List",
+                        const Color(0xFF0EA5E9),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: _buildSimpleActionButton(
+                        Icons.add_alert_outlined,
+                        "New No Call\nNo Show",
+                        const Color(0xFFF97316),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+
               
               if (_isSupervisor) ...[
                 const SizedBox(height: 12),
@@ -1940,6 +1977,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           _onItemTapped(7);
         } else if (label.contains("New Counseling\nReport")) {
           _onItemTapped(8);
+        } else if (label.contains("No Call No\nShow List")) {
+          _onItemTapped(11);
+        } else if (label.contains("New No Call\nNo Show")) {
+          _onItemTapped(12);
         } else if (label.contains("Assignments")) {
           Navigator.push(context,
               MaterialPageRoute(builder: (_) => const SupervisorAssignmentsPage()));
