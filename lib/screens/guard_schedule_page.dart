@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -27,6 +28,11 @@ class _GuardSchedulePageState extends State<GuardSchedulePage> {
   Color get _muted => const Color(0xFF94A3B8);
   Color get _line => const Color(0xFF334155);
   Color get _accent => const Color(0xFF38BDF8);
+
+  DateTime _todayOnly() {
+    final now = DateTime.now();
+    return DateTime(now.year, now.month, now.day);
+  }
 
   @override
   void initState() {
@@ -59,7 +65,8 @@ class _GuardSchedulePageState extends State<GuardSchedulePage> {
       setState(() {
         _guardName = (body['guardName'] ?? '').toString();
         _assignments = assignments;
-        _selectedDate = _pickInitialDate(assignments);
+        // Always default to today's phone date.
+        _selectedDate = _todayOnly();
       });
     } catch (e) {
       setState(() {
@@ -123,24 +130,6 @@ class _GuardSchedulePageState extends State<GuardSchedulePage> {
     return a.year == b.year && a.month == b.month && a.day == b.day;
   }
 
-  DateTime? _pickInitialDate(List<Map<String, dynamic>> assignments) {
-    final dates = assignments
-        .map((item) => _parseDate(item['fromDate']?.toString()))
-        .whereType<DateTime>()
-        .toList()
-      ..sort();
-
-    if (dates.isEmpty) return null;
-
-    final today = DateTime.now();
-    for (final date in dates) {
-      if (!date.isBefore(DateTime(today.year, today.month, today.day))) {
-        return date;
-      }
-    }
-    return dates.first;
-  }
-
   List<DateTime> get _scheduleDates {
     final seen = <String>{};
     final dates = <DateTime>[];
@@ -157,9 +146,77 @@ class _GuardSchedulePageState extends State<GuardSchedulePage> {
   List<Map<String, dynamic>> get _visibleAssignments {
     if (_selectedDate == null) return _assignments;
     return _assignments.where((item) {
-      final date = _parseDate(item['fromDate']?.toString());
-      return date != null && _sameDate(date, _selectedDate!);
+      final fromDate = _parseDate(item['fromDate']?.toString());
+      final toDate = _parseDate(item['toDate']?.toString());
+      if (fromDate == null) return false;
+      final selected = _selectedDate!;
+      final start = DateTime(fromDate.year, fromDate.month, fromDate.day);
+      final endRaw = toDate ?? fromDate;
+      final end = DateTime(endRaw.year, endRaw.month, endRaw.day);
+      final selectedDay = DateTime(selected.year, selected.month, selected.day);
+      return !selectedDay.isBefore(start) && !selectedDay.isAfter(end);
     }).toList();
+  }
+
+  bool _isOneDayAssignment(Map<String, dynamic> item) {
+    final fromDate = _parseDate(item['fromDate']?.toString());
+    final toDate = _parseDate(item['toDate']?.toString());
+    if (fromDate == null || toDate == null) return false;
+    return _sameDate(fromDate, toDate);
+  }
+
+  String _patternLabelForItem(Map<String, dynamic> item) {
+    final days = List<dynamic>.from(item['daysOfWeek'] ?? []);
+    if (_isOneDayAssignment(item)) {
+      return '';
+    }
+    if (days.isEmpty || days.length == 7) {
+      return 'Every day';
+    }
+    return _compactDays(days);
+  }
+
+  String _statusLabelForItem(Map<String, dynamic> item) {
+    final active = item['active'] == true;
+    if (active) return 'ON DUTY';
+
+    final fromDate = _parseDate(item['fromDate']?.toString());
+    final toDate = _parseDate(item['toDate']?.toString()) ?? fromDate;
+    final today = _todayOnly();
+    if (fromDate == null || toDate == null) return 'SCHEDULED';
+
+    final start = DateTime(fromDate.year, fromDate.month, fromDate.day);
+    final end = DateTime(toDate.year, toDate.month, toDate.day);
+
+    if (end.isBefore(today)) return 'DONE/MISSED';
+    if (start.isAfter(today)) return 'UPCOMING';
+    return 'TODAY';
+  }
+
+  Color _statusTextColor(String status) {
+    switch (status) {
+      case 'ON DUTY':
+        return const Color(0xFF86EFAC);
+      case 'UPCOMING':
+        return const Color(0xFF7DD3FC);
+      case 'DONE/MISSED':
+        return const Color(0xFFD1D5DB);
+      default:
+        return const Color(0xFFFCD34D);
+    }
+  }
+
+  Color _statusBgColor(String status) {
+    switch (status) {
+      case 'ON DUTY':
+        return const Color(0xFF10B981).withValues(alpha: 0.18);
+      case 'UPCOMING':
+        return const Color(0xFF0EA5E9).withValues(alpha: 0.12);
+      case 'DONE/MISSED':
+        return const Color(0xFF64748B).withValues(alpha: 0.20);
+      default:
+        return const Color(0xFFF59E0B).withValues(alpha: 0.18);
+    }
   }
 
   String _weekdayShort(DateTime date) {
@@ -204,14 +261,25 @@ class _GuardSchedulePageState extends State<GuardSchedulePage> {
     await launchUrl(Uri.parse('mailto:$email'));
   }
 
+  void _copyText(String value, String label) {
+    if (value.trim().isEmpty) return;
+    Clipboard.setData(ClipboardData(text: value));
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('$label copied'),
+        duration: const Duration(seconds: 1),
+      ),
+    );
+  }
+
   void _showDetails(Map<String, dynamic> item) {
     final shift = Map<String, dynamic>.from(item['shift'] ?? {});
     final site = Map<String, dynamic>.from(item['site'] ?? {});
-    final days = List<dynamic>.from(item['daysOfWeek'] ?? []);
 
     final supervisorName = (site['supervisorName'] ?? '').toString();
     final supervisorPhone = (site['supervisorPhone'] ?? '').toString();
     final supervisorEmail = (site['supervisorEmail'] ?? '').toString();
+    final patternLabel = _patternLabelForItem(item);
 
     showModalBottomSheet(
       context: context,
@@ -249,7 +317,8 @@ class _GuardSchedulePageState extends State<GuardSchedulePage> {
               const SizedBox(height: 14),
               _detailTile(Icons.event, 'Date', '${_fmtDate(item['fromDate']?.toString())}  →  ${_fmtDate(item['toDate']?.toString())}'),
               _detailTile(Icons.schedule, 'Time', '${_toAmPm(shift['startTime']?.toString())}  -  ${_toAmPm(shift['endTime']?.toString())}'),
-              _detailTile(Icons.repeat, 'Pattern', _compactDays(days)),
+              if (patternLabel.isNotEmpty)
+                _detailTile(Icons.repeat, 'Pattern', patternLabel),
               if ((shift['specialInstructions'] ?? '').toString().trim().isNotEmpty)
                 _detailTile(Icons.info_outline, 'Instructions', shift['specialInstructions'].toString()),
               const SizedBox(height: 12),
@@ -266,6 +335,25 @@ class _GuardSchedulePageState extends State<GuardSchedulePage> {
                     Text('Supervisor Contact', style: TextStyle(color: _text, fontWeight: FontWeight.w700, fontSize: 14)),
                     const SizedBox(height: 10),
                     Text(supervisorName.isEmpty ? 'Not assigned' : supervisorName, style: TextStyle(color: _text, fontSize: 14)),
+                    if (supervisorPhone.trim().isNotEmpty) ...[
+                      const SizedBox(height: 8),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              supervisorPhone,
+                              style: TextStyle(color: _muted, fontSize: 13, fontWeight: FontWeight.w600),
+                            ),
+                          ),
+                          IconButton(
+                            onPressed: () => _copyText(supervisorPhone, 'Supervisor phone'),
+                            icon: const Icon(Icons.copy_rounded, size: 17),
+                            color: const Color(0xFF93C5FD),
+                            tooltip: 'Copy phone',
+                          ),
+                        ],
+                      ),
+                    ],
                     const SizedBox(height: 10),
                     Wrap(
                       spacing: 10,
@@ -388,8 +476,8 @@ class _GuardSchedulePageState extends State<GuardSchedulePage> {
   Widget _buildAgendaCard(Map<String, dynamic> item) {
     final shift = Map<String, dynamic>.from(item['shift'] ?? {});
     final site = Map<String, dynamic>.from(item['site'] ?? {});
-    final active = item['active'] == true;
-    final days = List<dynamic>.from(item['daysOfWeek'] ?? []);
+    final status = _statusLabelForItem(item);
+    final patternLabel = _patternLabelForItem(item);
     final supervisor = (site['supervisorName'] ?? '').toString();
 
     return Padding(
@@ -400,7 +488,7 @@ class _GuardSchedulePageState extends State<GuardSchedulePage> {
         child: Container(
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(22),
-            border: Border.all(color: active ? const Color(0xFF10B981) : _line),
+            border: Border.all(color: status == 'ON DUTY' ? const Color(0xFF10B981) : _line),
             gradient: const LinearGradient(
               colors: [Color(0xFF172033), Color(0xFF111827)],
               begin: Alignment.topLeft,
@@ -419,10 +507,10 @@ class _GuardSchedulePageState extends State<GuardSchedulePage> {
                       height: 14,
                       decoration: BoxDecoration(
                         shape: BoxShape.circle,
-                        color: active ? const Color(0xFF10B981) : _accent,
+                        color: status == 'ON DUTY' ? const Color(0xFF10B981) : _accent,
                         boxShadow: [
                           BoxShadow(
-                            color: (active ? const Color(0xFF10B981) : _accent).withValues(alpha: 0.4),
+                            color: (status == 'ON DUTY' ? const Color(0xFF10B981) : _accent).withValues(alpha: 0.4),
                             blurRadius: 10,
                           ),
                         ],
@@ -471,13 +559,13 @@ class _GuardSchedulePageState extends State<GuardSchedulePage> {
                           Container(
                             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                             decoration: BoxDecoration(
-                              color: active ? const Color(0xFF10B981).withValues(alpha: 0.18) : const Color(0xFF0EA5E9).withValues(alpha: 0.12),
+                              color: _statusBgColor(status),
                               borderRadius: BorderRadius.circular(999),
                             ),
                             child: Text(
-                              active ? 'ON DUTY' : 'UPCOMING',
+                              status,
                               style: TextStyle(
-                                color: active ? const Color(0xFF86EFAC) : const Color(0xFF7DD3FC),
+                                color: _statusTextColor(status),
                                 fontWeight: FontWeight.w800,
                                 fontSize: 10,
                                 letterSpacing: 0.6,
@@ -492,7 +580,7 @@ class _GuardSchedulePageState extends State<GuardSchedulePage> {
                         runSpacing: 8,
                         children: [
                           _metaPill(Icons.event_outlined, '${_fmtDate(item['fromDate']?.toString())} → ${_fmtDate(item['toDate']?.toString())}'),
-                          _metaPill(Icons.repeat, _compactDays(days)),
+                          if (patternLabel.isNotEmpty) _metaPill(Icons.repeat, patternLabel),
                           if (supervisor.isNotEmpty) _metaPill(Icons.support_agent, supervisor),
                         ],
                       ),
