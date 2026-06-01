@@ -13,7 +13,6 @@ workflows:
         XCODE_WORKSPACE: "Runner.xcworkspace"
         XCODE_SCHEME: "Runner"
         APP_STORE_ID: 1234567890
-
       flutter: stable
       xcode: latest
       cocoapods: default
@@ -25,7 +24,7 @@ workflows:
 
       - name: Fetch signing files
         script: |
-          echo "🔑 Fetching signing files..."
+          echo "Fetching signing files..."
           app-store-connect fetch-signing-files "$BUNDLE_ID" \
             --type IOS_APP_STORE \
             --create
@@ -34,104 +33,90 @@ workflows:
         script: |
           keychain add-certificates
 
-      - name: Configure Push Notifications
+      - name: Configure push entitlements
         script: |
           cd ios
-          
-          echo "📦 Installing xcodeproj Ruby gem..."
+
           gem install xcodeproj
-          
-          echo "🔧 Creating configuration script..."
+
           cat > configure_push.rb << 'RUBY_SCRIPT'
           require 'xcodeproj'
-          
+
           project_path = 'Runner.xcodeproj'
           project = Xcodeproj::Project.open(project_path)
-          
+
           target = project.targets.first
-          puts "🎯 Configuring target: #{target.name}"
-          
+          puts "Configuring target: #{target.name}"
+
           target.build_configurations.each do |config|
-            puts "⚙️  Setting entitlements for #{config.name}"
             config.build_settings['CODE_SIGN_ENTITLEMENTS'] = 'Runner/Runner.entitlements'
             config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '13.0'
             config.build_settings['ENABLE_BITCODE'] = 'NO'
           end
-          
+
           project.save
-          puts "✅ Xcode project configured successfully"
+          puts 'Xcode project configured successfully'
           RUBY_SCRIPT
-          
-          echo "🚀 Running configuration script..."
+
           ruby configure_push.rb
-          
-          echo "📋 Checking entitlements file..."
+
           if [ ! -f "Runner/Runner.entitlements" ]; then
-            echo "❌ Entitlements file not found, creating..."
             cat > Runner/Runner.entitlements << 'EOF'
-  <?xml version="1.0" encoding="UTF-8"?>
-  <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-  <plist version="1.0">
-  <dict>
-  <key>aps-environment</key>
-  <string>development</string>
-  </dict>
-  </plist>
-  EOF
-  echo "✅ Entitlements file created"
-  fi
-  
-  echo "📄 Entitlements file contents:"
-  cat Runner/Runner.entitlements
-  
-  echo "🔍 Verifying Xcode project..."
-  grep "CODE_SIGN_ENTITLEMENTS" Runner.xcodeproj/project.pbxproj | head -3
-  
-  cd ..
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+          <key>aps-environment</key>
+          <string>development</string>
+          </dict>
+          </plist>
+          EOF
+          fi
 
-- name: Set up code signing
-  script: |
-    xcode-project use-profiles
+          cat Runner/Runner.entitlements
+          grep "CODE_SIGN_ENTITLEMENTS" Runner.xcodeproj/project.pbxproj | head -3
 
-- name: Get Flutter packages
-  script: |
-    flutter packages pub get
+          cd ..
 
-- name: Clean build
-  script: |
-    flutter clean
-    cd ios
-    rm -rf Pods
-    rm -rf Podfile.lock
-    rm -rf .symlinks
-    cd ..
+      - name: Set up code signing
+        script: |
+          xcode-project use-profiles
 
-- name: Install CocoaPods
-  script: |
-    cd ios
-    pod cache clean --all
-    pod deintegrate || true
-    pod install --repo-update
-    cd ..
+      - name: Get Flutter packages
+        script: |
+          flutter pub get
 
-- name: Build iOS app
-  script: |
-    echo "🏗️  Building iOS app..."
-    flutter build ipa --release \
-      --export-options-plist=/Users/builder/export_options.plist
-    echo "✅ Build completed!"
+      - name: Clean build
+        script: |
+          flutter clean
+          cd ios
+          rm -rf Pods Podfile.lock .symlinks
+          cd ..
 
-artifacts:
-  - build/ios/ipa/*.ipa
-  - /tmp/xcodebuild_logs/*.log
+      - name: Install CocoaPods
+        script: |
+          cd ios
+          pod cache clean --all
+          pod deintegrate || true
+          pod install --repo-update
+          cd ..
 
-publishing:
-  email:
-    recipients:
-      - admin@blackfabricsecurity.com
-    notify:
-      success: true
-      failure: true
+      - name: Build iOS app
+        script: |
+          flutter build ipa --release \
+            --export-options-plist=/Users/builder/export_options.plist
 
-  app_store_connect:
-    submit_to_testflight: true
+    artifacts:
+      - build/ios/ipa/*.ipa
+      - /tmp/xcodebuild_logs/*.log
+
+    publishing:
+      email:
+        recipients:
+          - admin@blackfabricsecurity.com
+        notify:
+          success: true
+          failure: true
+
+      app_store_connect:
+        submit_to_testflight: true
