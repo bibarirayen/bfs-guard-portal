@@ -9,7 +9,9 @@ import 'package:url_launcher/url_launcher.dart';
 import '../config/ApiService.dart';
 
 class GuardSchedulePage extends StatefulWidget {
-  const GuardSchedulePage({super.key});
+  final int? initialAssignmentId;
+
+  const GuardSchedulePage({super.key, this.initialAssignmentId});
 
   @override
   State<GuardSchedulePage> createState() => _GuardSchedulePageState();
@@ -21,6 +23,7 @@ class _GuardSchedulePageState extends State<GuardSchedulePage> {
   String? _error;
   List<Map<String, dynamic>> _assignments = [];
   DateTime? _selectedDate;
+  bool _openedDeepLinkDetails = false;
 
   Color get _bg => const Color(0xFF0F172A);
   Color get _card => const Color(0xFF1E293B);
@@ -65,8 +68,33 @@ class _GuardSchedulePageState extends State<GuardSchedulePage> {
       setState(() {
         _guardName = (body['guardName'] ?? '').toString();
         _assignments = assignments;
-        // Always default to today's phone date.
-        _selectedDate = _todayOnly();
+
+        // Deep-link from notification: focus that assignment when possible.
+        final deepLinkId = widget.initialAssignmentId;
+        if (deepLinkId != null) {
+          final target = assignments.cast<Map<String, dynamic>?>().firstWhere(
+            (item) => item != null && item['assignmentId']?.toString() == deepLinkId.toString(),
+            orElse: () => null,
+          );
+
+          if (target != null) {
+            final fromDate = _parseDate(target['fromDate']?.toString());
+            _selectedDate = fromDate ?? _todayOnly();
+            if (!_openedDeepLinkDetails) {
+              _openedDeepLinkDetails = true;
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                if (mounted) {
+                  _showDetails(target);
+                }
+              });
+            }
+          } else {
+            _selectedDate = _todayOnly();
+          }
+        } else {
+          // Always default to today's phone date.
+          _selectedDate = _todayOnly();
+        }
       });
     } catch (e) {
       setState(() {

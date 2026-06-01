@@ -1,5 +1,7 @@
 import 'dart:io';
+import 'dart:convert';
 import 'package:crossplatformblackfabric/screens/conversation_screen.dart';
+import 'package:crossplatformblackfabric/screens/guard_schedule_page.dart';
 import 'package:crossplatformblackfabric/screens/late_arrivals_page.dart';
 import 'package:crossplatformblackfabric/screens/vacation_request_page.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
@@ -9,6 +11,71 @@ import '../config/app_globals.dart'; // imports navigatorKey
 
 final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
 FlutterLocalNotificationsPlugin();
+
+bool _isAssignmentType(String? type) {
+  if (type == null) return false;
+  final normalized = type.toUpperCase();
+  return normalized == 'ASSIGNMENT_ASSIGNED' || normalized == 'NEW_ASSIGNMENT';
+}
+
+int? _parseAssignmentId(Map<String, dynamic> data) {
+  final raw = data['assignmentId'];
+  if (raw == null) return null;
+  return int.tryParse(raw.toString());
+}
+
+Map<String, dynamic> _safeJsonMap(String? raw) {
+  if (raw == null || raw.trim().isEmpty) return <String, dynamic>{};
+  try {
+    final decoded = jsonDecode(raw);
+    if (decoded is Map<String, dynamic>) return decoded;
+  } catch (_) {}
+  return <String, dynamic>{};
+}
+
+void _openAssignmentSchedule({int? assignmentId}) {
+  navigatorKey.currentState?.push(
+    MaterialPageRoute(
+      builder: (_) => GuardSchedulePage(initialAssignmentId: assignmentId),
+    ),
+  );
+}
+
+void _handleTapByType({
+  String? type,
+  String? title,
+  Map<String, dynamic>? data,
+}) {
+  final normalizedType = (type ?? '').toUpperCase();
+  final normalizedTitle = (title ?? '').toUpperCase();
+
+  if (normalizedType == 'LATE_GUARD' || normalizedType == 'LATE') {
+    navigatorKey.currentState?.push(
+      MaterialPageRoute(builder: (_) => const LateArrivalsPage()),
+    );
+    return;
+  }
+
+  if (normalizedType == 'CHAT') {
+    navigatorKey.currentState?.push(
+      MaterialPageRoute(
+        builder: (_) => const ConversationsScreen(standalone: true),
+      ),
+    );
+    return;
+  }
+
+  if (normalizedType == 'VACATION_ACCEPTED' || normalizedType == 'VACATION_REFUSED') {
+    navigatorKey.currentState?.push(
+      MaterialPageRoute(builder: (_) => const VacationRequestPage()),
+    );
+    return;
+  }
+
+  if (_isAssignmentType(normalizedType) || normalizedTitle.contains('NEW ASSIGNMENT')) {
+    _openAssignmentSchedule(assignmentId: _parseAssignmentId(data ?? const <String, dynamic>{}));
+  }
+}
 
 // Background message handler
 @pragma('vm:entry-point')
@@ -50,21 +117,12 @@ Future<void> setupFlutterNotifications() async {
     // ✅ When user taps a local notification (foreground), navigate if it's a late alert
     onDidReceiveNotificationResponse: (NotificationResponse response) {
       print('📱 [NOTIFICATIONS] Tapped: ${response.payload}');
-      final payload = response.payload ?? '';
-      if (payload.contains('LATE_GUARD') || payload.contains('late')) {
-        navigatorKey.currentState?.push(
-          MaterialPageRoute(builder: (_) => const LateArrivalsPage()),
-        );
-      } else if (payload == 'CHAT') {
-        navigatorKey.currentState?.push(
-          MaterialPageRoute(
-              builder: (_) => const ConversationsScreen(standalone: true)),
-        );
-      } else if (payload == 'VACATION_ACCEPTED' || payload == 'VACATION_REFUSED') {
-        navigatorKey.currentState?.push(
-          MaterialPageRoute(builder: (_) => const VacationRequestPage()),
-        );
-      }
+      final payload = _safeJsonMap(response.payload);
+      _handleTapByType(
+        type: (payload['type'] ?? '').toString(),
+        title: (payload['title'] ?? '').toString(),
+        data: payload,
+      );
     },
   );
 
@@ -105,7 +163,11 @@ Future<void> setupFlutterNotifications() async {
       // Only manually show notifications on Android
       if (Platform.isAndroid) {
         // ✅ Pass the message type as payload so tap handler knows where to go
-        final String payload = message.data['type'] ?? '';
+        final payload = jsonEncode({
+          'type': message.data['type'] ?? '',
+          'assignmentId': message.data['assignmentId'] ?? '',
+          'title': notification.title ?? '',
+        });
         flutterLocalNotificationsPlugin.show(
           notification.hashCode,
           notification.title,
@@ -128,49 +190,25 @@ Future<void> setupFlutterNotifications() async {
   // ✅ Handle notification tap when app is in background (not terminated)
   FirebaseMessaging.onMessageOpenedApp.listen((RemoteMessage message) {
     print('📱 [NOTIFICATIONS] App opened from notification');
-    final type = message.data['type'] ?? '';
-    if (type == 'LATE_GUARD') {
-      navigatorKey.currentState?.push(
-        MaterialPageRoute(builder: (_) => const LateArrivalsPage()),
-      );
-    } else if (type == 'CHAT') {
-      navigatorKey.currentState?.push(
-        MaterialPageRoute(
-            builder: (_) => const ConversationsScreen(standalone: true)),
-      );
-    } else if (type == 'VACATION_ACCEPTED' || type == 'VACATION_REFUSED') {
-      navigatorKey.currentState?.push(
-        MaterialPageRoute(builder: (_) => const VacationRequestPage()),
-      );
-    }
+    _handleTapByType(
+      type: (message.data['type'] ?? '').toString(),
+      title: message.notification?.title,
+      data: message.data,
+    );
   });
 
   // ✅ Handle notification tap when app was fully terminated
   RemoteMessage? initialMessage = await FirebaseMessaging.instance.getInitialMessage();
   if (initialMessage != null) {
     print('📱 [NOTIFICATIONS] App launched from notification');
-    final type = initialMessage.data['type'] ?? '';
-    if (type == 'LATE_GUARD') {
-      // Delay slightly to ensure navigator is ready after app startup
-      Future.delayed(const Duration(seconds: 1), () {
-        navigatorKey.currentState?.push(
-          MaterialPageRoute(builder: (_) => const LateArrivalsPage()),
-        );
-      });
-    } else if (type == 'CHAT') {
-      Future.delayed(const Duration(seconds: 1), () {
-        navigatorKey.currentState?.push(
-          MaterialPageRoute(
-              builder: (_) => const ConversationsScreen(standalone: true)),
-        );
-      });
-    } else if (type == 'VACATION_ACCEPTED' || type == 'VACATION_REFUSED') {
-      Future.delayed(const Duration(seconds: 1), () {
-        navigatorKey.currentState?.push(
-          MaterialPageRoute(builder: (_) => const VacationRequestPage()),
-        );
-      });
-    }
+    // Delay slightly to ensure navigator is ready after app startup.
+    Future.delayed(const Duration(seconds: 1), () {
+      _handleTapByType(
+        type: (initialMessage.data['type'] ?? '').toString(),
+        title: initialMessage.notification?.title,
+        data: initialMessage.data,
+      );
+    });
   }
 
   // Get FCM token
