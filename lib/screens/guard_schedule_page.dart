@@ -24,6 +24,7 @@ class _GuardSchedulePageState extends State<GuardSchedulePage> {
   List<Map<String, dynamic>> _assignments = [];
   DateTime? _selectedDate;
   bool _openedDeepLinkDetails = false;
+  final ScrollController _calendarScroll = ScrollController();
 
   Color get _bg => const Color(0xFF0F172A);
   Color get _card => const Color(0xFF1E293B);
@@ -41,6 +42,12 @@ class _GuardSchedulePageState extends State<GuardSchedulePage> {
   void initState() {
     super.initState();
     _loadSchedule();
+  }
+
+  @override
+  void dispose() {
+    _calendarScroll.dispose();
+    super.dispose();
   }
 
   Future<void> _loadSchedule() async {
@@ -96,6 +103,7 @@ class _GuardSchedulePageState extends State<GuardSchedulePage> {
           _selectedDate = _todayOnly();
         }
       });
+      WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToSelectedDate());
     } catch (e) {
       setState(() {
         _error = ApiService.friendlyError(e);
@@ -158,31 +166,79 @@ class _GuardSchedulePageState extends State<GuardSchedulePage> {
     return a.year == b.year && a.month == b.month && a.day == b.day;
   }
 
+  String _isoDate(DateTime d) =>
+      '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
+
+  // Returns true when [date]'s weekday is listed in the assignment's daysOfWeek.
+  bool _weekdayMatches(DateTime date, List<dynamic> days) {
+    const names = {
+      1: 'MONDAY', 2: 'TUESDAY', 3: 'WEDNESDAY',
+      4: 'THURSDAY', 5: 'FRIDAY', 6: 'SATURDAY', 7: 'SUNDAY',
+    };
+    final name = names[date.weekday] ?? '';
+    return days.any((d) => d.toString().toUpperCase() == name);
+  }
+
+  // Expands every assignment into individual occurrence dates within a
+  // ±30 / +120 day window so the calendar shows each actual work-day,
+  // not just the assignment's fromDate.
   List<DateTime> get _scheduleDates {
     final seen = <String>{};
     final dates = <DateTime>[];
+    final today = _todayOnly();
+    final windowStart = today.subtract(const Duration(days: 30));
+    final windowEnd = today.add(const Duration(days: 120));
+
     for (final item in _assignments) {
-      final date = _parseDate(item['fromDate']?.toString());
-      if (date == null) continue;
-      final key = '${date.year}-${date.month}-${date.day}';
-      if (seen.add(key)) dates.add(date);
+      final fromDate = _parseDate(item['fromDate']?.toString());
+      final toDate = _parseDate(item['toDate']?.toString()) ?? fromDate;
+      if (fromDate == null || toDate == null) continue;
+
+      // Assignment is entirely outside window — show fromDate anchor only.
+      if (toDate.isBefore(windowStart) || fromDate.isAfter(windowEnd)) {
+        final d = DateTime(fromDate.year, fromDate.month, fromDate.day);
+        final key = '${d.year}-${d.month}-${d.day}';
+        if (seen.add(key)) dates.add(d);
+        continue;
+      }
+
+      final rangeStart = fromDate.isAfter(windowStart) ? fromDate : windowStart;
+      final rangeEnd = toDate.isBefore(windowEnd) ? toDate : windowEnd;
+
+      final days = List<dynamic>.from(item['daysOfWeek'] ?? []);
+      final everyDay = days.isEmpty || days.length == 7;
+
+      var cur = DateTime(rangeStart.year, rangeStart.month, rangeStart.day);
+      final last = DateTime(rangeEnd.year, rangeEnd.month, rangeEnd.day);
+      while (!cur.isAfter(last)) {
+        if (everyDay || _weekdayMatches(cur, days)) {
+          final key = '${cur.year}-${cur.month}-${cur.day}';
+          if (seen.add(key)) dates.add(cur);
+        }
+        cur = cur.add(const Duration(days: 1));
+      }
     }
     dates.sort();
     return dates;
   }
 
+  // Shows only assignments that actually occur on _selectedDate,
+  // respecting both the date range AND daysOfWeek.
   List<Map<String, dynamic>> get _visibleAssignments {
     if (_selectedDate == null) return _assignments;
+    final sel = DateTime(_selectedDate!.year, _selectedDate!.month, _selectedDate!.day);
     return _assignments.where((item) {
       final fromDate = _parseDate(item['fromDate']?.toString());
-      final toDate = _parseDate(item['toDate']?.toString());
       if (fromDate == null) return false;
-      final selected = _selectedDate!;
+      final toDate = _parseDate(item['toDate']?.toString()) ?? fromDate;
       final start = DateTime(fromDate.year, fromDate.month, fromDate.day);
-      final endRaw = toDate ?? fromDate;
-      final end = DateTime(endRaw.year, endRaw.month, endRaw.day);
-      final selectedDay = DateTime(selected.year, selected.month, selected.day);
-      return !selectedDay.isBefore(start) && !selectedDay.isAfter(end);
+      final end = DateTime(toDate.year, toDate.month, toDate.day);
+
+      if (sel.isBefore(start) || sel.isAfter(end)) return false;
+
+      final days = List<dynamic>.from(item['daysOfWeek'] ?? []);
+      if (days.isEmpty || days.length == 7) return true;
+      return _weekdayMatches(sel, days);
     }).toList();
   }
 
@@ -287,6 +343,26 @@ class _GuardSchedulePageState extends State<GuardSchedulePage> {
   Future<void> _openEmail(String? email) async {
     if (email == null || email.trim().isEmpty) return;
     await launchUrl(Uri.parse('mailto:$email'));
+  }
+
+  void _jumpToToday() {
+    setState(() => _selectedDate = _todayOnly());
+    WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToSelectedDate());
+  }
+
+  void _scrollToSelectedDate() {
+    if (!_calendarScroll.hasClients || _selectedDate == null) return;
+    final dates = _scheduleDates;
+    final idx = dates.indexWhere((d) => _sameDate(d, _selectedDate!));
+    if (idx < 0) return;
+    // Each chip: width 68 + right margin 10 = 78px. Center it in the visible area.
+    const chipStep = 78.0;
+    final offset = (idx * chipStep) - 80.0;
+    _calendarScroll.animateTo(
+      offset.clamp(0.0, _calendarScroll.position.maxScrollExtent),
+      duration: const Duration(milliseconds: 350),
+      curve: Curves.easeInOut,
+    );
   }
 
   void _copyText(String value, String label) {
@@ -449,7 +525,9 @@ class _GuardSchedulePageState extends State<GuardSchedulePage> {
   Widget _buildDateChip(DateTime date) {
     final selected = _selectedDate != null && _sameDate(_selectedDate!, date);
     return GestureDetector(
-      onTap: () => setState(() => _selectedDate = date),
+      onTap: () {
+        setState(() => _selectedDate = date);
+      },
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 180),
         width: 68,
@@ -607,7 +685,12 @@ class _GuardSchedulePageState extends State<GuardSchedulePage> {
                         spacing: 8,
                         runSpacing: 8,
                         children: [
-                          _metaPill(Icons.event_outlined, '${_fmtDate(item['fromDate']?.toString())} → ${_fmtDate(item['toDate']?.toString())}'),
+                          _metaPill(
+                            Icons.event_outlined,
+                            _selectedDate != null
+                                ? _fmtDate(_isoDate(_selectedDate!))
+                                : '${_fmtDate(item['fromDate']?.toString())} → ${_fmtDate(item['toDate']?.toString())}',
+                          ),
                           if (patternLabel.isNotEmpty) _metaPill(Icons.repeat, patternLabel),
                           if (supervisor.isNotEmpty) _metaPill(Icons.support_agent, supervisor),
                         ],
@@ -763,11 +846,32 @@ class _GuardSchedulePageState extends State<GuardSchedulePage> {
                       ),
                       const SizedBox(height: 14),
                       if (_scheduleDates.isNotEmpty) ...[
-                        Text('Calendar', style: TextStyle(color: _text, fontWeight: FontWeight.w700, fontSize: 16)),
+                        Row(
+                          children: [
+                            Text('Calendar', style: TextStyle(color: _text, fontWeight: FontWeight.w700, fontSize: 16)),
+                            const Spacer(),
+                            GestureDetector(
+                              onTap: _jumpToToday,
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+                                decoration: BoxDecoration(
+                                  color: _accent.withValues(alpha: 0.15),
+                                  borderRadius: BorderRadius.circular(20),
+                                  border: Border.all(color: _accent.withValues(alpha: 0.4)),
+                                ),
+                                child: Text(
+                                  'Today',
+                                  style: TextStyle(color: _accent, fontWeight: FontWeight.w700, fontSize: 12),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
                         const SizedBox(height: 12),
                         SizedBox(
                           height: 96,
                           child: ListView(
+                            controller: _calendarScroll,
                             scrollDirection: Axis.horizontal,
                             children: _scheduleDates.map(_buildDateChip).toList(),
                           ),
