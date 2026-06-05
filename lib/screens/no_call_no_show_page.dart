@@ -283,19 +283,19 @@ class _NoCallNoShowPageState extends State<NoCallNoShowPage>
 
   Widget _buildSummaryBanner(int open, int solved) {
     return Container(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
       decoration: BoxDecoration(
         gradient: LinearGradient(
           colors: [_accent, const Color(0xFFEA580C)],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(12),
         boxShadow: [
           BoxShadow(
-            color: _accent.withOpacity(0.3),
-            blurRadius: 12,
-            offset: const Offset(0, 4),
+            color: _accent.withOpacity(0.25),
+            blurRadius: 8,
+            offset: const Offset(0, 3),
           ),
         ],
       ),
@@ -303,20 +303,21 @@ class _NoCallNoShowPageState extends State<NoCallNoShowPage>
         mainAxisAlignment: MainAxisAlignment.spaceAround,
         children: [
           _statItem(_reports.length.toString(), 'Total'),
-          Container(width: 1, height: 40, color: Colors.white30),
+          Container(width: 1, height: 26, color: Colors.white30),
           _statItem(open.toString(), 'Open'),
-          Container(width: 1, height: 40, color: Colors.white30),
+          Container(width: 1, height: 26, color: Colors.white30),
           _statItem(solved.toString(), 'Solved'),
         ],
       ),
     );
   }
 
-  Widget _statItem(String value, String label) => Column(
+  Widget _statItem(String value, String label) => Row(
+    mainAxisSize: MainAxisSize.min,
     children: [
       Text(value,
-          style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold)),
-      const SizedBox(height: 2),
+          style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
+      const SizedBox(width: 5),
       Text(label, style: TextStyle(color: Colors.white.withOpacity(0.8), fontSize: 12)),
     ],
   );
