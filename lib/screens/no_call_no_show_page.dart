@@ -68,7 +68,7 @@ class _NoCallNoShowPageState extends State<NoCallNoShowPage>
   Future<void> _init() async {
     final prefs = await SharedPreferences.getInstance();
     _userId = prefs.getInt('userId');
-    await Future.wait([_loadReports(), _loadSites()]);
+    await Future.wait([_loadReports(), _loadSites(), _loadAllGuards()]);
   }
 
   // ── history data ──────────────────────────────────────────────────────────
@@ -102,28 +102,38 @@ class _NoCallNoShowPageState extends State<NoCallNoShowPage>
     }
   }
 
+  Future<void> _loadAllGuards() async {
+    try {
+      final guards = await _service.getAllGuards();
+      if (!mounted) return;
+      guards.sort((a, b) {
+        final aName = '${a['firstName'] ?? ''} ${a['lastName'] ?? ''}'.trim();
+        final bName = '${b['firstName'] ?? ''} ${b['lastName'] ?? ''}'.trim();
+        return aName.compareTo(bName);
+      });
+      setState(() => _guards = guards);
+    } catch (e) {
+      if (!mounted) return;
+      _snack('Failed to load guards: $e');
+    }
+  }
+
   Future<void> _onSiteChanged(int? siteId) async {
     setState(() {
       _selectedSiteId = siteId;
-      _selectedGuardId = null;
       _selectedShiftId = null;
-      _guards = [];
       _shifts = [];
     });
     if (siteId == null || _userId == null) return;
 
     try {
       setState(() => _loadingGuardsShifts = true);
-      final guards = await _service.getGuardOptions(_userId!, siteId);
       final shifts = await _service.getShiftOptions(_userId!, siteId);
       if (!mounted) return;
-      setState(() {
-        _guards = guards;
-        _shifts = shifts;
-      });
+      setState(() => _shifts = shifts);
     } catch (e) {
       if (!mounted) return;
-      _snack('Failed to load guards/shifts: $e');
+      _snack('Failed to load shifts: $e');
     } finally {
       if (mounted) setState(() => _loadingGuardsShifts = false);
     }
@@ -199,7 +209,6 @@ class _NoCallNoShowPageState extends State<NoCallNoShowPage>
       _selectedSiteId = null;
       _selectedGuardId = null;
       _selectedShiftId = null;
-      _guards = [];
       _shifts = [];
       _eventDate = DateTime.now();
     });
@@ -223,27 +232,7 @@ class _NoCallNoShowPageState extends State<NoCallNoShowPage>
       appBar: AppBar(
         backgroundColor: _card,
         elevation: 0,
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back_ios_new_rounded, color: Colors.white),
-          onPressed: () => Navigator.pop(context),
-        ),
-        title: Row(
-          children: [
-            Container(
-              padding: const EdgeInsets.all(8),
-              decoration: BoxDecoration(
-                color: _accent.withOpacity(0.15),
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: const Icon(Icons.event_busy_rounded, color: _accent, size: 20),
-            ),
-            const SizedBox(width: 10),
-            const Text(
-              'No Call No Show',
-              style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
-            ),
-          ],
-        ),
+        automaticallyImplyLeading: false,
         bottom: TabBar(
           controller: _tabController,
           indicatorColor: _accent,
@@ -607,29 +596,19 @@ class _NoCallNoShowPageState extends State<NoCallNoShowPage>
             // ── Guard ─────────────────────────────────────────────────────
             _label('Guard'),
             const SizedBox(height: 6),
-            _loadingGuardsShifts
-                ? _loadingIndicator('Loading guards…')
-                : _dropdown<int>(
-                    hint: _selectedSiteId == null
-                        ? 'Select a site first'
-                        : _guards.isEmpty
-                            ? 'No guards assigned to this site'
-                            : 'Select guard…',
-                    value: _selectedGuardId,
-                    items: _guards.map((g) => DropdownMenuItem<int>(
-                      value: _toInt(g['id']),
-                      child: Text(
-                        _guards.any((x) => x['employeeId'] != null)
-                            ? '${g['name'] ?? ''} (${g['employeeId'] ?? ''})'
-                            : (g['name'] ?? '').toString(),
-                        style: TextStyle(color: _text),
-                      ),
-                    )).toList(),
-                    onChanged: _saving || _selectedSiteId == null
-                        ? null
-                        : (v) => setState(() => _selectedGuardId = v),
-                    validator: (v) => v == null ? 'Please select a guard' : null,
-                  ),
+            _dropdown<int>(
+              hint: _guards.isEmpty ? 'Loading guards…' : 'Select guard…',
+              value: _selectedGuardId,
+              items: _guards.map((g) {
+                final name = '${g['firstName'] ?? ''} ${g['lastName'] ?? ''}'.trim();
+                return DropdownMenuItem<int>(
+                  value: _toInt(g['id']),
+                  child: Text(name, style: TextStyle(color: _text)),
+                );
+              }).toList(),
+              onChanged: _saving ? null : (v) => setState(() => _selectedGuardId = v),
+              validator: (v) => v == null ? 'Please select a guard' : null,
+            ),
 
             const SizedBox(height: 16),
 
@@ -655,6 +634,7 @@ class _NoCallNoShowPageState extends State<NoCallNoShowPage>
                         : (v) => setState(() => _selectedShiftId = v),
                     validator: (v) => v == null ? 'Please select a shift' : null,
                   ),
+
 
             const SizedBox(height: 16),
 

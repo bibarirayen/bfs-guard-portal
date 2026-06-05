@@ -23,6 +23,15 @@ class NoCallNoShowService {
     throw Exception('Failed to load sites');
   }
 
+  Future<List<Map<String, dynamic>>> getAllGuards() async {
+    final response = await api.get('shift/guards');
+    if (response.statusCode == 200) {
+      final List data = response.body.isNotEmpty ? List.from(jsonDecode(response.body)) : [];
+      return data.cast<Map<String, dynamic>>();
+    }
+    throw Exception('Failed to load guards');
+  }
+
   Future<List<Map<String, dynamic>>> getGuardOptions(int userId, int siteId) async {
     final response = await api.get('no-call-no-show/options/$userId/site/$siteId/guards');
     if (response.statusCode == 200) {
