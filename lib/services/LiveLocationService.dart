@@ -168,7 +168,7 @@ class LiveLocationService {
     _stompClient = StompClient(
       config: StompConfig(
         url: 'wss://api.blackfabricsecurity.com/ws',
-        reconnectDelay: const Duration(seconds: 5),
+        reconnectDelay: const Duration(seconds: 30),
       ),
     );
     _stompClient!.activate();

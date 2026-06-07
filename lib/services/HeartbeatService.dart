@@ -12,7 +12,7 @@ class HeartbeatService {
   void startHeartbeat(int userId) {
     if (_timer != null) return;
 
-    _timer = Timer.periodic(const Duration(seconds: 10), (_) async {
+    _timer = Timer.periodic(const Duration(seconds: 30), (_) async {
       await ApiService().post('heartbeat/$userId', {});
     });
   }

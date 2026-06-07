@@ -1,3 +1,5 @@
+import 'dart:developer' as dev;
+
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -22,6 +24,8 @@ class _NoCallNoShowPageState extends State<NoCallNoShowPage>
   Color get _inputFill => const Color(0xFF2D3748);
 
   // ── tabs ──────────────────────────────────────────────────────────────────
+  static const _tabHeight = 44.0;
+
   late final TabController _tabController;
 
   // ── shared ────────────────────────────────────────────────────────────────
@@ -180,24 +184,31 @@ class _NoCallNoShowPageState extends State<NoCallNoShowPage>
       return;
     }
 
+    final payload = {
+      'supervisorId': _userId,
+      'guardId': _selectedGuardId,
+      'siteId': _selectedSiteId,
+      'shiftId': _selectedShiftId,
+      'eventDate': _isoDate(_eventDate),
+      'description': _descController.text.trim(),
+    };
+
+    dev.log('[NCNS Page] _submit payload: $payload', name: 'NoCallNoShow');
+    dev.log('[NCNS Page] userId=$_userId guardId=$_selectedGuardId siteId=$_selectedSiteId shiftId=$_selectedShiftId', name: 'NoCallNoShow');
+
     try {
       setState(() => _saving = true);
-      await _service.create({
-        'supervisorId': _userId,
-        'guardId': _selectedGuardId,
-        'siteId': _selectedSiteId,
-        'shiftId': _selectedShiftId,
-        'eventDate': _isoDate(_eventDate),
-        'description': _descController.text.trim(),
-      });
+      await _service.create(payload);
       if (!mounted) return;
+      dev.log('[NCNS Page] submit SUCCESS', name: 'NoCallNoShow');
       _snack('Report submitted successfully.');
       _resetForm();
       _tabController.animateTo(0);
       _loadReports();
     } catch (e) {
       if (!mounted) return;
-      _snack('Failed to submit report: $e');
+      dev.log('[NCNS Page] submit ERROR: $e', name: 'NoCallNoShow');
+      _snack('$e');
     } finally {
       if (mounted) setState(() => _saving = false);
     }
@@ -233,16 +244,39 @@ class _NoCallNoShowPageState extends State<NoCallNoShowPage>
         backgroundColor: _card,
         elevation: 0,
         automaticallyImplyLeading: false,
-        bottom: TabBar(
-          controller: _tabController,
-          indicatorColor: _accent,
-          labelColor: _accent,
-          unselectedLabelColor: Colors.grey[400],
-          labelStyle: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
-          tabs: const [
-            Tab(text: 'History', icon: Icon(Icons.history_rounded, size: 18)),
-            Tab(text: 'New Report', icon: Icon(Icons.add_circle_outline_rounded, size: 18)),
-          ],
+        bottom: PreferredSize(
+          preferredSize: const Size.fromHeight(_tabHeight),
+          child: TabBar(
+            controller: _tabController,
+            indicatorColor: _accent,
+            labelColor: _accent,
+            unselectedLabelColor: Colors.grey[400],
+            labelStyle: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+            tabs: const [
+              Tab(
+                height: _tabHeight,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.history_rounded, size: 16),
+                    SizedBox(width: 6),
+                    Text('History'),
+                  ],
+                ),
+              ),
+              Tab(
+                height: _tabHeight,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.add_circle_outline_rounded, size: 16),
+                    SizedBox(width: 6),
+                    Text('New Report'),
+                  ],
+                ),
+              ),
+            ],
+          ),
         ),
       ),
       body: TabBarView(
