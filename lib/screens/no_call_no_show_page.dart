@@ -24,7 +24,7 @@ class _NoCallNoShowPageState extends State<NoCallNoShowPage>
   Color get _inputFill => const Color(0xFF2D3748);
 
   // ── tabs ──────────────────────────────────────────────────────────────────
-  static const _tabHeight = 44.0;
+  static const _tabHeight = 22.0;
 
   late final TabController _tabController;
 
@@ -601,7 +601,10 @@ class _NoCallNoShowPageState extends State<NoCallNoShowPage>
       return Center(child: CircularProgressIndicator(color: _accent));
     }
 
-    return SingleChildScrollView(
+    return GestureDetector(
+      onTap: () => FocusScope.of(context).unfocus(),
+      behavior: HitTestBehavior.translucent,
+      child: SingleChildScrollView(
       padding: const EdgeInsets.all(20),
       child: Form(
         key: _formKey,
@@ -769,6 +772,7 @@ class _NoCallNoShowPageState extends State<NoCallNoShowPage>
             const SizedBox(height: 40),
           ],
         ),
+      ),
       ),
     );
   }
