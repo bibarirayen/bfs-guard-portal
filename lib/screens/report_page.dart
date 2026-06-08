@@ -1169,6 +1169,13 @@ class _ReportPageState extends State<ReportPage> {
     if (!_hasActiveAssignment && !_canSubmitWithoutAssignment) { _snackError("You don't have an active assignment right now. Please contact your supervisor."); return; }
     if (_selectedSiteId == null) { _snackError("Please select a site before submitting."); return; }
 
+    // Incident Report validation — date & time is required
+    if (_selectedReportType == 'Incident Report' &&
+        _incidentDateTimeController.text.trim().isEmpty) {
+      _snackError('Please select the incident date and time before submitting.');
+      return;
+    }
+
     // Temperature Report validation — location and temperature are required per entry
     if (_selectedReportType == 'Temperature Report') {
       for (int i = 0; i < _tempEntries.length; i++) {
@@ -2071,10 +2078,12 @@ class _ReportPageState extends State<ReportPage> {
               child: TextFormField(
                 controller: _incidentDateTimeController,
                 readOnly: true,
-                decoration: _modernInput("Date & Time").copyWith(
+                decoration: _modernInput("Date & Time *").copyWith(
                   suffixIcon: Icon(Icons.calendar_today, color: _primaryColor, size: 18),
                 ),
                 style: TextStyle(color: _textColor),
+                validator: (v) =>
+                    (v == null || v.trim().isEmpty) ? 'Required' : null,
               ),
             ),
           ),
