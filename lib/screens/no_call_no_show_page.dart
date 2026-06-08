@@ -24,7 +24,7 @@ class _NoCallNoShowPageState extends State<NoCallNoShowPage>
   Color get _inputFill => const Color(0xFF2D3748);
 
   // ── tabs ──────────────────────────────────────────────────────────────────
-  static const _tabHeight = 22.0;
+  static const _tabHeight = 44.0;
 
   late final TabController _tabController;
 
@@ -240,50 +240,52 @@ class _NoCallNoShowPageState extends State<NoCallNoShowPage>
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: _bg,
-      appBar: AppBar(
-        backgroundColor: _card,
-        elevation: 0,
-        automaticallyImplyLeading: false,
-        bottom: PreferredSize(
-          preferredSize: const Size.fromHeight(_tabHeight),
-          child: TabBar(
-            controller: _tabController,
-            indicatorColor: _accent,
-            labelColor: _accent,
-            unselectedLabelColor: Colors.grey[400],
-            labelStyle: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
-            tabs: const [
-              Tab(
-                height: _tabHeight,
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(Icons.history_rounded, size: 16),
-                    SizedBox(width: 6),
-                    Text('History'),
-                  ],
-                ),
-              ),
-              Tab(
-                height: _tabHeight,
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(Icons.add_circle_outline_rounded, size: 16),
-                    SizedBox(width: 6),
-                    Text('New Report'),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-      body: TabBarView(
-        controller: _tabController,
+      body: Column(
         children: [
-          _buildHistoryTab(),
-          _buildFormTab(),
+          // ── Tab strip only — no AppBar toolbar above it ─────────────────
+          Container(
+            color: _card,
+            child: TabBar(
+              controller: _tabController,
+              indicatorColor: _accent,
+              labelColor: _accent,
+              unselectedLabelColor: Colors.grey[400],
+              labelStyle: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+              tabs: const [
+                Tab(
+                  height: _tabHeight,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.history_rounded, size: 16),
+                      SizedBox(width: 6),
+                      Text('History'),
+                    ],
+                  ),
+                ),
+                Tab(
+                  height: _tabHeight,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.add_circle_outline_rounded, size: 16),
+                      SizedBox(width: 6),
+                      Text('New Report'),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Expanded(
+            child: TabBarView(
+              controller: _tabController,
+              children: [
+                _buildHistoryTab(),
+                _buildFormTab(),
+              ],
+            ),
+          ),
         ],
       ),
     );
