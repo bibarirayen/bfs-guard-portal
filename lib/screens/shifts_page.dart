@@ -20,14 +20,73 @@ class ShiftsPage extends StatefulWidget {
   State<ShiftsPage> createState() => _ShiftsPageState();
 }
 
-class _ShiftsPageState extends State<ShiftsPage> {
+class _ShiftsPageState extends State<ShiftsPage>
+    with SingleTickerProviderStateMixin {
   bool _isDarkMode = true;
   List<Map<String, dynamic>> _shifts = [];
+  List<Map<String, dynamic>> _history = [];
+  bool _loadingHistory = false;
+  bool _showHistoryTab = false;
+
+  late TabController _tabController;
 
   @override
   void initState() {
     super.initState();
+    _tabController = TabController(length: 2, vsync: this);
     _fetchShifts();
+    _initHistory();
+  }
+
+  @override
+  void dispose() {
+    _tabController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _initHistory() async {
+    final prefs = await SharedPreferences.getInstance();
+    final userId = prefs.getInt('userId');
+    if (userId == null) return;
+
+    final api = ApiService();
+    try {
+      final res = await api.get('assignments/open-shift-history?userId=$userId');
+      if (res.statusCode == 200) {
+        final List data = jsonDecode(res.body);
+        final list = data.map<Map<String, dynamic>>((a) {
+          final shift    = a['shift']  ?? {};
+          final site     = shift['site']   ?? {};
+          final client   = shift['client'] ?? {};
+          final guard    = a['guard'];
+
+          final start = shift['startTime'] ?? '';
+          final end   = shift['endTime']   ?? '';
+
+          return {
+            'assignmentId': a['id'],
+            'client':    client['name'] ?? 'Unknown',
+            'site':      site['name']   ?? 'Unknown',
+            'fromDate':  a['fromDate']  ?? '',
+            'toDate':    a['toDate']    ?? '',
+            'from':      start,
+            'to':        end,
+            'openShift': a['openShift'] ?? false,
+            'daysOfWeek': (a['daysOfWeek'] as List?)?.cast<String>() ?? [],
+            'guardName': guard != null
+                ? '${guard['firstName'] ?? ''} ${guard['lastName'] ?? ''}'.trim()
+                : null,
+          };
+        }).toList();
+
+        if (mounted) {
+          setState(() {
+            _history = list;
+            _showHistoryTab = true;
+          });
+        }
+      }
+    } catch (_) {}
   }
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -48,35 +107,29 @@ class _ShiftsPageState extends State<ShiftsPage> {
   // Date formatter: "YYYY-MM-DD" → "MM/DD/YYYY"
   // ─────────────────────────────────────────────────────────────────────────
   String _formatDate(String date) {
-    if (date.isEmpty) return "-";
+    if (date.isEmpty) return '-';
     final d = DateTime.parse(date);
-    return "${d.month.toString().padLeft(2, '0')}/${d.day.toString().padLeft(2, '0')}/${d.year}";
+    return '${d.month.toString().padLeft(2, '0')}/${d.day.toString().padLeft(2, '0')}/${d.year}';
   }
 
   // ─────────────────────────────────────────────────────────────────────────
-  // FETCH SHIFTS
-  // API: GET /api/assignments/OpenShift
-  // Returns supervisor info as: SupervisorName, SupervisorEmail, SupervisorPhone
-  // at the root level of each assignment object.
+  // FETCH OPEN SHIFTS (Marketplace)
   // ─────────────────────────────────────────────────────────────────────────
   Future<void> _fetchShifts() async {
     final api = ApiService();
-
     try {
       final response = await api.get('assignments/OpenShift');
-
       if (response.statusCode == 200) {
         final List data = jsonDecode(response.body);
-
         setState(() {
           _shifts = data.map<Map<String, dynamic>>((assignment) {
-            final shift    = assignment["shift"];
-            final client   = shift["client"];
-            final site     = shift["site"];
-            final fromDate = assignment["fromDate"] ?? "";
-            final toDate   = assignment["toDate"]   ?? "";
-            final start    = shift["startTime"]     ?? "";
-            final end      = shift["endTime"]       ?? "";
+            final shift    = assignment['shift'];
+            final client   = shift['client'];
+            final site     = shift['site'];
+            final fromDate = assignment['fromDate'] ?? '';
+            final toDate   = assignment['toDate']   ?? '';
+            final start    = shift['startTime']     ?? '';
+            final end      = shift['endTime']       ?? '';
 
             int duration = 0;
             if (start.isNotEmpty && end.isNotEmpty) {
@@ -89,33 +142,30 @@ class _ShiftsPageState extends State<ShiftsPage> {
             }
 
             return {
-              "client":      client?["name"] ?? "Unknown Client",
-              "site":        site?["name"]   ?? "Unknown Site",
-              "from":        start,
-              "to":          end,
-              "fromDate":    fromDate,
-              "toDate":      toDate,
-              "duration":    duration,
-              "location": LatLng(
-                (site?["latitude"]  ?? 36.81897).toDouble(),
-                (site?["longitude"] ?? 10.16579).toDouble(),
+              'client':      client?['name'] ?? 'Unknown Client',
+              'site':        site?['name']   ?? 'Unknown Site',
+              'from':        start,
+              'to':          end,
+              'fromDate':    fromDate,
+              'toDate':      toDate,
+              'duration':    duration,
+              'location': LatLng(
+                (site?['latitude']  ?? 36.81897).toDouble(),
+                (site?['longitude'] ?? 10.16579).toDouble(),
               ),
-              "assignmentId": assignment["id"],
-              // ✅ Backend sends these as supervisorName / supervisorEmail / supervisorPhone
-              // (lowercase s) at the root of the assignment object.
-              "supervisorName":  assignment["supervisorName"]  ?? "",
-              "supervisorEmail": assignment["supervisorEmail"] ?? "",
-              "supervisorPhone": assignment["supervisorPhone"] ?? "",
-              // Days-of-week filter (null/empty = every day)
-              "daysOfWeek": (assignment["daysOfWeek"] as List?)?.cast<String>() ?? [],
+              'assignmentId': assignment['id'],
+              'supervisorName':  assignment['supervisorName']  ?? '',
+              'supervisorEmail': assignment['supervisorEmail'] ?? '',
+              'supervisorPhone': assignment['supervisorPhone'] ?? '',
+              'daysOfWeek': (assignment['daysOfWeek'] as List?)?.cast<String>() ?? [],
             };
           }).toList();
         });
       } else {
-        throw Exception("Failed to load assignments");
+        throw Exception('Failed to load assignments');
       }
     } catch (e) {
-      debugPrint("ERROR FETCHING ASSIGNMENTS: $e");
+      debugPrint('ERROR FETCHING ASSIGNMENTS: $e');
     }
   }
 
@@ -133,26 +183,18 @@ class _ShiftsPageState extends State<ShiftsPage> {
   Color get _borderColor =>
       _isDarkMode ? const Color(0xFF334155) : const Color(0xFFE2E8F0);
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // Open in Maps
-  // ─────────────────────────────────────────────────────────────────────────
   Future<void> _openInMaps(LatLng location) async {
     final lat = location.latitude;
     final lng = location.longitude;
     final Uri url;
     if (Platform.isIOS) {
-      // q= drops a pin; ll= centers the map
       url = Uri.parse('https://maps.apple.com/?q=$lat,$lng&ll=$lat,$lng&z=15');
     } else {
-      // Google Maps web URL — always drops a pin at the given coordinates
       url = Uri.parse('https://maps.google.com/maps?q=$lat,$lng');
     }
     await launchUrl(url, mode: LaunchMode.externalApplication);
   }
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // Copy to clipboard helper
-  // ─────────────────────────────────────────────────────────────────────────
   void _copyToClipboard(BuildContext ctx, String value, String label) {
     Clipboard.setData(ClipboardData(text: value));
     ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(
@@ -164,9 +206,6 @@ class _ShiftsPageState extends State<ShiftsPage> {
     ));
   }
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // Info row — plain
-  // ─────────────────────────────────────────────────────────────────────────
   Widget _infoRow(String label, String value) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 4),
@@ -174,7 +213,7 @@ class _ShiftsPageState extends State<ShiftsPage> {
         children: [
           SizedBox(
             width: 100,
-            child: Text("$label:", style: TextStyle(color: _secondaryTextColor)),
+            child: Text('$label:', style: TextStyle(color: _secondaryTextColor)),
           ),
           Expanded(
             child: Text(value,
@@ -185,9 +224,6 @@ class _ShiftsPageState extends State<ShiftsPage> {
     );
   }
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // Info row WITH copy button
-  // ─────────────────────────────────────────────────────────────────────────
   Widget _copyableInfoRow(BuildContext ctx, String label, String value) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 4),
@@ -195,7 +231,7 @@ class _ShiftsPageState extends State<ShiftsPage> {
         children: [
           SizedBox(
             width: 100,
-            child: Text("$label:", style: TextStyle(color: _secondaryTextColor)),
+            child: Text('$label:', style: TextStyle(color: _secondaryTextColor)),
           ),
           Expanded(
             child: Text(value,
@@ -218,29 +254,19 @@ class _ShiftsPageState extends State<ShiftsPage> {
   }
 
   // ─────────────────────────────────────────────────────────────────────────
-  // DETAILS MODAL
-  //
-  // FIX: was using showModalBottomSheet with isScrollControlled: true and no
-  // maxChildSize constraint — this made the sheet take the full screen height
-  // with no way to drag it down to close it.
-  //
-  // Fix: wrap in DraggableScrollableSheet with:
-  //   • initialChildSize: 0.75  (opens at 75% of screen)
-  //   • minChildSize: 0.4       (can drag down to 40% before snapping closed)
-  //   • maxChildSize: 0.95      (can expand to 95% but NOT full screen)
-  // This gives the user the drag-to-close handle back.
+  // DETAILS MODAL (Marketplace)
   // ─────────────────────────────────────────────────────────────────────────
   void _showShiftDetails(Map<String, dynamic> shift) {
     bool isSatellite = false;
     final mapController = MapController();
 
-    final bool hasSupervisor = (shift["supervisorName"] as String).isNotEmpty ||
-        (shift["supervisorEmail"] as String).isNotEmpty ||
-        (shift["supervisorPhone"] as String).isNotEmpty;
+    final bool hasSupervisor = (shift['supervisorName'] as String).isNotEmpty ||
+        (shift['supervisorEmail'] as String).isNotEmpty ||
+        (shift['supervisorPhone'] as String).isNotEmpty;
 
     showModalBottomSheet(
       context: context,
-      isScrollControlled: true,    // needed for DraggableScrollableSheet
+      isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (ctx) => DraggableScrollableSheet(
         initialChildSize: 0.75,
@@ -256,7 +282,6 @@ class _ShiftsPageState extends State<ShiftsPage> {
               ),
               child: Column(
                 children: [
-                  // ── Drag handle (always visible, not scrollable) ──────────
                   Padding(
                     padding: const EdgeInsets.only(top: 12, bottom: 4),
                     child: Center(
@@ -270,30 +295,22 @@ class _ShiftsPageState extends State<ShiftsPage> {
                       ),
                     ),
                   ),
-
-                  // ── Scrollable content ────────────────────────────────────
                   Expanded(
                     child: ListView(
                       controller: scrollController,
                       padding: const EdgeInsets.fromLTRB(20, 8, 20, 20),
                       children: [
-
-                        // Title
                         Text(
-                          "${shift["client"]} - ${shift["site"]}",
+                          '${shift["client"]} - ${shift["site"]}',
                           style: TextStyle(
                             fontSize: 20,
                             fontWeight: FontWeight.bold,
                             color: _textColor,
                           ),
                         ),
-
                         const SizedBox(height: 14),
-
-                        // ── Shift info ──────────────────────────────────────
-                        _infoRow("Date",
-                            "${_formatDate(shift["fromDate"])} → ${_formatDate(shift["toDate"])}"),
-                        // Recurring days
+                        _infoRow('Date',
+                            '${_formatDate(shift["fromDate"])} → ${_formatDate(shift["toDate"])}'),
                         Builder(builder: (_) {
                           final days = (shift['daysOfWeek'] as List?)?.cast<String>() ?? [];
                           if (days.isEmpty || days.length == 7) return const SizedBox.shrink();
@@ -302,15 +319,14 @@ class _ShiftsPageState extends State<ShiftsPage> {
                             'THURSDAY': 'Thu', 'FRIDAY': 'Fri', 'SATURDAY': 'Sat', 'SUNDAY': 'Sun'
                           };
                           final readable = days.map((d) => labels[d] ?? d).join(', ');
-                          return _infoRow("Recurring", readable);
+                          return _infoRow('Recurring', readable);
                         }),
                         const SizedBox(height: 2),
-                        _infoRow("From", _toAmPm(shift["from"])),
-                        _infoRow("To",   _toAmPm(shift["to"])),
-
+                        _infoRow('From', _toAmPm(shift['from'])),
+                        _infoRow('To',   _toAmPm(shift['to'])),
                         const SizedBox(height: 16),
 
-                        // ── Supervisor section ──────────────────────────────
+                        // Supervisor section
                         Container(
                           width: double.infinity,
                           padding: const EdgeInsets.all(14),
@@ -339,7 +355,7 @@ class _ShiftsPageState extends State<ShiftsPage> {
                                   ),
                                   const SizedBox(width: 6),
                                   Text(
-                                    "Supervisor",
+                                    'Supervisor',
                                     style: TextStyle(
                                       fontWeight: FontWeight.bold,
                                       fontSize: 14,
@@ -353,7 +369,7 @@ class _ShiftsPageState extends State<ShiftsPage> {
                               const SizedBox(height: 10),
                               if (!hasSupervisor)
                                 Text(
-                                  "No supervisor assigned",
+                                  'No supervisor assigned',
                                   style: TextStyle(
                                     color: _secondaryTextColor,
                                     fontStyle: FontStyle.italic,
@@ -361,12 +377,12 @@ class _ShiftsPageState extends State<ShiftsPage> {
                                   ),
                                 )
                               else ...[
-                                if ((shift["supervisorName"] as String).isNotEmpty)
-                                  _infoRow("Name", shift["supervisorName"]),
-                                if ((shift["supervisorEmail"] as String).isNotEmpty)
-                                  _copyableInfoRow(ctx, "Email", shift["supervisorEmail"]),
-                                if ((shift["supervisorPhone"] as String).isNotEmpty)
-                                  _copyableInfoRow(ctx, "Phone", shift["supervisorPhone"]),
+                                if ((shift['supervisorName'] as String).isNotEmpty)
+                                  _infoRow('Name', shift['supervisorName']),
+                                if ((shift['supervisorEmail'] as String).isNotEmpty)
+                                  _copyableInfoRow(ctx, 'Email', shift['supervisorEmail']),
+                                if ((shift['supervisorPhone'] as String).isNotEmpty)
+                                  _copyableInfoRow(ctx, 'Phone', shift['supervisorPhone']),
                               ],
                             ],
                           ),
@@ -374,16 +390,15 @@ class _ShiftsPageState extends State<ShiftsPage> {
 
                         const SizedBox(height: 16),
 
-                        // ── Map ─────────────────────────────────────────────
+                        // Map
                         Text(
-                          "Location",
+                          'Location',
                           style: TextStyle(
                             fontWeight: FontWeight.bold,
                             color: _textColor,
                           ),
                         ),
                         const SizedBox(height: 8),
-
                         Container(
                           height: 230,
                           decoration: BoxDecoration(
@@ -397,14 +412,14 @@ class _ShiftsPageState extends State<ShiftsPage> {
                                 FlutterMap(
                                   mapController: mapController,
                                   options: MapOptions(
-                                    initialCenter: shift["location"],
+                                    initialCenter: shift['location'],
                                     initialZoom: 15,
                                   ),
                                   children: [
                                     TileLayer(
                                       urlTemplate: isSatellite
-                                          ? "https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
-                                          : "https://{s}.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png",
+                                          ? 'https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'
+                                          : 'https://{s}.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png',
                                       subdomains: const ['a', 'b', 'c'],
                                       userAgentPackageName:
                                       'com.blackfabricsecurity.crossplatformblackfabric',
@@ -412,12 +427,12 @@ class _ShiftsPageState extends State<ShiftsPage> {
                                     MarkerLayer(
                                       markers: [
                                         Marker(
-                                          point: shift["location"],
+                                          point: shift['location'],
                                           width: 50,
                                           height: 50,
                                           child: GestureDetector(
                                             onTap: () =>
-                                                _openInMaps(shift["location"]),
+                                                _openInMaps(shift['location']),
                                             child: const Icon(
                                                 Icons.location_on,
                                                 color: Colors.red,
@@ -428,8 +443,6 @@ class _ShiftsPageState extends State<ShiftsPage> {
                                     ),
                                   ],
                                 ),
-
-                                // Satellite toggle
                                 Positioned(
                                   top: 10,
                                   right: 10,
@@ -445,8 +458,6 @@ class _ShiftsPageState extends State<ShiftsPage> {
                                     ),
                                   ),
                                 ),
-
-                                // Center button
                                 Positioned(
                                   bottom: 10,
                                   right: 10,
@@ -455,7 +466,7 @@ class _ShiftsPageState extends State<ShiftsPage> {
                                     heroTag: 'center_map',
                                     backgroundColor: Colors.black87,
                                     onPressed: () =>
-                                        mapController.move(shift["location"], 15),
+                                        mapController.move(shift['location'], 15),
                                     child: const Icon(Icons.my_location,
                                         color: Colors.white),
                                   ),
@@ -467,7 +478,7 @@ class _ShiftsPageState extends State<ShiftsPage> {
 
                         const SizedBox(height: 20),
 
-                        // ── Action buttons ───────────────────────────────────
+                        // Take shift button
                         SizedBox(
                           width: double.infinity,
                           child: ElevatedButton.icon(
@@ -489,7 +500,7 @@ class _ShiftsPageState extends State<ShiftsPage> {
                                 final api = ApiService();
                                 final res = await api.put(
                                   'assignments/assign/${shift["assignmentId"]}',
-                                  {"userId": userId},
+                                  {'userId': userId},
                                 );
 
                                 if (res.statusCode == 200) {
@@ -526,11 +537,11 @@ class _ShiftsPageState extends State<ShiftsPage> {
                                   ).show();
                                 }
                               } catch (e) {
-                                debugPrint("ERROR SENDING REQUEST: $e");
+                                debugPrint('ERROR SENDING REQUEST: $e');
                               }
                             },
                             icon: const Icon(Icons.send, color: Colors.white),
-                            label: const Text("Take the shift",
+                            label: const Text('Take the shift',
                                 style: TextStyle(color: Colors.white)),
                             style: ElevatedButton.styleFrom(
                               backgroundColor: const Color(0xFF4F46E5),
@@ -547,9 +558,9 @@ class _ShiftsPageState extends State<ShiftsPage> {
                         SizedBox(
                           width: double.infinity,
                           child: ElevatedButton.icon(
-                            onPressed: () => _openInMaps(shift["location"]),
+                            onPressed: () => _openInMaps(shift['location']),
                             icon: const Icon(Icons.map, color: Colors.white),
-                            label: const Text("Open in Maps",
+                            label: const Text('Open in Maps',
                                 style: TextStyle(color: Colors.white)),
                             style: ElevatedButton.styleFrom(
                               backgroundColor: Colors.green,
@@ -575,7 +586,7 @@ class _ShiftsPageState extends State<ShiftsPage> {
   }
 
   // ─────────────────────────────────────────────────────────────────────────
-  // SHIFT CARD
+  // SHIFT CARD (Marketplace)
   // ─────────────────────────────────────────────────────────────────────────
   Widget _buildShiftCard(Map<String, dynamic> shift) {
     return GestureDetector(
@@ -597,16 +608,15 @@ class _ShiftsPageState extends State<ShiftsPage> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    "${shift["client"]} - ${shift["site"]}",
+                    '${shift["client"]} - ${shift["site"]}',
                     style: TextStyle(
                         fontWeight: FontWeight.bold, color: _textColor),
                   ),
                   const SizedBox(height: 4),
                   Text(
-                    "${_toAmPm(shift["from"])} - ${_toAmPm(shift["to"])}",
+                    '${_toAmPm(shift["from"])} - ${_toAmPm(shift["to"])}',
                     style: TextStyle(fontSize: 12, color: _secondaryTextColor),
                   ),
-                  // Recurring days label
                   Builder(builder: (_) {
                     final days = (shift['daysOfWeek'] as List?)?.cast<String>() ?? [];
                     if (days.isEmpty || days.length == 7) return const SizedBox.shrink();
@@ -631,23 +641,203 @@ class _ShiftsPageState extends State<ShiftsPage> {
   }
 
   // ─────────────────────────────────────────────────────────────────────────
+  // HISTORY CARD
+  // ─────────────────────────────────────────────────────────────────────────
+  Widget _buildHistoryCard(Map<String, dynamic> item) {
+    final bool isTaken = item['guardName'] != null &&
+        (item['guardName'] as String).isNotEmpty;
+
+    return Container(
+      margin: const EdgeInsets.symmetric(vertical: 8),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: _cardColor,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(
+          color: isTaken
+              ? const Color(0xFF22C55E).withOpacity(0.35)
+              : _borderColor,
+          width: isTaken ? 1.5 : 1,
+        ),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 44,
+            height: 44,
+            decoration: BoxDecoration(
+              color: isTaken
+                  ? const Color(0xFF22C55E).withOpacity(0.12)
+                  : _secondaryTextColor.withOpacity(0.08),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Icon(
+              isTaken ? Icons.check_circle_outline : Icons.hourglass_empty,
+              color: isTaken
+                  ? const Color(0xFF22C55E)
+                  : _secondaryTextColor,
+              size: 22,
+            ),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '${item["client"]} — ${item["site"]}',
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    color: _textColor,
+                    fontSize: 14,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  '${_formatDate(item["fromDate"])} → ${_formatDate(item["toDate"])}  •  ${_toAmPm(item["from"])} – ${_toAmPm(item["to"])}',
+                  style: TextStyle(fontSize: 12, color: _secondaryTextColor),
+                ),
+                const SizedBox(height: 6),
+                if (isTaken)
+                  Row(
+                    children: [
+                      const Icon(Icons.person, size: 14, color: Color(0xFF22C55E)),
+                      const SizedBox(width: 4),
+                      Text(
+                        'Taken by ${item["guardName"]}',
+                        style: const TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          color: Color(0xFF22C55E),
+                        ),
+                      ),
+                    ],
+                  )
+                else
+                  Text(
+                    'Still open — no guard claimed yet',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: _secondaryTextColor,
+                      fontStyle: FontStyle.italic,
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+            decoration: BoxDecoration(
+              color: isTaken
+                  ? const Color(0xFF22C55E).withOpacity(0.12)
+                  : const Color(0xFFF59E0B).withOpacity(0.12),
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: Text(
+              isTaken ? 'TAKEN' : 'OPEN',
+              style: TextStyle(
+                fontSize: 10,
+                fontWeight: FontWeight.w800,
+                color: isTaken
+                    ? const Color(0xFF22C55E)
+                    : const Color(0xFFF59E0B),
+                letterSpacing: 0.5,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
   // BUILD
   // ─────────────────────────────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: _backgroundColor,
-      body: _shifts.isEmpty
-          ? Center(
-        child: Text(
-          "No open shifts available",
-          style: TextStyle(color: _secondaryTextColor, fontSize: 15),
-        ),
-      )
-          : ListView.builder(
-        padding: const EdgeInsets.all(16),
-        itemCount: _shifts.length,
-        itemBuilder: (context, i) => _buildShiftCard(_shifts[i]),
+      body: Column(
+        children: [
+          // Tab bar
+          Container(
+            color: _isDarkMode ? const Color(0xFF1E293B) : Colors.white,
+            child: TabBar(
+              controller: _tabController,
+              indicatorColor: const Color(0xFF4F46E5),
+              indicatorWeight: 3,
+              labelColor: const Color(0xFF4F46E5),
+              unselectedLabelColor: _secondaryTextColor,
+              labelStyle: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
+              tabs: const [
+                Tab(text: 'Marketplace'),
+                Tab(text: 'My History'),
+              ],
+            ),
+          ),
+
+          Expanded(
+            child: TabBarView(
+              controller: _tabController,
+              children: [
+                // ── Marketplace ─────────────────────────────────────────────
+                _shifts.isEmpty
+                    ? Center(
+                  child: Text(
+                    'No open shifts available',
+                    style: TextStyle(color: _secondaryTextColor, fontSize: 15),
+                  ),
+                )
+                    : RefreshIndicator(
+                  onRefresh: _fetchShifts,
+                  child: ListView.builder(
+                    padding: const EdgeInsets.all(16),
+                    itemCount: _shifts.length,
+                    itemBuilder: (context, i) =>
+                        _buildShiftCard(_shifts[i]),
+                  ),
+                ),
+
+                // ── History ─────────────────────────────────────────────────
+                !_showHistoryTab
+                    ? Center(
+                  child: Text(
+                    'History not available',
+                    style: TextStyle(color: _secondaryTextColor, fontSize: 15),
+                  ),
+                )
+                    : _history.isEmpty
+                    ? Center(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.history_toggle_off,
+                          size: 48, color: _secondaryTextColor),
+                      const SizedBox(height: 12),
+                      Text(
+                        'No open shift history yet',
+                        style: TextStyle(
+                            color: _secondaryTextColor, fontSize: 15),
+                      ),
+                    ],
+                  ),
+                )
+                    : RefreshIndicator(
+                  onRefresh: () async {
+                    await _initHistory();
+                  },
+                  child: ListView.builder(
+                    padding: const EdgeInsets.all(16),
+                    itemCount: _history.length,
+                    itemBuilder: (context, i) =>
+                        _buildHistoryCard(_history[i]),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }

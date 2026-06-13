@@ -29,6 +29,7 @@ import 'package:crossplatformblackfabric/screens/dispatch_contacts_page.dart';
 import 'package:crossplatformblackfabric/screens/counseling_upload_page.dart';
 import 'package:crossplatformblackfabric/screens/counseling_list_page.dart';
 import 'package:crossplatformblackfabric/screens/no_call_no_show_page.dart';
+import 'package:crossplatformblackfabric/screens/call_off_page.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:crossplatformblackfabric/screens/Late_Arrivals_page.dart';
 import 'package:crossplatformblackfabric/screens/supervisor_assignments_page.dart';
@@ -108,6 +109,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     "Reports",
     "New Report",
     "No Call No Show",
+    "Call Off",
   ];
 
   Position? _currentPosition;
@@ -217,6 +219,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           () => const ReportListPage(),
           () => const ReportPage(),
               () => const NoCallNoShowPage(),
+              () => const CallOffPage(),
     ];
 
     _dashboardRefreshTimer =
@@ -1664,6 +1667,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                         const Color(0xFFF97316),
                       ),
                     ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: _buildSimpleActionButton(
+                        Icons.phone_missed_rounded,
+                        "Call Off",
+                        const Color(0xFF6366F1),
+                      ),
+                    ),
                   ],
                 ),
               ],
@@ -1968,6 +1979,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           _onItemTapped(8);
         } else if (label.contains("No Call\nNo Show")) {
           _onItemTapped(11);
+        } else if (label.contains("Call Off")) {
+          _onItemTapped(12);
         } else if (label.contains("Assignments")) {
           Navigator.push(context,
               MaterialPageRoute(builder: (_) => const SupervisorAssignmentsPage()));
