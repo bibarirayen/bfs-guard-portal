@@ -33,8 +33,8 @@ android {
         applicationId = "com.blackfabricsecurity.crossplatformblackfabric"
         minSdk = flutter.minSdkVersion
         targetSdk = 36
-        versionCode = 69
-        versionName = "1.0.18"
+        versionCode = 70
+        versionName = "1.0.19"
 
         // Only build 64-bit ABIs — armeabi-v7a (32-bit) cannot support 16KB pages
         // and is the most common cause of the Play Store 16KB page size rejection.
