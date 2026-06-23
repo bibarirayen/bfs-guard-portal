@@ -2,6 +2,8 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:http/http.dart' as http;
+
 import 'package:crossplatformblackfabric/screens/report_list_page.dart';
 import 'package:crossplatformblackfabric/screens/vacation_request_page.dart';
 import 'package:crossplatformblackfabric/services/shift_service.dart';
@@ -82,6 +84,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   Timer? _dashboardRefreshTimer;
   Timer? _shiftButtonUpdateTimer;
+
+  // ── Behavior score (fetched from DMS) ─────────────────────────────────────
+  int _behaviorScore = 100;
+  bool _behaviorLoading = false;
 
   bool _canStartShift = false;
   bool _canStopShift = false;
@@ -565,6 +571,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       });
 
       _updateShiftButtons();
+      _loadBehaviorScore();
     } catch (e) {
       debugPrint("Dashboard error: $e");
       setState(() {
@@ -642,6 +649,29 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       _canStartShift = canStart;
       _canStopShift = canStop;
     });
+  }
+
+  Future<void> _loadBehaviorScore() async {
+    if (!mounted) return;
+    setState(() => _behaviorLoading = true);
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final userId = prefs.getInt('userId');
+      if (userId == null) return;
+
+      final uri = Uri.parse(
+          'https://dms.blackfabricsecurity.com/api/behavior/guard/$userId/score');
+      final resp = await http.get(uri).timeout(const Duration(seconds: 10));
+      if (resp.statusCode == 200) {
+        final body = jsonDecode(resp.body) as Map<String, dynamic>;
+        final score = (body['score'] as num?)?.toInt() ?? 100;
+        if (mounted) setState(() => _behaviorScore = score);
+      }
+    } catch (_) {
+      // silently fail — score keeps previous value
+    } finally {
+      if (mounted) setState(() => _behaviorLoading = false);
+    }
   }
 
   Future<void> _sendEmergencyAlert() async {
@@ -1249,6 +1279,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                   ],
                 ),
               ),
+
+              const SizedBox(height: 20),
+
+              // ── Behavior Score Bar ──────────────────────────────────────────
+              _buildBehaviorScoreCard(),
 
               const SizedBox(height: 20),
 
@@ -1909,6 +1944,79 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             ],
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _buildBehaviorScoreCard() {
+    final score = _behaviorScore.clamp(0, 100);
+    final Color barColor = score >= 80
+        ? const Color(0xFF10B981)   // green
+        : score >= 50
+            ? const Color(0xFFF59E0B)  // amber
+            : const Color(0xFFEF4444); // red
+
+    final String label = score >= 80
+        ? 'Good Standing'
+        : score >= 50
+            ? 'Needs Attention'
+            : 'Critical';
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+      decoration: BoxDecoration(
+        color: _cardColor,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: barColor.withOpacity(0.35), width: 1.2),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.shield_outlined, size: 18, color: barColor),
+              const SizedBox(width: 8),
+              Text('Behavior Score',
+                  style: TextStyle(
+                      color: _textColor,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600)),
+              const Spacer(),
+              if (_behaviorLoading)
+                SizedBox(
+                    width: 14,
+                    height: 14,
+                    child: CircularProgressIndicator(
+                        strokeWidth: 2, color: barColor))
+              else ...[
+                Text('$score',
+                    style: TextStyle(
+                        color: barColor,
+                        fontSize: 22,
+                        fontWeight: FontWeight.w800)),
+                Text('/100',
+                    style: TextStyle(
+                        color: _secondaryTextColor, fontSize: 12)),
+              ],
+            ],
+          ),
+          const SizedBox(height: 10),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(6),
+            child: LinearProgressIndicator(
+              value: score / 100.0,
+              minHeight: 8,
+              backgroundColor: barColor.withOpacity(0.15),
+              valueColor: AlwaysStoppedAnimation<Color>(barColor),
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(label,
+              style: TextStyle(
+                  color: barColor,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w500)),
+        ],
       ),
     );
   }
