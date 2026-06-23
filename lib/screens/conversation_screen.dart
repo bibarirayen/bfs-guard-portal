@@ -20,11 +20,17 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
 
   int?   _myUserId;
   String _myName = '';
+  String _myRole = '';
 
   List<Conversation>         _conversations = [];
   List<Map<String, dynamic>> _allUsers      = [];
   bool _loadingConvs = true;
   bool _loadingUsers = false;
+
+  bool get _isGuard {
+    final r = _myRole.toLowerCase();
+    return r != 'supervisor' && r != 'admin' && r != 'full admin';
+  }
 
   StreamSubscription<ChatMessage>? _msgSub;
 
@@ -46,6 +52,7 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
     final prefs = await SharedPreferences.getInstance();
     _myUserId = prefs.getInt('userId');
     _myName   = prefs.getString('guardName') ?? '';
+    _myRole   = prefs.getString('userRole')  ?? '';
 
     if (_myUserId == null) return;
 
@@ -67,7 +74,16 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
   Future<void> _openNewChatSheet() async {
     setState(() => _loadingUsers = true);
     final users = await _chat.getChatUsers();
-    if (mounted) setState(() { _allUsers = users; _loadingUsers = false; });
+    final filtered = _isGuard
+        ? users.where((u) {
+            final roles = (u['roles'] as List?) ?? [];
+            return roles.any((r) {
+              final role = r.toString().toLowerCase();
+              return role == 'supervisor' || role == 'admin' || role == 'full admin';
+            });
+          }).toList()
+        : users;
+    if (mounted) setState(() { _allUsers = filtered; _loadingUsers = false; });
 
     if (!mounted) return;
     showModalBottomSheet(
@@ -146,19 +162,26 @@ class _ConversationsScreenState extends State<ConversationsScreen> {
           : null,
       body: _loadingConvs
           ? Center(child: CircularProgressIndicator(color: _primary))
-          : _conversations.isEmpty
-          ? _emptyState()
-          : RefreshIndicator(
-        color: _primary,
-        onRefresh: _loadConversations,
-        child: ListView.separated(
-          padding: const EdgeInsets.symmetric(vertical: 8),
-          itemCount: _conversations.length,
-          separatorBuilder: (_, __) =>
-              Divider(height: 1, color: _border, indent: 76),
-          itemBuilder: (_, i) => _tile(_conversations[i]),
-        ),
-      ),
+          : Builder(builder: (context) {
+              final visibleConvs = _isGuard
+                  ? _conversations.where((c) {
+                      final r = c.userRole.toLowerCase();
+                      return r == 'supervisor' || r == 'admin' || r == 'full admin';
+                    }).toList()
+                  : _conversations;
+              if (visibleConvs.isEmpty) return _emptyState();
+              return RefreshIndicator(
+                color: _primary,
+                onRefresh: _loadConversations,
+                child: ListView.separated(
+                  padding: const EdgeInsets.symmetric(vertical: 8),
+                  itemCount: visibleConvs.length,
+                  separatorBuilder: (_, __) =>
+                      Divider(height: 1, color: _border, indent: 76),
+                  itemBuilder: (_, i) => _tile(visibleConvs[i]),
+                ),
+              );
+            }),
       floatingActionButton: FloatingActionButton(
         backgroundColor: _primary,
         onPressed: _openNewChatSheet,

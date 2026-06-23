@@ -449,6 +449,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       String parsedToDate = "";
       String? parsedInstructions;
       final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('userRole', guardRole);
 
       // FIX 3: only wipe keys when no shift today. Previously wiped every 30s
       // unconditionally, before the shift block could write them back.
@@ -651,6 +652,18 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     });
   }
 
+  /// Called right after clock-in: triggers DMS sync, then refreshes the score.
+  Future<void> _syncBehaviorAndRefresh() async {
+    try {
+      await http
+          .post(Uri.parse('https://dms.blackfabricsecurity.com/api/behavior/sync'))
+          .timeout(const Duration(seconds: 20));
+    } catch (_) {
+      // ignore — scheduled sync will catch up
+    }
+    await _loadBehaviorScore();
+  }
+
   Future<void> _loadBehaviorScore() async {
     if (!mounted) return;
     setState(() => _behaviorLoading = true);
@@ -770,6 +783,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         await prefs.setBool('shift_active', true);
         await prefs.setInt('active_assignment_id', assignmentId);
         await prefs.setInt('active_guard_id', guardId);
+
+        // Trigger DMS sync immediately so late/early arrival is reflected instantly
+        _syncBehaviorAndRefresh();
 
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text("Shift started successfully!")),
@@ -1976,7 +1992,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             children: [
               Icon(Icons.shield_outlined, size: 18, color: barColor),
               const SizedBox(width: 8),
-              Text('Behavior Score',
+              Text('Guard Performance Rating',
                   style: TextStyle(
                       color: _textColor,
                       fontSize: 13,
