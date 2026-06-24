@@ -656,7 +656,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   Future<void> _syncBehaviorAndRefresh() async {
     try {
       await http
-          .post(Uri.parse('https://dms.blackfabricsecurity.com/api/behavior/sync'))
+          .post(Uri.parse('https://api-hr.blackfabricsecurity.com/api/behavior/sync'))
           .timeout(const Duration(seconds: 20));
     } catch (_) {
       // ignore — scheduled sync will catch up
