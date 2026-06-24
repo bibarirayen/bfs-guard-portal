@@ -673,7 +673,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       if (userId == null) return;
 
       final uri = Uri.parse(
-          'https://dms.blackfabricsecurity.com/api/behavior/guard/$userId/score');
+          'https://api-hr.blackfabricsecurity.com/api/behavior/guard/$userId/score');
       final resp = await http.get(uri).timeout(const Duration(seconds: 10));
       if (resp.statusCode == 200) {
         final body = jsonDecode(resp.body) as Map<String, dynamic>;
