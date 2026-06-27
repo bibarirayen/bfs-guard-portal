@@ -1,9 +1,9 @@
-import 'dart:io';
-
 import 'package:flutter/material.dart';
-import 'package:url_launcher/url_launcher.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../services/notice_service.dart';
+import 'notice_photo_viewer.dart';
+import 'sop_pdf_viewer_page.dart';
 
 class ExecutiveNoticeScreen extends StatefulWidget {
   final List<NoticeItem> notices;
@@ -34,6 +34,7 @@ class _ExecutiveNoticeScreenState extends State<ExecutiveNoticeScreen>
 
   late AnimationController _anim;
   late Animation<double>   _fadeAnim;
+  Map<String, String> _authHeaders = {};
 
   // ─── theme ────────────────────────────────────────────────────────────────
   static const _bg       = Color(0xFF0B1628);
@@ -50,6 +51,15 @@ class _ExecutiveNoticeScreenState extends State<ExecutiveNoticeScreen>
     _anim = AnimationController(vsync: this, duration: const Duration(milliseconds: 400));
     _fadeAnim = CurvedAnimation(parent: _anim, curve: Curves.easeOut);
     _anim.forward();
+    _loadAuthHeaders();
+  }
+
+  Future<void> _loadAuthHeaders() async {
+    final prefs = await SharedPreferences.getInstance();
+    final token = prefs.getString('jwt') ?? '';
+    if (token.isNotEmpty && mounted) {
+      setState(() => _authHeaders = {'Authorization': 'Bearer $token'});
+    }
   }
 
   @override
@@ -87,9 +97,24 @@ class _ExecutiveNoticeScreenState extends State<ExecutiveNoticeScreen>
   List<String> get _images => _notice.attachmentUrls.where((u) => !_isPdf(u)).toList();
   List<String> get _pdfs   => _notice.attachmentUrls.where(_isPdf).toList();
 
-  Future<void> _openUrl(String url) async {
-    final uri = Uri.parse(url);
-    if (await canLaunchUrl(uri)) await launchUrl(uri, mode: LaunchMode.externalApplication);
+  void _openPhotoViewer(int startIndex) {
+    Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => NoticePhotoViewer(
+        imageUrls:    _images,
+        initialIndex: startIndex,
+      ),
+    ));
+  }
+
+  void _openPdf(String url) {
+    final fileName = url.split('/').last;
+    Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => SopPdfViewerPage(
+        url:      url,
+        fileName: fileName,
+        siteName: _notice.title,
+      ),
+    ));
   }
 
   // ── Build ──────────────────────────────────────────────────────────────────
@@ -224,36 +249,73 @@ class _ExecutiveNoticeScreenState extends State<ExecutiveNoticeScreen>
             style: const TextStyle(color: Color(0xFFCBD5E1), fontSize: 14.5, height: 1.65),
           ),
 
-          // Image attachments
+          // ── Photo attachments ──────────────────────────────────────────
           if (_images.isNotEmpty) ...[
             const SizedBox(height: 24),
-            const Text('Attachments',
-                style: TextStyle(color: _subtext, fontSize: 11,
-                    fontWeight: FontWeight.w700, letterSpacing: 0.6)),
+            Row(
+              children: [
+                const Text('Photos',
+                    style: TextStyle(color: _subtext, fontSize: 11,
+                        fontWeight: FontWeight.w700, letterSpacing: 0.6)),
+                const SizedBox(width: 6),
+                Text('(${_images.length})',
+                    style: const TextStyle(color: _subtext, fontSize: 11)),
+                const Spacer(),
+                const Text('Tap to view · Pinch to zoom',
+                    style: TextStyle(color: _subtext, fontSize: 10)),
+              ],
+            ),
             const SizedBox(height: 10),
             SizedBox(
-              height: 180,
+              height: 130,
               child: ListView.separated(
                 scrollDirection: Axis.horizontal,
                 itemCount: _images.length,
-                separatorBuilder: (_, __) => const SizedBox(width: 10),
+                separatorBuilder: (_, __) => const SizedBox(width: 8),
                 itemBuilder: (_, i) => GestureDetector(
-                  onTap: () => _openUrl(_images[i]),
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(12),
-                    child: Image.network(
-                      _images[i],
-                      height: 180, width: 240, fit: BoxFit.cover,
-                      errorBuilder: (_, __, ___) => Container(
-                        width: 240, height: 180, color: _card,
-                        child: const Icon(Icons.broken_image, color: _subtext, size: 36),
-                      ),
-                      loadingBuilder: (_, child, progress) => progress == null
-                          ? child
-                          : Container(
-                              width: 240, height: 180, color: _card,
-                              child: const Center(child: CircularProgressIndicator(color: _accent, strokeWidth: 2)),
+                  onTap: () => _openPhotoViewer(i),
+                  child: Hero(
+                    tag: 'notice_img_${_images[i]}',
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(10),
+                      child: Stack(
+                        alignment: Alignment.center,
+                        children: [
+                          Image.network(
+                            _images[i],
+                            height: 130, width: 130, fit: BoxFit.cover,
+                            headers: _authHeaders,
+                            errorBuilder: (_, __, ___) => Container(
+                              width: 130, height: 130, color: _card,
+                              child: const Icon(Icons.broken_image_outlined,
+                                  color: _subtext, size: 28),
                             ),
+                            loadingBuilder: (_, child, progress) =>
+                                progress == null
+                                    ? child
+                                    : Container(
+                                        width: 130, height: 130, color: _card,
+                                        child: const Center(
+                                          child: CircularProgressIndicator(
+                                              color: _accent, strokeWidth: 2),
+                                        ),
+                                      ),
+                          ),
+                          // Zoom hint icon overlay
+                          Positioned(
+                            bottom: 6, right: 6,
+                            child: Container(
+                              padding: const EdgeInsets.all(3),
+                              decoration: BoxDecoration(
+                                color: Colors.black54,
+                                borderRadius: BorderRadius.circular(4),
+                              ),
+                              child: const Icon(Icons.zoom_in,
+                                  color: Colors.white70, size: 14),
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
                 ),
@@ -261,35 +323,56 @@ class _ExecutiveNoticeScreenState extends State<ExecutiveNoticeScreen>
             ),
           ],
 
-          // PDF attachments
+          // ── PDF attachments ────────────────────────────────────────────
           if (_pdfs.isNotEmpty) ...[
             const SizedBox(height: 20),
-            ..._pdfs.map((url) => GestureDetector(
-              onTap: () => _openUrl(url),
-              child: Container(
-                margin: const EdgeInsets.only(bottom: 8),
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-                decoration: BoxDecoration(
-                  color: _card,
-                  borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: _border),
-                ),
-                child: Row(
-                  children: [
-                    const Icon(Icons.picture_as_pdf, color: Color(0xFFFC8181), size: 20),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Text(
-                        url.split('/').last,
-                        style: const TextStyle(color: _text, fontSize: 13, fontWeight: FontWeight.w500),
-                        overflow: TextOverflow.ellipsis,
+            const Text('Documents',
+                style: TextStyle(color: _subtext, fontSize: 11,
+                    fontWeight: FontWeight.w700, letterSpacing: 0.6)),
+            const SizedBox(height: 8),
+            ..._pdfs.map((url) {
+              final name = url.split('/').last;
+              return GestureDetector(
+                onTap: () => _openPdf(url),
+                child: Container(
+                  margin: const EdgeInsets.only(bottom: 8),
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
+                  decoration: BoxDecoration(
+                    color: _card,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: _border),
+                  ),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 38, height: 38,
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFDC2626).withOpacity(0.12),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: const Icon(Icons.picture_as_pdf,
+                            color: Color(0xFFFC8181), size: 20),
                       ),
-                    ),
-                    const Icon(Icons.open_in_new, color: _subtext, size: 16),
-                  ],
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(name,
+                                style: const TextStyle(color: _text,
+                                    fontSize: 13, fontWeight: FontWeight.w600),
+                                overflow: TextOverflow.ellipsis),
+                            const Text('Tap to open in-app viewer',
+                                style: TextStyle(color: _subtext, fontSize: 11)),
+                          ],
+                        ),
+                      ),
+                      const Icon(Icons.chevron_right, color: _subtext, size: 20),
+                    ],
+                  ),
                 ),
-              ),
-            )),
+              );
+            }),
           ],
 
           const SizedBox(height: 32),
