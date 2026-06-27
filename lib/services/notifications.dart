@@ -1,13 +1,16 @@
 import 'dart:io';
 import 'dart:convert';
 import 'package:crossplatformblackfabric/screens/conversation_screen.dart';
+import 'package:crossplatformblackfabric/screens/executive_notice_screen.dart';
 import 'package:crossplatformblackfabric/screens/guard_schedule_page.dart';
 import 'package:crossplatformblackfabric/screens/late_arrivals_page.dart';
 import 'package:crossplatformblackfabric/screens/vacation_request_page.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../config/app_globals.dart'; // imports navigatorKey
+import 'notice_service.dart';
 
 final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
 FlutterLocalNotificationsPlugin();
@@ -46,8 +49,14 @@ void _handleTapByType({
   String? title,
   Map<String, dynamic>? data,
 }) {
-  final normalizedType = (type ?? '').toUpperCase();
+  final normalizedType  = (type ?? '').toUpperCase();
   final normalizedTitle = (title ?? '').toUpperCase();
+
+  // Tapping an executive notice banner opens the gate screen
+  if (normalizedType == 'EXECUTIVE_NOTICE') {
+    _handleExecutiveNotice();
+    return;
+  }
 
   if (normalizedType == 'LATE_GUARD' || normalizedType == 'LATE') {
     navigatorKey.currentState?.push(
@@ -75,6 +84,30 @@ void _handleTapByType({
   if (_isAssignmentType(normalizedType) || normalizedTitle.contains('NEW ASSIGNMENT')) {
     _openAssignmentSchedule(assignmentId: _parseAssignmentId(data ?? const <String, dynamic>{}));
   }
+}
+
+// Triggered when an EXECUTIVE_NOTICE FCM message arrives while the app is open.
+// Fetches all pending notices and pushes the gate screen on top immediately.
+Future<void> _handleExecutiveNotice() async {
+  final prefs  = await SharedPreferences.getInstance();
+  final userId = prefs.getInt('userId');
+  if (userId == null) return; // guard not logged in — nothing to do
+
+  final notices = await NoticeService().getPendingNotices(userId);
+  if (notices.isEmpty) return;
+
+  final ctx = navigatorKey.currentContext;
+  if (ctx == null) return;
+
+  navigatorKey.currentState?.push(
+    MaterialPageRoute(
+      builder: (_) => ExecutiveNoticeScreen(
+        notices:     notices,
+        userId:      userId,
+        destination: null, // pop back to wherever the guard was
+      ),
+    ),
+  );
 }
 
 // Background message handler
@@ -157,6 +190,12 @@ Future<void> setupFlutterNotifications() async {
   // Foreground messages
   FirebaseMessaging.onMessage.listen((RemoteMessage message) {
     print('📬 [NOTIFICATIONS] Foreground message: ${message.notification?.title}');
+
+    // Executive notices: block the screen immediately instead of showing a banner
+    if ((message.data['type'] ?? '').toString().toUpperCase() == 'EXECUTIVE_NOTICE') {
+      _handleExecutiveNotice();
+      return;
+    }
 
     RemoteNotification? notification = message.notification;
     if (notification != null) {

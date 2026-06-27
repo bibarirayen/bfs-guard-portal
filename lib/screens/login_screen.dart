@@ -12,6 +12,8 @@ import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import 'nfcassignpage.dart';
+import 'executive_notice_screen.dart';
+import '../services/notice_service.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -183,14 +185,30 @@ class _LoginScreenState extends State<LoginScreen>
           r.toLowerCase() == 'admin' ||
               r.toLowerCase() == 'full admin');
 
+          final userId = data['user']['id'] as int;
+          final Widget destination = isAdmin ? const NfcAssignPage() : const HomeScreen();
+
+          // Check for unacknowledged executive notices before entering the app
+          final pendingNotices = await NoticeService().getPendingNotices(userId);
+
           if (!mounted) return;
-          Navigator.pushReplacement(
-            context,
-            MaterialPageRoute(
-              builder: (_) =>
-              isAdmin ? const NfcAssignPage() : const HomeScreen(),
-            ),
-          );
+          if (pendingNotices.isNotEmpty) {
+            Navigator.pushReplacement(
+              context,
+              MaterialPageRoute(
+                builder: (_) => ExecutiveNoticeScreen(
+                  notices:     pendingNotices,
+                  userId:      userId,
+                  destination: destination,
+                ),
+              ),
+            );
+          } else {
+            Navigator.pushReplacement(
+              context,
+              MaterialPageRoute(builder: (_) => destination),
+            );
+          }
         }
       }
       else if (response.statusCode == 401) {
