@@ -76,6 +76,10 @@ class _ShiftsPageState extends State<ShiftsPage>
             'guardName': guard != null
                 ? '${guard['firstName'] ?? ''} ${guard['lastName'] ?? ''}'.trim()
                 : null,
+            'postedByName':   a['postedByName'],
+            'postedAt':       a['postedAt'],
+            'acceptedByName': a['acceptedByName'],
+            'acceptedAt':     a['acceptedAt'],
           };
         }).toList();
 
@@ -110,6 +114,22 @@ class _ShiftsPageState extends State<ShiftsPage>
     if (date.isEmpty) return '-';
     final d = DateTime.parse(date);
     return '${d.month.toString().padLeft(2, '0')}/${d.day.toString().padLeft(2, '0')}/${d.year}';
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Timestamp formatter: ISO → " on MM/DD/YYYY hh:mm AM"
+  // ─────────────────────────────────────────────────────────────────────────
+  String _formatTs(dynamic ts) {
+    if (ts == null) return '';
+    try {
+      final d = DateTime.parse(ts.toString());
+      final m  = d.month.toString().padLeft(2, '0');
+      final dy = d.day.toString().padLeft(2, '0');
+      int h = d.hour; final min = d.minute.toString().padLeft(2, '0');
+      final period = h >= 12 ? 'PM' : 'AM';
+      h = h % 12; if (h == 0) h = 12;
+      return ' on $m/$dy/${d.year} $h:$min $period';
+    } catch (_) { return ''; }
   }
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -699,17 +719,34 @@ class _ShiftsPageState extends State<ShiftsPage>
                   style: TextStyle(fontSize: 12, color: _secondaryTextColor),
                 ),
                 const SizedBox(height: 6),
+                // Posted by line
+                if (item['postedByName'] != null && (item['postedByName'] as String).isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 2),
+                    child: Row(
+                      children: [
+                        Icon(Icons.upload_outlined, size: 13, color: _secondaryTextColor),
+                        const SizedBox(width: 4),
+                        Text(
+                          'Posted by ${item["postedByName"]}${_formatTs(item["postedAt"])}',
+                          style: TextStyle(fontSize: 11, color: _secondaryTextColor),
+                        ),
+                      ],
+                    ),
+                  ),
                 if (isTaken)
                   Row(
                     children: [
                       const Icon(Icons.person, size: 14, color: Color(0xFF22C55E)),
                       const SizedBox(width: 4),
-                      Text(
-                        'Taken by ${item["guardName"]}',
-                        style: const TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
-                          color: Color(0xFF22C55E),
+                      Expanded(
+                        child: Text(
+                          'Taken by ${item["acceptedByName"] ?? item["guardName"]}${_formatTs(item["acceptedAt"])}',
+                          style: const TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                            color: Color(0xFF22C55E),
+                          ),
                         ),
                       ),
                     ],
