@@ -27,6 +27,7 @@ class _ShiftsPageState extends State<ShiftsPage>
   List<Map<String, dynamic>> _history = [];
   bool _loadingHistory = false;
   bool _showHistoryTab = false;
+  bool _canViewHistory = false;
 
   late TabController _tabController;
 
@@ -35,7 +36,7 @@ class _ShiftsPageState extends State<ShiftsPage>
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
     _fetchShifts();
-    _initHistory();
+    _initRoleAndHistory();
   }
 
   @override
@@ -44,8 +45,20 @@ class _ShiftsPageState extends State<ShiftsPage>
     super.dispose();
   }
 
-  Future<void> _initHistory() async {
+  Future<void> _initRoleAndHistory() async {
     final prefs = await SharedPreferences.getInstance();
+    final roles = prefs.getStringList('userRoles') ?? [];
+    final canView = roles.any((r) {
+      final lower = r.toLowerCase();
+      return lower == 'supervisor' ||
+             lower == 'admin' ||
+             lower == 'regular admin' ||
+             lower == 'full admin';
+    });
+
+    if (mounted) setState(() => _canViewHistory = canView);
+    if (!canView) return;
+
     final userId = prefs.getInt('userId');
     if (userId == null) return;
 
@@ -55,13 +68,10 @@ class _ShiftsPageState extends State<ShiftsPage>
       if (res.statusCode == 200) {
         final List data = jsonDecode(res.body);
         final list = data.map<Map<String, dynamic>>((a) {
-          final shift    = a['shift']  ?? {};
-          final site     = shift['site']   ?? {};
-          final client   = shift['client'] ?? {};
-          final guard    = a['guard'];
-
-          final start = shift['startTime'] ?? '';
-          final end   = shift['endTime']   ?? '';
+          final shift  = a['shift']  ?? {};
+          final site   = shift['site']   ?? {};
+          final client = shift['client'] ?? {};
+          final guard  = a['guard'];
 
           return {
             'assignmentId': a['id'],
@@ -69,8 +79,8 @@ class _ShiftsPageState extends State<ShiftsPage>
             'site':      site['name']   ?? 'Unknown',
             'fromDate':  a['fromDate']  ?? '',
             'toDate':    a['toDate']    ?? '',
-            'from':      start,
-            'to':        end,
+            'from':      shift['startTime'] ?? '',
+            'to':        shift['endTime']   ?? '',
             'openShift': a['openShift'] ?? false,
             'daysOfWeek': (a['daysOfWeek'] as List?)?.cast<String>() ?? [],
             'guardName': guard != null
@@ -795,87 +805,106 @@ class _ShiftsPageState extends State<ShiftsPage>
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: _backgroundColor,
-      body: Column(
-        children: [
-          // Tab bar
-          Container(
-            color: _isDarkMode ? const Color(0xFF1E293B) : Colors.white,
-            child: TabBar(
-              controller: _tabController,
-              indicatorColor: const Color(0xFF4F46E5),
-              indicatorWeight: 3,
-              labelColor: const Color(0xFF4F46E5),
-              unselectedLabelColor: _secondaryTextColor,
-              labelStyle: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
-              tabs: const [
-                Tab(text: 'Marketplace'),
-                Tab(text: 'My History'),
-              ],
+      body: _canViewHistory ? _buildWithTabs() : _buildMarketplaceOnly(),
+    );
+  }
+
+  // Guards: just the marketplace list, no tab bar
+  Widget _buildMarketplaceOnly() {
+    return _shifts.isEmpty
+        ? Center(
+            child: Text(
+              'No open shifts available',
+              style: TextStyle(color: _secondaryTextColor, fontSize: 15),
             ),
+          )
+        : RefreshIndicator(
+            onRefresh: _fetchShifts,
+            child: ListView.builder(
+              padding: const EdgeInsets.all(16),
+              itemCount: _shifts.length,
+              itemBuilder: (context, i) => _buildShiftCard(_shifts[i]),
+            ),
+          );
+  }
+
+  // Supervisors / admins: marketplace + history tabs
+  Widget _buildWithTabs() {
+    return Column(
+      children: [
+        Container(
+          color: _isDarkMode ? const Color(0xFF1E293B) : Colors.white,
+          child: TabBar(
+            controller: _tabController,
+            indicatorColor: const Color(0xFF4F46E5),
+            indicatorWeight: 3,
+            labelColor: const Color(0xFF4F46E5),
+            unselectedLabelColor: _secondaryTextColor,
+            labelStyle: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
+            tabs: const [
+              Tab(text: 'Marketplace'),
+              Tab(text: 'My History'),
+            ],
           ),
-
-          Expanded(
-            child: TabBarView(
-              controller: _tabController,
-              children: [
-                // ── Marketplace ─────────────────────────────────────────────
-                _shifts.isEmpty
-                    ? Center(
-                  child: Text(
-                    'No open shifts available',
-                    style: TextStyle(color: _secondaryTextColor, fontSize: 15),
-                  ),
-                )
-                    : RefreshIndicator(
-                  onRefresh: _fetchShifts,
-                  child: ListView.builder(
-                    padding: const EdgeInsets.all(16),
-                    itemCount: _shifts.length,
-                    itemBuilder: (context, i) =>
-                        _buildShiftCard(_shifts[i]),
-                  ),
-                ),
-
-                // ── History ─────────────────────────────────────────────────
-                !_showHistoryTab
-                    ? Center(
-                  child: Text(
-                    'History not available',
-                    style: TextStyle(color: _secondaryTextColor, fontSize: 15),
-                  ),
-                )
-                    : _history.isEmpty
-                    ? Center(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(Icons.history_toggle_off,
-                          size: 48, color: _secondaryTextColor),
-                      const SizedBox(height: 12),
-                      Text(
-                        'No open shift history yet',
-                        style: TextStyle(
-                            color: _secondaryTextColor, fontSize: 15),
+        ),
+        Expanded(
+          child: TabBarView(
+            controller: _tabController,
+            children: [
+              // ── Marketplace ───────────────────────────────────────────────
+              _shifts.isEmpty
+                  ? Center(
+                      child: Text(
+                        'No open shifts available',
+                        style: TextStyle(color: _secondaryTextColor, fontSize: 15),
                       ),
-                    ],
-                  ),
-                )
-                    : RefreshIndicator(
-                  onRefresh: () async {
-                    await _initHistory();
-                  },
-                  child: ListView.builder(
-                    padding: const EdgeInsets.all(16),
-                    itemCount: _history.length,
-                    itemBuilder: (context, i) =>
-                        _buildHistoryCard(_history[i]),
-                  ),
-                ),
-              ],
-            ),
+                    )
+                  : RefreshIndicator(
+                      onRefresh: _fetchShifts,
+                      child: ListView.builder(
+                        padding: const EdgeInsets.all(16),
+                        itemCount: _shifts.length,
+                        itemBuilder: (context, i) => _buildShiftCard(_shifts[i]),
+                      ),
+                    ),
+
+              // ── My History ────────────────────────────────────────────────
+              !_showHistoryTab
+                  ? Center(
+                      child: Text(
+                        'Loading history...',
+                        style: TextStyle(color: _secondaryTextColor, fontSize: 15),
+                      ),
+                    )
+                  : _history.isEmpty
+                      ? Center(
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(Icons.history_toggle_off,
+                                  size: 48, color: _secondaryTextColor),
+                              const SizedBox(height: 12),
+                              Text(
+                                'No open shifts posted yet',
+                                style: TextStyle(
+                                    color: _secondaryTextColor, fontSize: 15),
+                              ),
+                            ],
+                          ),
+                        )
+                      : RefreshIndicator(
+                          onRefresh: _initRoleAndHistory,
+                          child: ListView.builder(
+                            padding: const EdgeInsets.all(16),
+                            itemCount: _history.length,
+                            itemBuilder: (context, i) =>
+                                _buildHistoryCard(_history[i]),
+                          ),
+                        ),
+            ],
           ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 }

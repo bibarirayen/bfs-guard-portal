@@ -181,6 +181,7 @@ class _LoginScreenState extends State<LoginScreen>
           }
 
           final roles   = List<String>.from(data['user']['roles'] ?? []);
+          await prefs.setStringList('userRoles', roles);
           final isAdmin = roles.any((r) =>
           r.toLowerCase() == 'admin' ||
               r.toLowerCase() == 'full admin');
