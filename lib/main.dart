@@ -6,11 +6,13 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'screens/login_screen.dart';
 import 'screens/force_update_screen.dart';
+import 'screens/executive_notice_screen.dart';
 import 'config/app_globals.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 import 'services/notifications.dart';
+import 'services/notice_service.dart';
 import 'services/BackgroundLocation_Service.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:http/http.dart' as http;
@@ -84,25 +86,30 @@ class BlackFabricApp extends StatefulWidget {
 
 class _BlackFabricAppState extends State<BlackFabricApp>
     with WidgetsBindingObserver {
-  // Re-check the minimum required app version every 15 minutes while the app
-  // is in the foreground. Combined with the on-resume check below, this means
-  // a guard who leaves the app open during their shift will be kicked to the
-  // update screen as soon as we publish a new minVersion on the backend \u2014 no
-  // need to close + reopen the app to pick up the gate.
   static const Duration _versionPollInterval = Duration(minutes: 15);
+  static const Duration _noticePollInterval  = Duration(minutes: 5);
+
   Timer? _versionTimer;
+  Timer? _noticeTimer;
+
+  // Guard against concurrent notice fetches or double-push while the notice
+  // screen is already showing.
+  bool _noticeFetchInFlight = false;
+  bool _noticesShowing      = false;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _startVersionPolling();
+    _startNoticePolling();
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _versionTimer?.cancel();
+    _noticeTimer?.cancel();
     super.dispose();
   }
 
@@ -114,13 +121,51 @@ class _BlackFabricAppState extends State<BlackFabricApp>
     );
   }
 
+  void _startNoticePolling() {
+    _noticeTimer?.cancel();
+    _noticeTimer = Timer.periodic(
+      _noticePollInterval,
+      (_) => _checkAndShowNotices(),
+    );
+  }
+
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     super.didChangeAppLifecycleState(state);
-    // Whenever the app comes back to the foreground (e.g. user switched away
-    // and returned), re-check the version immediately.
     if (state == AppLifecycleState.resumed) {
       enforceUpdateIfOutdated();
+      _checkAndShowNotices();
+    }
+  }
+
+  Future<void> _checkAndShowNotices() async {
+    if (_noticeFetchInFlight || _noticesShowing) return;
+    _noticeFetchInFlight = true;
+    try {
+      final prefs  = await SharedPreferences.getInstance();
+      final userId = prefs.getInt('userId') ?? 0;
+      final token  = prefs.getString('jwt') ?? '';
+      // Skip when not logged in.
+      if (userId == 0 || token.isEmpty) return;
+
+      final notices = await NoticeService().getPendingNotices(userId);
+      if (notices.isEmpty) return;
+
+      final navState = navigatorKey.currentState;
+      if (navState == null) return;
+
+      _noticesShowing = true;
+      navState.push(
+        MaterialPageRoute(
+          builder: (_) => ExecutiveNoticeScreen(
+            notices:     notices,
+            userId:      userId,
+            destination: null, // pops back to wherever the guard was
+          ),
+        ),
+      ).then((_) => _noticesShowing = false);
+    } finally {
+      _noticeFetchInFlight = false;
     }
   }
 
