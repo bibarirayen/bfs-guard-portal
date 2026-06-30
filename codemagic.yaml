@@ -4,6 +4,8 @@ workflows:
     max_build_duration: 60
     instance_type: mac_mini_m2
     environment:
+      groups:
+        - guard_portal_credentials
       vars:
         BUNDLE_ID: "com.blackfabricsecurity.crossplatformblackfabric"
         APPLE_TEAM_ID: "XZSWQ5463A"
