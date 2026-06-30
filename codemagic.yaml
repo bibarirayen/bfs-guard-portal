@@ -14,35 +14,102 @@ workflows:
       cocoapods: default
 
     scripts:
+      - name: Debug environment variables
+        script: |
+          echo "==============================="
+          echo "CHECKING ENVIRONMENT VARIABLES"
+          echo "==============================="
+          echo "BUNDLE_ID=${BUNDLE_ID}"
+          echo "APPLE_TEAM_ID=${APPLE_TEAM_ID}"
+
+          echo "--- App Store Connect ---"
+          if [ -z "$APP_STORE_CONNECT_KEY_IDENTIFIER" ]; then
+            echo "ERROR: APP_STORE_CONNECT_KEY_IDENTIFIER is EMPTY or NOT SET"
+          else
+            echo "APP_STORE_CONNECT_KEY_IDENTIFIER=${APP_STORE_CONNECT_KEY_IDENTIFIER}"
+          fi
+
+          if [ -z "$APP_STORE_CONNECT_ISSUER_ID" ]; then
+            echo "ERROR: APP_STORE_CONNECT_ISSUER_ID is EMPTY or NOT SET"
+          else
+            echo "APP_STORE_CONNECT_ISSUER_ID=${APP_STORE_CONNECT_ISSUER_ID}"
+          fi
+
+          if [ -z "$APP_STORE_CONNECT_PRIVATE_KEY" ]; then
+            echo "ERROR: APP_STORE_CONNECT_PRIVATE_KEY is EMPTY or NOT SET"
+          else
+            echo "APP_STORE_CONNECT_PRIVATE_KEY is SET (length=${#APP_STORE_CONNECT_PRIVATE_KEY})"
+          fi
+
+          echo "--- Provisioning Profile ---"
+          if [ -z "$GP_PROVISIONING_PROFILE" ]; then
+            echo "ERROR: GP_PROVISIONING_PROFILE is EMPTY or NOT SET"
+          else
+            echo "GP_PROVISIONING_PROFILE is SET (length=${#GP_PROVISIONING_PROFILE})"
+          fi
+          echo "==============================="
+
       - name: Set up keychain
         script: |
+          echo "Initializing keychain..."
           keychain initialize
+          echo "Keychain initialized successfully"
 
       - name: Fetch certificate from Apple
         script: |
+          echo "Running fetch-signing-files for bundle: $BUNDLE_ID"
           app-store-connect fetch-signing-files "$BUNDLE_ID" \
             --type IOS_APP_STORE \
-            --create
-          echo "=== Certificates fetched: ==="
+            --create \
+            --verbose
+          echo "--- fetch-signing-files exit code: $? ---"
+          echo "--- Certificates directory ---"
+          ls -la "$HOME/Library/MobileDevice/Certificates/" 2>/dev/null || echo "Certificates dir does not exist"
+          echo "--- Signing identities ---"
           security find-identity -v -p codesigning
 
       - name: Add certificate to keychain
         script: |
+          echo "Running keychain add-certificates..."
           keychain add-certificates
-          echo "=== Signing identities in keychain: ==="
+          echo "--- Signing identities after add: ---"
           security find-identity -v -p codesigning
+          IDENTITY_COUNT=$(security find-identity -v -p codesigning | grep -c "valid identity" || true)
+          echo "Valid identities found: $IDENTITY_COUNT"
+          if [ "$IDENTITY_COUNT" = "0" ]; then
+            echo "ERROR: No valid signing identities found in keychain"
+            exit 1
+          fi
 
       - name: Install provisioning profile
         script: |
+          echo "Installing provisioning profile..."
           PROFILES_DIR="$HOME/Library/MobileDevice/Provisioning Profiles"
           mkdir -p "$PROFILES_DIR"
+
+          echo "GP_PROVISIONING_PROFILE length: ${#GP_PROVISIONING_PROFILE}"
           printf '%s' "$GP_PROVISIONING_PROFILE" | base64 --decode > "$PROFILES_DIR/bfs_guard.mobileprovision"
-          echo "=== Installed profiles: ==="
-          ls -1 "$PROFILES_DIR"
+
+          PROFILE_SIZE=$(wc -c < "$PROFILES_DIR/bfs_guard.mobileprovision")
+          echo "Decoded profile size: $PROFILE_SIZE bytes"
+          if [ "$PROFILE_SIZE" -lt 100 ]; then
+            echo "ERROR: Profile file is too small ($PROFILE_SIZE bytes) — base64 decode likely failed"
+            exit 1
+          fi
+
+          echo "--- All installed profiles: ---"
+          ls -lh "$PROFILES_DIR"
+
+          echo "--- Profile name check: ---"
+          strings "$PROFILES_DIR/bfs_guard.mobileprovision" | grep -E "BlackFabric|AppStore|Push" || echo "WARNING: Expected profile name not found in profile content"
 
       - name: Configure Xcode signing
         script: |
+          echo "Configuring Xcode project signing..."
           cd ios
+
+          echo "--- Current Runner.xcodeproj build settings (before) ---"
+          xcodebuild -project Runner.xcodeproj -target Runner -configuration Release -showBuildSettings 2>/dev/null | grep -E "CODE_SIGN|PROVISIONING|DEVELOPMENT_TEAM" || true
 
           ruby - <<'RUBY'
           require 'xcodeproj'
@@ -58,10 +125,11 @@ workflows:
             end
           end
           project.save
-          puts 'Xcode signing configured'
+          puts 'Xcode signing configured successfully'
           RUBY
 
           if [ ! -f "Runner/Runner.entitlements" ]; then
+            echo "Creating Runner.entitlements..."
             cat > Runner/Runner.entitlements << 'EOF'
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -72,21 +140,34 @@ workflows:
           </dict>
           </plist>
           EOF
+            echo "Runner.entitlements created"
+          else
+            echo "Runner.entitlements already exists"
+            cat Runner/Runner.entitlements
           fi
 
           RELEASE_XCCONFIG="Flutter/Release.xcconfig"
-          echo "" >> "$RELEASE_XCCONFIG"
+          echo "--- Current Release.xcconfig ---"
+          cat "$RELEASE_XCCONFIG"
+          echo ""
           echo "CODE_SIGN_STYLE=Manual" >> "$RELEASE_XCCONFIG"
           echo "CODE_SIGN_IDENTITY=Apple Distribution" >> "$RELEASE_XCCONFIG"
           echo "PROVISIONING_PROFILE_SPECIFIER=BlackFabric AppStore Push" >> "$RELEASE_XCCONFIG"
           echo "DEVELOPMENT_TEAM=XZSWQ5463A" >> "$RELEASE_XCCONFIG"
+          echo "--- Updated Release.xcconfig ---"
+          cat "$RELEASE_XCCONFIG"
           cd ..
 
       - name: Install Flutter packages
-        script: flutter pub get
+        script: |
+          echo "Running flutter pub get..."
+          flutter pub get
+          echo "flutter pub get done"
 
       - name: Build iOS IPA
         script: |
+          echo "Starting IPA build..."
+
           cat > /tmp/ExportOptions.plist << 'PLIST'
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -109,9 +190,14 @@ workflows:
           </plist>
           PLIST
 
+          echo "--- ExportOptions.plist ---"
+          cat /tmp/ExportOptions.plist
+
           flutter build ipa --release \
             --no-pub \
             --export-options-plist=/tmp/ExportOptions.plist
+
+          echo "Build exit code: $?"
 
     artifacts:
       - build/ios/ipa/*.ipa
