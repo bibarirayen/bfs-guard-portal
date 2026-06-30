@@ -16,24 +16,19 @@ workflows:
         script: |
           keychain initialize
 
-      - name: Add certificates from Codemagic
+      - name: Fetch signing files from Apple
+        script: |
+          app-store-connect fetch-signing-files "$BUNDLE_ID" \
+            --type IOS_APP_STORE \
+            --create
+          echo "=== Installed profiles: ==="
+          ls -1 "$HOME/Library/MobileDevice/Provisioning Profiles/"
+
+      - name: Add certificates
         script: |
           keychain add-certificates
-          echo "Signing identities in keychain:"
+          echo "=== Signing identities in keychain: ==="
           security find-identity -v -p codesigning
-
-      - name: Install provisioning profile
-        script: |
-          PROFILES_DIR="$HOME/Library/MobileDevice/Provisioning Profiles"
-          mkdir -p "$PROFILES_DIR"
-          printf '%s' "$GP_PROVISIONING_PROFILE" | base64 --decode > "$PROFILES_DIR/bfs_guard.mobileprovision"
-          echo "=== Profile file size: $(wc -c < "$PROFILES_DIR/bfs_guard.mobileprovision") bytes ==="
-          echo "=== Profile name inside file: ==="
-          security cms -D -i "$PROFILES_DIR/bfs_guard.mobileprovision" 2>/dev/null | grep -A1 "<key>Name</key>" | tail -1
-          echo "=== Profile UUID inside file: ==="
-          security cms -D -i "$PROFILES_DIR/bfs_guard.mobileprovision" 2>/dev/null | grep -A1 "<key>UUID</key>" | tail -1
-          echo "=== All installed profiles: ==="
-          ls -1 "$PROFILES_DIR/"
 
       - name: Configure Xcode signing
         script: |
