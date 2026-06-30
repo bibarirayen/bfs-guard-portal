@@ -33,7 +33,7 @@ android {
         applicationId = "com.blackfabricsecurity.crossplatformblackfabric"
         minSdk = flutter.minSdkVersion
         targetSdk = 36
-        versionCode = 74
+        versionCode = 75
         versionName = "1.0.22"
 
         // Only build 64-bit ABIs — armeabi-v7a (32-bit) cannot support 16KB pages
