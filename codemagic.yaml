@@ -27,6 +27,13 @@ workflows:
           PROFILES_DIR="$HOME/Library/MobileDevice/Provisioning Profiles"
           mkdir -p "$PROFILES_DIR"
           printf '%s' "$GP_PROVISIONING_PROFILE" | base64 --decode > "$PROFILES_DIR/bfs_guard.mobileprovision"
+          echo "=== Profile file size: $(wc -c < "$PROFILES_DIR/bfs_guard.mobileprovision") bytes ==="
+          echo "=== Profile name inside file: ==="
+          security cms -D -i "$PROFILES_DIR/bfs_guard.mobileprovision" 2>/dev/null | grep -A1 "<key>Name</key>" | tail -1
+          echo "=== Profile UUID inside file: ==="
+          security cms -D -i "$PROFILES_DIR/bfs_guard.mobileprovision" 2>/dev/null | grep -A1 "<key>UUID</key>" | tail -1
+          echo "=== All installed profiles: ==="
+          ls -1 "$PROFILES_DIR/"
 
       - name: Configure Xcode signing
         script: |
