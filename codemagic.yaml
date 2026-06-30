@@ -4,15 +4,9 @@ workflows:
     max_build_duration: 60
     instance_type: mac_mini_m2
     environment:
-      groups:
-        - app_store_credentials
-        - guard_portal_credentials
       vars:
         BUNDLE_ID: "com.blackfabricsecurity.crossplatformblackfabric"
-        PROFILE_NAME: "BlackFabric AppStore Push"
         APPLE_TEAM_ID: "XZSWQ5463A"
-        KEYCHAIN_PATH: "/tmp/bfs_guard.keychain-db"
-        KEYCHAIN_PASSWORD: "bfs_guard_build_2026"
       flutter: stable
       xcode: latest
       cocoapods: default
@@ -20,23 +14,13 @@ workflows:
     scripts:
       - name: Set up keychain
         script: |
-          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-          security set-keychain-settings -lut 7200 "$KEYCHAIN_PATH"
-          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-          security list-keychains -d user -s "$KEYCHAIN_PATH" ~/Library/Keychains/login.keychain-db
+          keychain initialize
 
-      - name: Import certificate
+      - name: Add certificates from Codemagic
         script: |
-          printf '%s' "$CM_CERTIFICATE" | base64 --decode > /tmp/certificate.p12
-          security import /tmp/certificate.p12 \
-            -P "$CM_CERTIFICATE_PASSWORD" \
-            -A -t cert -f pkcs12 \
-            -k "$KEYCHAIN_PATH"
-          security set-key-partition-list \
-            -S apple-tool:,apple:,codesign: -s \
-            -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-          echo "Signing identities found:"
-          security find-identity -v -p codesigning "$KEYCHAIN_PATH"
+          keychain add-certificates
+          echo "Signing identities in keychain:"
+          security find-identity -v -p codesigning
 
       - name: Install provisioning profile
         script: |
@@ -84,7 +68,6 @@ workflows:
           echo "CODE_SIGN_IDENTITY=Apple Distribution" >> "$RELEASE_XCCONFIG"
           echo "PROVISIONING_PROFILE_SPECIFIER=BlackFabric AppStore Push" >> "$RELEASE_XCCONFIG"
           echo "DEVELOPMENT_TEAM=XZSWQ5463A" >> "$RELEASE_XCCONFIG"
-          echo "OTHER_CODE_SIGN_FLAGS=--keychain $KEYCHAIN_PATH" >> "$RELEASE_XCCONFIG"
 
           cd ..
 
@@ -93,8 +76,6 @@ workflows:
 
       - name: Build iOS IPA
         script: |
-          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-
           cat > /tmp/ExportOptions.plist << 'PLIST'
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
