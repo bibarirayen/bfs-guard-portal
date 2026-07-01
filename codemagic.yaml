@@ -123,8 +123,7 @@ workflows:
           IPA_PATH=$(find build/ios/ipa -name "*.ipa" | head -1)
           echo "Uploading: $IPA_PATH"
           app-store-connect publish \
-            --path "$IPA_PATH" \
-            --submit-to-testflight
+            --path "$IPA_PATH"
 
     artifacts:
       - build/ios/ipa/*.ipa
