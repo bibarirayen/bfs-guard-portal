@@ -41,6 +41,7 @@ import 'package:crossplatformblackfabric/screens/guard_sop_page.dart';
 import 'package:crossplatformblackfabric/screens/admin_sop_page.dart';
 import 'package:crossplatformblackfabric/screens/employee_handbook_page.dart';
 import 'package:crossplatformblackfabric/screens/guard_schedule_page.dart';
+import 'package:crossplatformblackfabric/screens/executive_notices_archive_page.dart';
 
 class HomeScreen extends StatefulWidget {
   final String guardName;
@@ -1904,6 +1905,61 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                       ),
                       const Icon(Icons.arrow_forward_ios,
                           size: 14, color: Color(0xFF10B981)),
+                    ],
+                  ),
+                ),
+              ),
+
+              // ── Executive Notices archive — visible to everyone ─────
+              const SizedBox(height: 12),
+              GestureDetector(
+                onTap: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                      builder: (_) => const ExecutiveNoticesArchivePage()),
+                ),
+                child: Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF1665C1).withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(
+                        color: const Color(0xFF1665C1).withOpacity(0.3)),
+                  ),
+                  child: Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(8),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF1665C1).withOpacity(0.15),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: const Icon(Icons.notifications_outlined,
+                            color: Color(0xFF60A5FA), size: 22),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Executive Notices',
+                              style: TextStyle(
+                                  color: _textColor,
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 13),
+                            ),
+                            Text(
+                              'View your notice archive',
+                              style: TextStyle(
+                                  color: _secondaryTextColor,
+                                  fontSize: 11),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const Icon(Icons.arrow_forward_ios,
+                          size: 14, color: Color(0xFF60A5FA)),
                     ],
                   ),
                 ),

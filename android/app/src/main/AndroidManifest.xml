@@ -105,7 +105,7 @@
     <!-- ============================================================ -->
     <application
         android:label="BFS Guard Portal"
-        android:icon="@mipmap/ic_launcher">
+        android:icon="@mipmap/launcher_icon">
         <!--
           android:requestLegacyExternalStorage removed — it only applied
           to Android 10 (API 29) and Google Play flags it as a policy issue.
